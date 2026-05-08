@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useTranslation } from "@/hooks/use-translation"
@@ -463,9 +464,54 @@ export default function MailPage() {
     return [...customerRecipients, ...contactRecipients, ...manualRecipients]
   }, [manualEmails, selectedContacts, selectedCustomers, t])
 
+  // Dedupe-by-email feature: when one person is the primary contact for
+  // multiple companies, the same email shows up multiple times in the
+  // selection. The switch lets the user collapse those duplicates so each
+  // address only receives the email once. Default off so the existing
+  // behavior is preserved unless the user explicitly opts in.
+  const [dedupeByEmail, setDedupeByEmail] = React.useState(false)
+
+  const duplicateEmailGroups = React.useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const recipient of selectedRecipients) {
+      const key = recipient.email?.trim().toLowerCase()
+      if (!key) continue
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return Array.from(counts.entries()).filter(([, count]) => count > 1)
+  }, [selectedRecipients])
+
+  const duplicateEmailCount = duplicateEmailGroups.length
+  const duplicateExtraSends = duplicateEmailGroups.reduce(
+    (sum, [, count]) => sum + (count - 1),
+    0,
+  )
+
+  // The actual list we hand to /api/email and the preview iterator. When
+  // dedupe is on, keep the first occurrence per email so a person who's
+  // primary contact for 6 companies receives one email instead of 6.
+  const effectiveRecipients = React.useMemo(() => {
+    if (!dedupeByEmail) return selectedRecipients
+    const seen = new Set<string>()
+    const deduped: ResolvedRecipient[] = []
+    for (const recipient of selectedRecipients) {
+      const key = recipient.email?.trim().toLowerCase()
+      if (!key) {
+        // No email at all — keep as-is so the missing-email warning still
+        // surfaces. They'll be filtered out at send time.
+        deduped.push(recipient)
+        continue
+      }
+      if (seen.has(key)) continue
+      seen.add(key)
+      deduped.push(recipient)
+    }
+    return deduped
+  }, [dedupeByEmail, selectedRecipients])
+
   const sendableRecipientCount = React.useMemo(
-    () => selectedRecipients.filter((recipient) => (recipient.email?.trim() || "").length > 0).length,
-    [selectedRecipients],
+    () => effectiveRecipients.filter((recipient) => (recipient.email?.trim() || "").length > 0).length,
+    [effectiveRecipients],
   )
 
   const visibleSelectedRecipients = React.useMemo(
@@ -483,10 +529,10 @@ export default function MailPage() {
 
   React.useEffect(() => {
     setPreviewCustomerIndex((current) => {
-    if (selectedRecipients.length === 0) return 0
-    return Math.min(current, selectedRecipients.length - 1)
+    if (effectiveRecipients.length === 0) return 0
+    return Math.min(current, effectiveRecipients.length - 1)
   })
-  }, [selectedRecipients])
+  }, [effectiveRecipients])
 
   function handleSendClick() {
     if (sending || previewLoading) return
@@ -883,6 +929,19 @@ export default function MailPage() {
     setSelectedContactIds((current) => current.filter((id) => id !== recipientId))
   }
 
+  // Empty the entire selection for the active recipient type. Useful for
+  // consultants who land on /mail with their assigned customers preselected
+  // and want to start with a blank slate before picking their own targets.
+  // Scoped to the active type so flipping between Customers/Contacts tabs
+  // doesn't wipe the other tab's selection by accident.
+  function clearAllSelectedRecipients() {
+    if (recipientType === "customers") {
+      setSelectedCustomerIds([])
+      return
+    }
+    setSelectedContactIds([])
+  }
+
   React.useEffect(() => {
     async function loadTemplates() {
       const supabase = createClient()
@@ -983,7 +1042,7 @@ export default function MailPage() {
     const timeout = window.setTimeout(async () => {
       setPreviewLoading(true)
       try {
-        const previewRecipient = selectedRecipients[previewCustomerIndex] ?? null
+        const previewRecipient = effectiveRecipients[previewCustomerIndex] ?? null
         const previewEmail = previewRecipient?.email?.trim() || "preview@example.com"
         const previewCustomerName =
           previewRecipient?.customerName || previewRecipient?.name || t("mail.send.fallbackCustomer", "Customer")
@@ -1033,15 +1092,15 @@ export default function MailPage() {
       abortController.abort()
       window.clearTimeout(timeout)
     }
-  }, [activePayload, previewCustomerIndex, selectedRecipients, t, templateType])
+  }, [activePayload, effectiveRecipients, previewCustomerIndex, t, templateType])
 
   async function handleSend() {
-    if (selectedRecipients.length === 0) {
+    if (effectiveRecipients.length === 0) {
       toast.error(t("mail.send.toast.customerRequired", "Select at least one recipient"))
       return
     }
 
-    const recipients = selectedRecipients
+    const recipients = effectiveRecipients
       .map((recipient) => ({
         recipient,
         email: recipient.email?.trim() || "",
@@ -1449,7 +1508,7 @@ export default function MailPage() {
                   </div>
                 ) : null}
 
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <Button type="button" variant="outline" size="sm" onClick={toggleSelectAllVisible}>
                     {allVisibleSelected
                       ? t("mail.send.recipients.clearSelection", "Clear selection")
@@ -1457,17 +1516,19 @@ export default function MailPage() {
                         ? t("mail.send.recipients.selectAllActiveCustomers", "Select all active customers")
                         : t("mail.send.recipients.selectAllActiveContacts", "Select all active contacts")}
                   </Button>
-                  {myRecipientIds.length > 0 ? (
-                    <Button type="button" variant="ghost" size="sm" onClick={toggleSelectMyRecipients}>
-                      {allMyRecipientsSelected
-                        ? recipientType === "customers"
-                          ? t("mail.send.recipients.clearMyCustomers", "Clear my customers")
-                          : t("mail.send.recipients.clearMyContacts", "Clear my contacts")
-                        : recipientType === "customers"
-                          ? t("mail.send.recipients.selectMyCustomers", "Select my customers")
-                          : t("mail.send.recipients.selectMyContacts", "Select my contacts")}
-                    </Button>
-                  ) : null}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {myRecipientIds.length > 0 ? (
+                      <Button type="button" variant="ghost" size="sm" onClick={toggleSelectMyRecipients}>
+                        {allMyRecipientsSelected
+                          ? recipientType === "customers"
+                            ? t("mail.send.recipients.clearMyCustomers", "Clear my customers")
+                            : t("mail.send.recipients.clearMyContacts", "Clear my contacts")
+                          : recipientType === "customers"
+                            ? t("mail.send.recipients.selectMyCustomers", "Select my customers")
+                            : t("mail.send.recipients.selectMyContacts", "Select my contacts")}
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border p-1">
@@ -1544,22 +1605,74 @@ export default function MailPage() {
                   ))}
                 </div>
 
-                {hiddenSelectedRecipientCount > 0 ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-0 text-xs text-muted-foreground"
-                    onClick={() => setShowAllSelectedRecipients((current) => !current)}
-                  >
-                    {showAllSelectedRecipients
-                      ? t("mail.send.recipients.showLess", "Show less")
-                      : t(
-                          "mail.send.recipients.showAll",
-                          `Show all (${hiddenSelectedRecipientCount} more)`,
-                        )}
-                  </Button>
-                ) : null}
+                <div className="flex items-center justify-between gap-2">
+                  {hiddenSelectedRecipientCount > 0 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-0 text-xs text-muted-foreground"
+                      onClick={() => setShowAllSelectedRecipients((current) => !current)}
+                    >
+                      {showAllSelectedRecipients
+                        ? t("mail.send.recipients.showLess", "Show less")
+                        : t(
+                            "mail.send.recipients.showAll",
+                            `Show all (${hiddenSelectedRecipientCount} more)`,
+                          )}
+                    </Button>
+                  ) : (
+                    <span aria-hidden="true" />
+                  )}
+                  {activeSelectedIds.length > 0 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={clearAllSelectedRecipients}
+                    >
+                      {recipientType === "customers"
+                        ? t(
+                            "mail.send.recipients.deselectAllCustomers",
+                            "Deselect all customers",
+                          )
+                        : t(
+                            "mail.send.recipients.deselectAllContacts",
+                            "Deselect all contacts",
+                          )}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {duplicateEmailCount > 0 ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+                <div className="flex items-center gap-2">
+                  <TriangleAlert className="size-4 shrink-0 text-warning" />
+                  <p className="font-medium text-foreground">
+                    {duplicateEmailCount === 1
+                      ? t(
+                          "mail.send.duplicates.headerOne",
+                          "1 email address appears multiple times in your selection",
+                        )
+                      : `${duplicateEmailCount} ${t(
+                          "mail.send.duplicates.headerMany",
+                          "email addresses appear multiple times in your selection",
+                        )}`}
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground whitespace-nowrap">
+                  <Switch
+                    checked={dedupeByEmail}
+                    onCheckedChange={setDedupeByEmail}
+                  />
+                  {t(
+                    "mail.send.duplicates.toggleLabel",
+                    "Send once per email",
+                  )}
+                </label>
               </div>
             ) : null}
 
@@ -1730,7 +1843,7 @@ export default function MailPage() {
           <CardDescription>
             {t("settings.mail.previewDescription", "Live server-rendered template output.")}
           </CardDescription>
-          {selectedRecipients.length > 1 ? (
+          {effectiveRecipients.length > 1 ? (
             <div className="flex items-center gap-2 pt-1">
               <Button
                 type="button"
@@ -1738,14 +1851,14 @@ export default function MailPage() {
                 size="sm"
                 onClick={() =>
                   setPreviewCustomerIndex((current) =>
-                    current <= 0 ? selectedRecipients.length - 1 : current - 1,
+                    current <= 0 ? effectiveRecipients.length - 1 : current - 1,
                   )
                 }
               >
                 <ChevronLeft className="size-4" />
               </Button>
               <span className="text-xs text-muted-foreground">
-                {t("mail.send.previewFor", "Preview for")}: {selectedRecipients[previewCustomerIndex]?.name} ({previewCustomerIndex + 1}/{selectedRecipients.length})
+                {t("mail.send.previewFor", "Preview for")}: {effectiveRecipients[previewCustomerIndex]?.name} ({previewCustomerIndex + 1}/{effectiveRecipients.length})
               </span>
               <Button
                 type="button"
@@ -1753,7 +1866,7 @@ export default function MailPage() {
                 size="sm"
                 onClick={() =>
                   setPreviewCustomerIndex((current) =>
-                    current >= selectedRecipients.length - 1 ? 0 : current + 1,
+                    current >= effectiveRecipients.length - 1 ? 0 : current + 1,
                   )
                 }
               >

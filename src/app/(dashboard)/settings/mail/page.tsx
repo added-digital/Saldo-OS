@@ -625,17 +625,6 @@ export default function SettingsMailPage() {
     <div className="space-y-6">
       {!editorOpen ? (
         <>
-          <div>
-            <h3 className="text-base font-semibold">
-              {t("settings.mailTemplates.existing", "Existing templates")}
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              {t(
-                "settings.mailTemplates.existingDescription",
-                "Templates available to users when sending emails.",
-              )}
-            </p>
-          </div>
 
           {/* Built-in layouts as a list with expandable rows */}
           <div className="space-y-3">

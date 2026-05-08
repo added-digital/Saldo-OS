@@ -331,6 +331,19 @@ const dictionaries = {
     "mail.themes.campaign": "Campaign",
     "mail.send.optionPlainOs": "Plain OS",
     "mail.send.optionCampaign": "Aktiebok",
+    "mail.send.recipients.deselectAllCustomers": "Deselect all customers",
+    "mail.send.recipients.deselectAllContacts": "Deselect all contacts",
+    "mail.send.duplicates.headerOne":
+      "1 email address appears multiple times in your selection",
+    "mail.send.duplicates.headerMany":
+      "email addresses appear multiple times in your selection",
+    "mail.send.duplicates.descriptionOne":
+      "1 person would receive the same email twice. Toggle the switch to send once per address.",
+    "mail.send.duplicates.descriptionMany":
+      "duplicate sends would go out. Toggle the switch to send once per address.",
+    "mail.send.duplicates.descriptionDeduped":
+      "Each unique address will receive one email; the rest are skipped.",
+    "mail.send.duplicates.toggleLabel": "Send once per email",
     "mail.send.sendToCustomers": "Send to customers",
     "mail.send.customerTokenHelp": "@customer is replaced with each selected customer's primary contact name. @company is replaced with the company name.",
     "mail.send.toast.customerRequired": "Select at least one customer",
@@ -943,6 +956,19 @@ const dictionaries = {
     "mail.themes.campaign": "Kampanj",
     "mail.send.optionPlainOs": "Plain OS",
     "mail.send.optionCampaign": "Aktiebok",
+    "mail.send.recipients.deselectAllCustomers": "Avmarkera alla kunder",
+    "mail.send.recipients.deselectAllContacts": "Avmarkera alla kontakter",
+    "mail.send.duplicates.headerOne":
+      "1 e-postadress förekommer flera gånger i ditt urval",
+    "mail.send.duplicates.headerMany":
+      "e-postadresser förekommer flera gånger i ditt urval",
+    "mail.send.duplicates.descriptionOne":
+      "1 person skulle få samma mail två gånger. Slå på reglaget för att skicka en gång per adress.",
+    "mail.send.duplicates.descriptionMany":
+      "dubbletter skulle skickas. Slå på reglaget för att skicka en gång per adress.",
+    "mail.send.duplicates.descriptionDeduped":
+      "Varje unik adress får ett mail; resterande hoppas över.",
+    "mail.send.duplicates.toggleLabel": "Skicka en gång per e-post",
     "mail.send.sendToCustomers": "Skicka till kunder",
     "mail.send.customerTokenHelp": "@customer ersätts med primärkontaktens namn för varje vald kund. @company ersätts med företagsnamnet.",
     "mail.send.toast.customerRequired": "Välj minst en kund",
