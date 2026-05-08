@@ -623,6 +623,7 @@ export default function SettingsMailPage() {
             </div>
           )}
         </>
+        
       ) : (
         <div className="grid gap-4 xl:grid-cols-[1.05fr_1fr]">
           <Card>
