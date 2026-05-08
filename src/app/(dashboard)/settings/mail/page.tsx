@@ -1,11 +1,21 @@
 "use client"
 
 import * as React from "react"
-import { Loader2, Pencil, Plus, Save, Trash2, X } from "lucide-react"
+import {
+  ChevronDown,
+  Eye,
+  Loader2,
+  Pencil,
+  Plus,
+  Save,
+  Trash2,
+  X,
+} from "lucide-react"
 
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/hooks/use-user"
 import { useTranslation } from "@/hooks/use-translation"
+import { cn } from "@/lib/utils"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,9 +29,25 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import type { MailTemplate } from "@/types/database"
 import { toast } from "sonner"
@@ -176,6 +202,28 @@ export default function SettingsMailPage() {
   const [pendingDeleteTemplate, setPendingDeleteTemplate] =
     React.useState<MailTemplate | null>(null)
   const [deletingTemplate, setDeletingTemplate] = React.useState(false)
+  // Row-expansion state for the new list-style layout. Built-ins and saved
+  // templates each get their own set since they live in separate tables.
+  const [expandedBuiltinIds, setExpandedBuiltinIds] = React.useState<
+    Set<string>
+  >(new Set())
+  const [expandedSavedIds, setExpandedSavedIds] = React.useState<Set<string>>(
+    new Set(),
+  )
+  // The View dialog shows an iframe preview. For built-ins the HTML is already
+  // preloaded in builtinPreviews; for saved templates we fetch it on demand
+  // and cache it here, mirroring how mail history fetches body_html lazily.
+  type PreviewDialogState =
+    | null
+    | {
+        title: string
+        subtitle?: string
+        status: "loading" | "ready" | "error"
+        html?: string
+        error?: string
+      }
+  const [previewDialog, setPreviewDialog] =
+    React.useState<PreviewDialogState>(null)
 
   async function loadTemplates() {
     setLoadingTemplates(true)
@@ -469,6 +517,106 @@ export default function SettingsMailPage() {
     }
   }
 
+  function themeLabelFor(type: MailTemplateType): string {
+    if (type === "plain") return t("mail.themes.plain", "Plain")
+    if (type === "plain_os") return t("mail.themes.plainOs", "Plain OS")
+    if (type === "campaign") return t("mail.themes.campaign", "Campaign")
+    return t("mail.themes.default", "Default")
+  }
+
+  function toggleBuiltinExpanded(id: string) {
+    setExpandedBuiltinIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSavedExpanded(id: string) {
+    setExpandedSavedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function openBuiltinPreview(builtin: BuiltinTemplatePreview) {
+    setPreviewDialog({
+      title: builtin.name,
+      subtitle: t("settings.mailTemplates.builtInBadge", "Built-in"),
+      status: "ready",
+      html: builtin.html,
+    })
+  }
+
+  // Saved templates don't ship with rendered HTML — fetch /api/email in
+  // preview mode on demand, same approach as the editor's live preview.
+  async function openSavedPreview(template: MailTemplate) {
+    setPreviewDialog({
+      title: template.name,
+      subtitle: themeLabelFor(template.template_type),
+      status: "loading",
+    })
+
+    const apiTemplate =
+      template.template_type === "plain"
+        ? "plain"
+        : template.template_type === "campaign"
+          ? "campaign"
+          : "content"
+
+    try {
+      const response = await fetch("/api/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: ["preview@example.com"],
+          template: apiTemplate,
+          mode: "preview",
+          data: template.payload ?? {},
+        }),
+      })
+
+      const result = (await response.json()) as { html?: string }
+      if (!response.ok) {
+        setPreviewDialog((current) =>
+          current
+            ? {
+                ...current,
+                status: "error",
+                error: t(
+                  "settings.mailTemplates.preview.loadFailed",
+                  "Failed to load preview",
+                ),
+              }
+            : current,
+        )
+        return
+      }
+
+      setPreviewDialog((current) =>
+        current
+          ? { ...current, status: "ready", html: result.html ?? "" }
+          : current,
+      )
+    } catch {
+      setPreviewDialog((current) =>
+        current
+          ? {
+              ...current,
+              status: "error",
+              error: t(
+                "settings.mailTemplates.preview.loadFailed",
+                "Failed to load preview",
+              ),
+            }
+          : current,
+      )
+    }
+  }
+
   if (!isAdmin) {
     return <div className="h-40 rounded-lg border bg-muted/20" />
   }
@@ -477,25 +625,19 @@ export default function SettingsMailPage() {
     <div className="space-y-6">
       {!editorOpen ? (
         <>
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-semibold">
-                {t("settings.mailTemplates.existing", "Existing templates")}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {t(
-                  "settings.mailTemplates.existingDescription",
-                  "Templates available to users when sending emails.",
-                )}
-              </p>
-            </div>
-
-            <Button onClick={openCreateTemplate}>
-              <Plus className="size-4" />
-              {t("settings.mailTemplates.create", "Create new template")}
-            </Button>
+          <div>
+            <h3 className="text-base font-semibold">
+              {t("settings.mailTemplates.existing", "Existing templates")}
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {t(
+                "settings.mailTemplates.existingDescription",
+                "Templates available to users when sending emails.",
+              )}
+            </p>
           </div>
 
+          {/* Built-in layouts as a list with expandable rows */}
           <div className="space-y-3">
             <div>
               <h3 className="text-sm font-semibold">
@@ -510,70 +652,141 @@ export default function SettingsMailPage() {
             </div>
 
             {loadingBuiltinPreviews ? (
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
                 {Array.from({ length: 4 }).map((_, index) => (
-                  <div key={index} className="h-48 animate-pulse rounded-lg border bg-muted/20" />
+                  <Skeleton key={index} className="h-12 w-full rounded-md" />
                 ))}
               </div>
             ) : (
-              <div className="grid gap-3 md:grid-cols-2">
-                {builtinPreviews.map((template) => {
-                  const themeLabel =
-                    template.id === "plain"
-                      ? t("mail.themes.plain", "Plain")
-                      : template.id === "plain_os"
-                        ? t("mail.themes.plainOs", "Plain OS")
-                        : template.id === "campaign"
-                          ? t("mail.themes.campaign", "Campaign")
-                          : t("mail.themes.default", "Default")
-                  return (
-                  <Card key={template.id}>
-                    <CardHeader className="space-y-1 pb-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex flex-col">
-                          <CardTitle className="text-sm font-semibold">{themeLabel}</CardTitle>
-                          {template.name !== themeLabel ? (
-                            <span className="text-xs text-muted-foreground">
-                              {template.name}
-                            </span>
+              <div className="overflow-hidden rounded-md border">
+                <Table className="table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10" />
+                      <TableHead>
+                        {t("settings.mailTemplates.list.layout", "Layout")}
+                      </TableHead>
+                      <TableHead className="w-[140px] text-right" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {builtinPreviews.map((builtin) => {
+                      const themeLabel = themeLabelFor(builtin.id)
+                      const expanded = expandedBuiltinIds.has(builtin.id)
+                      return (
+                        <React.Fragment key={builtin.id}>
+                          <TableRow
+                            className="cursor-pointer"
+                            onClick={() => toggleBuiltinExpanded(builtin.id)}
+                          >
+                            <TableCell className="w-10 text-muted-foreground">
+                              <div className="flex items-center justify-center">
+                                <ChevronDown
+                                  className={cn(
+                                    "size-4 transition-transform",
+                                    expanded && "rotate-180",
+                                  )}
+                                />
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{themeLabel}</span>
+                                <Badge
+                                  variant="secondary"
+                                  className="text-[10px] uppercase"
+                                >
+                                  {t(
+                                    "settings.mailTemplates.builtInBadge",
+                                    "Built-in",
+                                  )}
+                                </Badge>
+                              </div>
+                            </TableCell>
+                            <TableCell className="w-[140px] text-right">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  openBuiltInTemplate(builtin.id, builtin.name)
+                                }}
+                              >
+                                {t(
+                                  "settings.mailTemplates.useTemplate",
+                                  "Use layout",
+                                )}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+
+                          {expanded ? (
+                            <TableRow className="bg-muted/30 hover:bg-muted/30">
+                              <TableCell />
+                              <TableCell colSpan={2} className="whitespace-normal">
+                                <div className="flex items-center justify-between gap-3 py-1">
+                                  <p className="text-xs text-muted-foreground">
+                                    {t(
+                                      "settings.mailTemplates.list.builtInExpandedHint",
+                                      "Open a full preview, or use this layout to start a new template.",
+                                    )}
+                                  </p>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      openBuiltinPreview(builtin)
+                                    }}
+                                  >
+                                    <Eye className="size-3.5" />
+                                    {t(
+                                      "settings.mailTemplates.list.view",
+                                      "View",
+                                    )}
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
                           ) : null}
-                        </div>
-                        <Badge variant="secondary" className="text-[10px] uppercase">
-                          {t("settings.mailTemplates.builtInBadge", "Built-in")}
-                        </Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      {template.html ? (
-                        <iframe
-                          title={`${template.name} preview`}
-                          className="h-40 w-full rounded-md border bg-white"
-                          srcDoc={template.html}
-                        />
-                      ) : (
-                        <div className="flex h-40 items-center justify-center rounded-md border bg-muted/20 text-xs text-muted-foreground">
-                          {t("settings.mailTemplates.previewUnavailable", "Preview unavailable")}
-                        </div>
-                      )}
-                      <div className="mt-3 flex justify-end">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openBuiltInTemplate(template.id, template.name)}
-                        >
-                          {t("settings.mailTemplates.useTemplate", "Use template")}
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                  )
-                })}
+                        </React.Fragment>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
               </div>
             )}
           </div>
 
+          {/* Create button sits between built-ins and the saved list */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold">
+                {t(
+                  "settings.mailTemplates.savedHeader",
+                  "Saved templates",
+                )}
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "settings.mailTemplates.savedDescription",
+                  "Custom templates you've saved.",
+                )}
+              </p>
+            </div>
+            <Button onClick={openCreateTemplate}>
+              <Plus className="size-4" />
+              {t("settings.mailTemplates.create", "Create new template")}
+            </Button>
+          </div>
+
+          {/* Saved templates as a list with expandable rows */}
           {loadingTemplates ? (
-            <div className="h-36 animate-pulse rounded-lg border bg-muted/20" />
+            <div className="space-y-2">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <Skeleton key={index} className="h-12 w-full rounded-md" />
+              ))}
+            </div>
           ) : templates.length === 0 ? (
             <Card>
               <CardContent className="py-8 text-sm text-muted-foreground">
@@ -581,45 +794,114 @@ export default function SettingsMailPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              {templates.map((template) => (
-                <Card key={template.id}>
-                  <CardHeader className="space-y-1 pb-2">
-                    <CardTitle className="text-sm font-semibold">{template.name}</CardTitle>
-                    <CardDescription>
-                      {template.template_type === "plain"
-                        ? t("mail.themes.plain", "Plain")
-                        : template.template_type === "plain_os"
-                          ? t("mail.themes.plainOs", "Plain OS")
-                          : template.template_type === "campaign"
-                            ? t("mail.themes.campaign", "Campaign")
-                            : t("mail.themes.default", "Default")}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex items-center justify-between pt-0">
-                    <span className="text-xs text-muted-foreground">
-                      {template.is_active
-                        ? t("settings.mailTemplates.active", "Active")
-                        : t("settings.mailTemplates.inactive", "Inactive")}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => openEditTemplate(template)}>
-                        <Pencil className="size-3.5" />
-                        {t("settings.mailTemplates.edit", "Edit")}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-destructive"
-                        onClick={() => setPendingDeleteTemplate(template)}
-                      >
-                        <Trash2 className="size-3.5" />
-                        {t("common.delete", "Delete")}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+            <div className="overflow-hidden rounded-md border">
+              <Table className="table-fixed">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10" />
+                    <TableHead>
+                      {t("settings.mailTemplates.list.name", "Name")}
+                    </TableHead>
+                    <TableHead className="w-[140px]">
+                      {t("settings.mailTemplates.list.layout", "Layout")}
+                    </TableHead>
+                    <TableHead className="w-[110px]">
+                      {t("settings.mailTemplates.list.status", "Status")}
+                    </TableHead>
+                    <TableHead className="w-[200px] text-right" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {templates.map((template) => {
+                    const expanded = expandedSavedIds.has(template.id)
+                    return (
+                      <React.Fragment key={template.id}>
+                        <TableRow
+                          className="cursor-pointer"
+                          onClick={() => toggleSavedExpanded(template.id)}
+                        >
+                          <TableCell className="w-10 text-muted-foreground">
+                            <div className="flex items-center justify-center">
+                              <ChevronDown
+                                className={cn(
+                                  "size-4 transition-transform",
+                                  expanded && "rotate-180",
+                                )}
+                              />
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {template.name}
+                          </TableCell>
+                          <TableCell className="w-[140px] text-muted-foreground">
+                            {themeLabelFor(template.template_type)}
+                          </TableCell>
+                          <TableCell className="w-[110px] text-muted-foreground">
+                            {template.is_active
+                              ? t("settings.mailTemplates.active", "Active")
+                              : t("settings.mailTemplates.inactive", "Inactive")}
+                          </TableCell>
+                          <TableCell className="w-[200px] text-right">
+                            <div
+                              className="flex items-center justify-end gap-2"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openEditTemplate(template)}
+                              >
+                                <Pencil className="size-3.5" />
+                                {t("settings.mailTemplates.edit", "Edit")}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                onClick={() =>
+                                  setPendingDeleteTemplate(template)
+                                }
+                              >
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+
+                        {expanded ? (
+                          <TableRow className="bg-muted/30 hover:bg-muted/30">
+                            <TableCell />
+                            <TableCell colSpan={4} className="whitespace-normal">
+                              <div className="flex items-center justify-between gap-3 py-1">
+                                <p className="text-xs text-muted-foreground">
+                                  {t(
+                                    "settings.mailTemplates.list.savedExpandedHint",
+                                    "Open a full preview to see how this template renders.",
+                                  )}
+                                </p>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void openSavedPreview(template)
+                                  }}
+                                >
+                                  <Eye className="size-3.5" />
+                                  {t(
+                                    "settings.mailTemplates.list.view",
+                                    "View",
+                                  )}
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                      </React.Fragment>
+                    )
+                  })}
+                </TableBody>
+              </Table>
             </div>
           )}
         </>
@@ -858,6 +1140,57 @@ export default function SettingsMailPage() {
           </Card>
         </div>
       )}
+
+      <Dialog
+        open={previewDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setPreviewDialog(null)
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              {previewDialog?.title ?? ""}
+            </DialogTitle>
+            {previewDialog?.subtitle ? (
+              <DialogDescription>{previewDialog.subtitle}</DialogDescription>
+            ) : null}
+          </DialogHeader>
+          <div className="rounded-md border bg-white">
+            {previewDialog?.status === "ready" ? (
+              previewDialog.html && previewDialog.html.length > 0 ? (
+                <iframe
+                  title={previewDialog.title}
+                  srcDoc={previewDialog.html}
+                  className="h-[600px] w-full rounded-md"
+                />
+              ) : (
+                <p className="p-4 text-sm text-muted-foreground">
+                  {t(
+                    "settings.mailTemplates.preview.empty",
+                    "No body content was rendered for this template.",
+                  )}
+                </p>
+              )
+            ) : previewDialog?.status === "error" ? (
+              <p className="p-4 text-sm text-destructive">
+                {previewDialog.error ??
+                  t(
+                    "settings.mailTemplates.preview.loadFailed",
+                    "Failed to load preview",
+                  )}
+              </p>
+            ) : (
+              <div className="space-y-2 p-4">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+                <Skeleton className="h-64 w-full" />
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={pendingDeleteTemplate !== null}
