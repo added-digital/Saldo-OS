@@ -137,50 +137,6 @@ function defaultPlainOsForm(t: (key: string, fallback?: string) => string): Plai
   }
 }
 
-// This is default copy for campaign mail
-
-function defaultCampaignForm(t: (key: string, fallback?: string) => string): PlainOsForm {
-  return {
-    subject: t("mail.send.campaignDefaults.subject", "Visste du att aktieboken är ett lagkrav. När uppdaterade ni den senast?"),
-    title: t("mail.send.campaignDefaults.title", "Hej @customer, har ni en uppdaterad aktiebok?"),
-    previewText: t(
-      "mail.send.campaignDefaults.previewText",
-      "Alla aktiebolag ska enligt lag ha en aktiebok som visar vem som äger vad i bolaget.",
-    ),
-    greeting: t("mail.send.campaignDefaults.greeting", ""),
-    paragraphs: t(
-      "mail.send.campaignDefaults.paragraphs",
-      [
-        "Alla aktiebolag ska enligt lag ha en aktiebok som visar vem som äger vad i bolaget. Den ska också hållas uppdaterad när ägarbilden förändras.",
-        "---",
-        "Ändå är det vanligt att aktieboken hamnar i skymundan när bolaget växer, nya delägare tillkommer, emissioner genomförs eller aktier byter ägare. Därför hjälper vi på Saldo företag att digitalisera sin aktiebok.",
-        "---",
-        "Vi går igenom nuläget, säkerställer att ägarbilden stämmer och sätter upp en digital aktiebok där du som ägare enkelt kan logga in och se ditt ägande i bolaget.",
-        "---",
-        "När förändringar sker hjälper vi er att uppdatera aktieboken, så att den fortsätter vara korrekt över tid.",
-        "---",
-        "I de allra flesta fall är er digitala aktiebok på plats redan inom en arbetsdag.",
-        "---",
-        "Pris\n3 000 kr + 15 kr per ägare och månad",
-        "---",
-        "Vill ni få ordning på aktieboken? Svara på det här mailet så hjälper vi er vidare.",
-        "---",
-        "Tel: 08 30 73 00",
-        "E-mail: info@saldoredo.se",
-        "---",
-        "Ni kan också läsa mer nedan:",   
-      ].join("\n\n"),
-    ),
-    ctaLabel: t("mail.send.campaignDefaults.ctaLabel", "Läs mer här"),
-    ctaUrl: "https://www.saldoredo.se/digital-aktiebok",
-    footnote: t(
-      "mail.send.campaignDefaults.footnote",
-      "",
-    ),
-    brandName: "Saldo Redovisning",
-  }
-}
-
 function parseTemplatePayload(payload: Record<string, unknown> | null): {
   plain: Partial<PlainForm>
   plainOs: Partial<PlainOsForm>
@@ -959,10 +915,10 @@ export default function MailPage() {
       return
     }
     if (selectedTemplateValue === "campaign") {
-      // Override the unconditional plain_os reset above with campaign-specific
-      // placeholder copy — the rich form fields are the same shape, just
-      // different default values.
-      setPlainOsForm(defaultCampaignForm(t))
+      // Campaign uses the same form shape as plain_os; the only difference
+      // is the rendered template (left-aligned campaign layout vs the
+      // standard content layout). Defaults stay generic — saved campaign
+      // templates carry their own copy.
       setTemplateType("campaign")
       return
     }
@@ -1287,10 +1243,10 @@ export default function MailPage() {
                 <SelectValue placeholder={t("mail.send.templateSelect", "Template")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="plain">{t("mail.send.optionPlain", "Plain")}</SelectItem>
-                <SelectItem value="default">{t("mail.send.optionDefault", "Default")}</SelectItem>
-                <SelectItem value="plain_os">{t("mail.send.optionPlainOs", "Plain OS")}</SelectItem>
-                <SelectItem value="campaign">{t("mail.send.optionCampaign", "Aktiebok")}</SelectItem>
+                <SelectItem value="plain">{t("mail.themes.plain", "Plain")}</SelectItem>
+                <SelectItem value="default">{t("mail.themes.default", "Default")}</SelectItem>
+                <SelectItem value="plain_os">{t("mail.themes.plainOs", "Plain OS")}</SelectItem>
+                <SelectItem value="campaign">{t("mail.themes.campaign", "Campaign")}</SelectItem>
                 {templates.map((template) => (
                   <SelectItem key={template.id} value={template.id}>
                     {template.name}

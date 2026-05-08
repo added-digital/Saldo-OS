@@ -6,17 +6,38 @@ import { Loader2, Pencil, Plus, Save, Trash2, X } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/hooks/use-user"
 import { useTranslation } from "@/hooks/use-translation"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import type { MailTemplate } from "@/types/database"
 import { toast } from "sonner"
 
-type MailTemplateType = "plain" | "plain_os" | "default"
+type MailTemplateType = "plain" | "plain_os" | "default" | "campaign"
+// Kept for clarity at call sites — every built-in option is now also a valid
+// persisted template_type, so this is just an alias.
+type BuiltinTemplateType = MailTemplateType
+
+type BuiltinTemplatePreview = {
+  id: BuiltinTemplateType
+  name: string
+  html: string
+}
+
+type EditorPreviewTemplate = "plain" | "content" | "campaign"
 
 type TemplateEditorState = {
   id: string | null
@@ -37,9 +58,17 @@ type TemplateEditorState = {
 
 function toParagraphs(raw: string): string[] {
   return raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
+    .split(/\r?\n\s*\r?\n/)
+    .map((paragraph) => {
+      const collapsed = paragraph
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .join("\n")
+      if (collapsed === "---") return "\u200B"
+      return collapsed
+    })
+    .filter((paragraph) => paragraph.length > 0)
 }
 
 function createDefaultEditorState(
@@ -112,7 +141,7 @@ function parseTemplatePayload(
     paragraphs: Array.isArray(payload.paragraphs)
       ? payload.paragraphs
           .filter((entry): entry is string => typeof entry === "string")
-          .join("\n")
+          .join("\n\n")
       : typeof payload.paragraphs === "string"
         ? payload.paragraphs
         : defaultState.paragraphs,
@@ -137,9 +166,16 @@ export default function SettingsMailPage() {
   const [saving, setSaving] = React.useState(false)
   const [previewLoading, setPreviewLoading] = React.useState(false)
   const [previewHtml, setPreviewHtml] = React.useState("")
+  const [editorPreviewTemplate, setEditorPreviewTemplate] = React.useState<EditorPreviewTemplate>("content")
+  const [editingBuiltInName, setEditingBuiltInName] = React.useState<string | null>(null)
+  const [builtinPreviews, setBuiltinPreviews] = React.useState<BuiltinTemplatePreview[]>([])
+  const [loadingBuiltinPreviews, setLoadingBuiltinPreviews] = React.useState(true)
   const [editor, setEditor] = React.useState<TemplateEditorState>(() =>
     createDefaultEditorState(t),
   )
+  const [pendingDeleteTemplate, setPendingDeleteTemplate] =
+    React.useState<MailTemplate | null>(null)
+  const [deletingTemplate, setDeletingTemplate] = React.useState(false)
 
   async function loadTemplates() {
     setLoadingTemplates(true)
@@ -158,6 +194,91 @@ export default function SettingsMailPage() {
   }, [])
 
   React.useEffect(() => {
+    let isCancelled = false
+
+    async function loadBuiltinPreviews() {
+      setLoadingBuiltinPreviews(true)
+
+      const defaultState = createDefaultEditorState(t)
+      const plainState = { ...defaultState, templateType: "plain" as const }
+      const plainOsState = { ...defaultState, templateType: "plain_os" as const }
+      const campaignState = { ...defaultState, templateType: "campaign" as const }
+
+      const definitions: Array<{
+        id: BuiltinTemplateType
+        name: string
+        template: "plain" | "content" | "campaign"
+        payload: Record<string, unknown>
+      }> = [
+        {
+          id: "plain",
+          name: t("mail.send.optionPlain", "Plain"),
+          template: "plain",
+          payload: toTemplatePayload(plainState),
+        },
+        {
+          id: "default",
+          name: t("mail.send.optionDefault", "Default"),
+          template: "content",
+          payload: toTemplatePayload(defaultState),
+        },
+        {
+          id: "plain_os",
+          name: t("mail.send.optionPlainOs", "Plain OS"),
+          template: "content",
+          payload: toTemplatePayload(plainOsState),
+        },
+        {
+          id: "campaign",
+          name: t("mail.themes.campaign", "Campaign"),
+          template: "campaign",
+          payload: toTemplatePayload(campaignState),
+        },
+      ]
+
+      const previews = await Promise.all(
+        definitions.map(async (definition) => {
+          try {
+            const response = await fetch("/api/email", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                to: ["preview@example.com"],
+                template: definition.template,
+                mode: "preview",
+                data: definition.payload,
+              }),
+            })
+
+            const result = (await response.json()) as { html?: string }
+            return {
+              id: definition.id,
+              name: definition.name,
+              html: response.ok ? (result.html ?? "") : "",
+            }
+          } catch {
+            return {
+              id: definition.id,
+              name: definition.name,
+              html: "",
+            }
+          }
+        }),
+      )
+
+      if (isCancelled) return
+      setBuiltinPreviews(previews)
+      setLoadingBuiltinPreviews(false)
+    }
+
+    void loadBuiltinPreviews()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [t])
+
+  React.useEffect(() => {
     if (!editorOpen) return
     const abortController = new AbortController()
     const timeout = window.setTimeout(async () => {
@@ -168,7 +289,7 @@ export default function SettingsMailPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: ["preview@example.com"],
-            template: editor.templateType === "plain" ? "plain" : "content",
+            template: editorPreviewTemplate,
             mode: "preview",
             data: toTemplatePayload(editor),
           }),
@@ -197,15 +318,59 @@ export default function SettingsMailPage() {
       abortController.abort()
       window.clearTimeout(timeout)
     }
-  }, [editor, editorOpen])
+  }, [editor, editorOpen, editorPreviewTemplate])
 
   function openCreateTemplate() {
     setEditor(createDefaultEditorState(t))
+    setEditorPreviewTemplate("content")
+    setEditingBuiltInName(null)
     setEditorOpen(true)
   }
 
   function openEditTemplate(template: MailTemplate) {
     setEditor(parseTemplatePayload(template, t))
+    setEditorPreviewTemplate(
+      template.template_type === "plain"
+        ? "plain"
+        : template.template_type === "campaign"
+          ? "campaign"
+          : "content",
+    )
+    setEditingBuiltInName(null)
+    setEditorOpen(true)
+  }
+
+  function openBuiltInTemplate(templateId: BuiltinTemplateType, templateName: string) {
+    if (templateId === "plain") {
+      const next = { ...createDefaultEditorState(t), name: templateName, templateType: "plain" as const }
+      setEditor(next)
+      setEditorPreviewTemplate("plain")
+      setEditingBuiltInName(templateName)
+      setEditorOpen(true)
+      return
+    }
+
+    if (templateId === "campaign") {
+      const next = {
+        ...createDefaultEditorState(t),
+        name: templateName,
+        templateType: "campaign" as const,
+      }
+      setEditor(next)
+      setEditorPreviewTemplate("campaign")
+      setEditingBuiltInName(templateName)
+      setEditorOpen(true)
+      return
+    }
+
+    const next = {
+      ...createDefaultEditorState(t),
+      name: templateName,
+      templateType: templateId,
+    }
+    setEditor(next)
+    setEditorPreviewTemplate("content")
+    setEditingBuiltInName(templateName)
     setEditorOpen(true)
   }
 
@@ -218,36 +383,55 @@ export default function SettingsMailPage() {
     setSaving(true)
     const supabase = createClient()
     const payload = toTemplatePayload(editor)
+    // Anything outside the four known types falls back to "default" so we
+    // never violate the DB check constraint if the editor state somehow holds
+    // a stale or unexpected string.
+    const persistedTemplateType: MailTemplateType =
+      editor.templateType === "plain" ||
+      editor.templateType === "plain_os" ||
+      editor.templateType === "campaign"
+        ? editor.templateType
+        : "default"
 
     if (editor.id) {
       const { error } = await supabase
         .from("mail_templates")
         .update({
           name: editor.name.trim(),
-          template_type: editor.templateType,
+          template_type: persistedTemplateType,
           payload,
           is_active: editor.isActive,
         } as never)
         .eq("id", editor.id)
 
       if (error) {
-        toast.error(t("settings.mailTemplates.toast.saveFailed", "Failed to save template"))
+        toast.error(
+          `${t("settings.mailTemplates.toast.saveFailed", "Failed to save template")}: ${error.message}`,
+        )
         setSaving(false)
         return
       }
     } else {
+      if (!user?.id) {
+        toast.error(t("settings.mailTemplates.toast.saveFailed", "Failed to save template"))
+        setSaving(false)
+        return
+      }
+
       const { error } = await supabase
         .from("mail_templates")
         .insert({
           name: editor.name.trim(),
-          template_type: editor.templateType,
+          template_type: persistedTemplateType,
           payload,
           is_active: editor.isActive,
           created_by: user.id,
         } as never)
 
       if (error) {
-        toast.error(t("settings.mailTemplates.toast.saveFailed", "Failed to save template"))
+        toast.error(
+          `${t("settings.mailTemplates.toast.saveFailed", "Failed to save template")}: ${error.message}`,
+        )
         setSaving(false)
         return
       }
@@ -256,23 +440,33 @@ export default function SettingsMailPage() {
     toast.success(t("settings.mailTemplates.toast.saved", "Template saved"))
     setSaving(false)
     setEditorOpen(false)
+    setEditingBuiltInName(null)
     await loadTemplates()
   }
 
-  async function handleDeleteTemplate(templateId: string) {
-    const supabase = createClient()
-    const { error } = await supabase
-      .from("mail_templates")
-      .delete()
-      .eq("id", templateId)
+  async function handleConfirmDeleteTemplate() {
+    if (!pendingDeleteTemplate) return
+    setDeletingTemplate(true)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase
+        .from("mail_templates")
+        .delete()
+        .eq("id", pendingDeleteTemplate.id)
 
-    if (error) {
-      toast.error(t("settings.mailTemplates.toast.deleteFailed", "Failed to delete template"))
-      return
+      if (error) {
+        toast.error(
+          `${t("settings.mailTemplates.toast.deleteFailed", "Failed to delete template")}: ${error.message}`,
+        )
+        return
+      }
+
+      toast.success(t("settings.mailTemplates.toast.deleted", "Template deleted"))
+      setPendingDeleteTemplate(null)
+      await loadTemplates()
+    } finally {
+      setDeletingTemplate(false)
     }
-
-    toast.success(t("settings.mailTemplates.toast.deleted", "Template deleted"))
-    await loadTemplates()
   }
 
   if (!isAdmin) {
@@ -302,6 +496,82 @@ export default function SettingsMailPage() {
             </Button>
           </div>
 
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold">
+                {t("settings.mailTemplates.builtIn", "Built-in layouts")}
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "settings.mailTemplates.builtInDescription",
+                  "Default layouts available in Send mail.",
+                )}
+              </p>
+            </div>
+
+            {loadingBuiltinPreviews ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div key={index} className="h-48 animate-pulse rounded-lg border bg-muted/20" />
+                ))}
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                {builtinPreviews.map((template) => {
+                  const themeLabel =
+                    template.id === "plain"
+                      ? t("mail.themes.plain", "Plain")
+                      : template.id === "plain_os"
+                        ? t("mail.themes.plainOs", "Plain OS")
+                        : template.id === "campaign"
+                          ? t("mail.themes.campaign", "Campaign")
+                          : t("mail.themes.default", "Default")
+                  return (
+                  <Card key={template.id}>
+                    <CardHeader className="space-y-1 pb-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-col">
+                          <CardTitle className="text-sm font-semibold">{themeLabel}</CardTitle>
+                          {template.name !== themeLabel ? (
+                            <span className="text-xs text-muted-foreground">
+                              {template.name}
+                            </span>
+                          ) : null}
+                        </div>
+                        <Badge variant="secondary" className="text-[10px] uppercase">
+                          {t("settings.mailTemplates.builtInBadge", "Built-in")}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      {template.html ? (
+                        <iframe
+                          title={`${template.name} preview`}
+                          className="h-40 w-full rounded-md border bg-white"
+                          srcDoc={template.html}
+                        />
+                      ) : (
+                        <div className="flex h-40 items-center justify-center rounded-md border bg-muted/20 text-xs text-muted-foreground">
+                          {t("settings.mailTemplates.previewUnavailable", "Preview unavailable")}
+                        </div>
+                      )}
+                      <div className="mt-3 flex justify-end">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openBuiltInTemplate(template.id, template.name)}
+                        >
+                          {t("settings.mailTemplates.useTemplate", "Use template")}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           {loadingTemplates ? (
             <div className="h-36 animate-pulse rounded-lg border bg-muted/20" />
           ) : templates.length === 0 ? (
@@ -318,10 +588,12 @@ export default function SettingsMailPage() {
                     <CardTitle className="text-sm font-semibold">{template.name}</CardTitle>
                     <CardDescription>
                       {template.template_type === "plain"
-                        ? t("mail.send.optionPlain", "Plain")
+                        ? t("mail.themes.plain", "Plain")
                         : template.template_type === "plain_os"
-                          ? t("mail.send.optionPlainOs", "Plain OS")
-                          : t("mail.send.optionDefault", "Default")}
+                          ? t("mail.themes.plainOs", "Plain OS")
+                          : template.template_type === "campaign"
+                            ? t("mail.themes.campaign", "Campaign")
+                            : t("mail.themes.default", "Default")}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="flex items-center justify-between pt-0">
@@ -339,7 +611,7 @@ export default function SettingsMailPage() {
                         variant="outline"
                         size="sm"
                         className="text-destructive"
-                        onClick={() => handleDeleteTemplate(template.id)}
+                        onClick={() => setPendingDeleteTemplate(template)}
                       >
                         <Trash2 className="size-3.5" />
                         {t("common.delete", "Delete")}
@@ -361,6 +633,13 @@ export default function SettingsMailPage() {
                   : t("settings.mailTemplates.createTemplate", "Create template")}
               </CardTitle>
               <CardDescription>
+                {editingBuiltInName
+                  ? t(
+                      "settings.mailTemplates.editingBuiltIn",
+                      `Editing built-in draft: ${editingBuiltInName}`,
+                    )
+                  : null}
+                {editingBuiltInName ? <br /> : null}
                 {t(
                   "settings.mailTemplates.editorDescription",
                   "Saved templates are available in the Mail send view.",
@@ -374,40 +653,17 @@ export default function SettingsMailPage() {
             </CardHeader>
 
             <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="template-name">
-                    {t("settings.mailTemplates.templateName", "Template name")}
-                  </Label>
-                  <Input
-                    id="template-name"
-                    value={editor.name}
-                    onChange={(event) =>
-                      setEditor((current) => ({ ...current, name: event.target.value }))
-                    }
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="template-type">
-                    {t("settings.mailTemplates.templateType", "Template type")}
-                  </Label>
-                  <Select
-                    value={editor.templateType}
-                    onValueChange={(value: MailTemplateType) =>
-                      setEditor((current) => ({ ...current, templateType: value }))
-                    }
-                  >
-                    <SelectTrigger id="template-type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="plain">{t("mail.send.optionPlain", "Plain")}</SelectItem>
-                      <SelectItem value="default">{t("mail.send.optionDefault", "Default")}</SelectItem>
-                      <SelectItem value="plain_os">{t("mail.send.optionPlainOs", "Plain OS")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="template-name">
+                  {t("settings.mailTemplates.templateName", "Template name")}
+                </Label>
+                <Input
+                  id="template-name"
+                  value={editor.name}
+                  onChange={(event) =>
+                    setEditor((current) => ({ ...current, name: event.target.value }))
+                  }
+                />
               </div>
 
               <div className="flex items-center justify-between rounded-md border p-3">
@@ -492,7 +748,7 @@ export default function SettingsMailPage() {
 
                   <div className="space-y-2">
                     <Label htmlFor="template-paragraphs">
-                      {t("settings.mail.contentParagraphs", "Content paragraphs (one line per paragraph)")}
+                      {t("settings.mail.contentParagraphs", "Content paragraphs (separate paragraphs with an empty line)")}
                     </Label>
                     <Textarea
                       id="template-paragraphs"
@@ -556,9 +812,19 @@ export default function SettingsMailPage() {
               <div className="flex items-center gap-2">
                 <Button onClick={handleSaveTemplate} disabled={saving || previewLoading}>
                   {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                  {t("settings.mailTemplates.saveTemplate", "Save template")}
+                  {editor.id
+                    ? t("settings.mailTemplates.saveTemplate", "Save template")
+                    : editingBuiltInName
+                    ? t("settings.mailTemplates.saveAsNew", "Save as new template")
+                    : t("settings.mailTemplates.saveTemplate", "Save template")}
                 </Button>
-                <Button variant="outline" onClick={() => setEditorOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEditorOpen(false)
+                    setEditingBuiltInName(null)
+                  }}
+                >
                   <X className="size-4" />
                   {t("common.cancel", "Cancel")}
                 </Button>
@@ -591,6 +857,61 @@ export default function SettingsMailPage() {
           </Card>
         </div>
       )}
+
+      <AlertDialog
+        open={pendingDeleteTemplate !== null}
+        onOpenChange={(open) => {
+          if (!open && !deletingTemplate) setPendingDeleteTemplate(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t(
+                "settings.mailTemplates.delete.confirmTitle",
+                "Delete this template?",
+              )}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                "settings.mailTemplates.delete.confirmDescription",
+                "This permanently removes the template. Any saved drafts that referenced it will fall back to the built-in defaults.",
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {pendingDeleteTemplate ? (
+            <div className="rounded-md border bg-muted/30 p-3 text-sm">
+              <p className="truncate font-medium">{pendingDeleteTemplate.name}</p>
+              <p className="text-xs text-muted-foreground">
+                {pendingDeleteTemplate.template_type === "plain"
+                  ? t("mail.themes.plain", "Plain")
+                  : pendingDeleteTemplate.template_type === "plain_os"
+                    ? t("mail.themes.plainOs", "Plain OS")
+                    : pendingDeleteTemplate.template_type === "campaign"
+                      ? t("mail.themes.campaign", "Campaign")
+                      : t("mail.themes.default", "Default")}
+              </p>
+            </div>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingTemplate}>
+              {t("settings.mailTemplates.delete.cancel", "Cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault()
+                void handleConfirmDeleteTemplate()
+              }}
+              disabled={deletingTemplate}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingTemplate
+                ? t("settings.mailTemplates.delete.confirming", "Deleting…")
+                : t("settings.mailTemplates.delete.confirm", "Delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
