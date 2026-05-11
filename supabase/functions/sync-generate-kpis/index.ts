@@ -946,26 +946,32 @@ Deno.serve(async (req) => {
           customerByNumber,
         )
 
-        if (!customer) continue
-
         const amount = Number(row.hours ?? 0)
-        const totals = getCustomerTotalsDelta(customerTotals, customer.id)
-        totals.total_hours += amount
-
         const entryType = normalizeText(row.entry_type)
         const isCustomerHours = entryType === "time"
         const isAbsenceHours = entryType === "absence"
         const isInternalHours = entryType === "internal"
-        const isOtherHours = !isCustomerHours && !isAbsenceHours && !isInternalHours
-        const isCustomerIdOne = normalizeIdentifier(row.fortnox_customer_number) === "1"
+        const isOtherHours =
+          !isCustomerHours && !isAbsenceHours && !isInternalHours
+        const isCustomerIdOne =
+          normalizeIdentifier(row.fortnox_customer_number) === "1"
 
-        addDatedKpiValues(periodKpis, customer, row.report_date, {
-          hours: amount,
-          customerHours: isCustomerHours ? amount : 0,
-          absenceHours: isAbsenceHours ? amount : 0,
-          internalHours: isInternalHours ? amount : 0,
-          otherHours: isOtherHours ? amount : 0,
-        })
+        // Customer-level rollups only run when there's a customer to roll up
+        // against. Absence rows from Fortnox (sick days, vacation, parental
+        // leave) usually have no customer attached, so we skip those rollups
+        // for them but still let the row reach the manager rollup below.
+        if (customer) {
+          const totals = getCustomerTotalsDelta(customerTotals, customer.id)
+          totals.total_hours += amount
+
+          addDatedKpiValues(periodKpis, customer, row.report_date, {
+            hours: amount,
+            customerHours: isCustomerHours ? amount : 0,
+            absenceHours: isAbsenceHours ? amount : 0,
+            internalHours: isInternalHours ? amount : 0,
+            otherHours: isOtherHours ? amount : 0,
+          })
+        }
 
         const dateParts = getDateParts(row.report_date)
         if (!dateParts) continue
@@ -984,7 +990,10 @@ Deno.serve(async (req) => {
 
         const managerKpi = getManagerPeriodKpiDelta(managerPeriodKpis, {
           managerProfileId: managerId,
-          customerManagerProfileId: customer.customerManagerProfileId,
+          // Customer manager only exists when the row is tied to a customer.
+          // For unattached absence rows we pass null so the rollup keys it
+          // under the "none" bucket — the manager-level totals still grow.
+          customerManagerProfileId: customer?.customerManagerProfileId ?? null,
           periodYear: dateParts.year,
           periodMonth: dateParts.month,
         })

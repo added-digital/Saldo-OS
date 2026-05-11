@@ -1,8 +1,9 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, Search, Send, TriangleAlert, X } from "lucide-react"
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, Search, Send, TriangleAlert, X } from "lucide-react"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
@@ -1685,11 +1686,24 @@ export default function MailPage() {
           </div>
 
           {selectedSavedTemplate ? (
-            <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
-              {t(
-                "mail.send.savedTemplateLocked",
-                "Using saved template content. To edit fields, switch to Plain or Plain OS.",
-              )}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
+              <span>
+                {t(
+                  "mail.send.savedTemplateLocked",
+                  "Using saved template content.",
+                )}
+              </span>
+              <Button
+                asChild
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5"
+              >
+                <Link href="/settings/mail">
+                  <Pencil className="size-3.5" />
+                  {t("mail.send.savedTemplateEdit", "Edit template")}
+                </Link>
+              </Button>
             </div>
           ) : templateType === "plain" ? (
             <>
