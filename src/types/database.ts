@@ -387,6 +387,30 @@ export interface MailTemplate {
   updated_at: string
 }
 
+export type SieConnectionStatus =
+  | "pending"
+  | "active"
+  | "needs_reauth"
+  | "error"
+
+export interface SieConnection {
+  id: string
+  customer_id: string
+  fortnox_tenant_id: string | null
+  access_token: string | null
+  refresh_token: string | null
+  access_token_expires_at: string | null
+  refresh_token_expires_at: string | null
+  scope: string | null
+  connection_status: SieConnectionStatus
+  last_synced_at: string | null
+  last_error: string | null
+  connected_at: string | null
+  connected_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface Document {
   id: string
   storage_path: string
