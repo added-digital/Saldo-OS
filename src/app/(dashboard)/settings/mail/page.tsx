@@ -164,12 +164,19 @@ function parseTemplatePayload(
         : defaultState.previewText,
     greeting:
       typeof payload.greeting === "string" ? payload.greeting : defaultState.greeting,
+    // When the saved payload comes back from the DB, the spacer entries are
+    // stored as the U+200B (zero-width space) sentinel produced by
+    // toParagraphs(). Invert that back to the literal "---" marker before
+    // populating the textarea so the user can see (and re-edit) where the
+    // empty-paragraph gaps live. Without this they'd see a blank line and
+    // wouldn't know how to recreate one.
     paragraphs: Array.isArray(payload.paragraphs)
       ? payload.paragraphs
           .filter((entry): entry is string => typeof entry === "string")
+          .map((entry) => (entry === "​" ? "---" : entry))
           .join("\n\n")
       : typeof payload.paragraphs === "string"
-        ? payload.paragraphs
+        ? payload.paragraphs.replace(/​/g, "---")
         : defaultState.paragraphs,
     ctaLabel:
       typeof payload.ctaLabel === "string" ? payload.ctaLabel : defaultState.ctaLabel,
