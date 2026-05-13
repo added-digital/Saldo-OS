@@ -126,6 +126,7 @@ export default function ContactsPage() {
   const {
     data: contactsData,
     loading,
+    refreshing,
     refresh: refreshContacts,
   } = useCachedData<ContactsPagePayload>({
     key: `contacts.v1.${user.id}`,
@@ -813,7 +814,16 @@ export default function ContactsPage() {
           : `${t("settings.contacts.showing", "Showing")} ${pageStart}–${pageEnd} ${t("settings.contacts.of", "of")} ${filteredContacts.length} ${t("settings.contacts.contacts", "contacts")}`}
       </p>
 
-      {loading ? (
+      {/*
+        Show the skeleton when:
+        - We have no data yet (cold cache), OR
+        - We do have a cached result but it's empty and a refresh is in
+          flight. The empty-state flash was caused by a stale cache from
+          before the API gate was relaxed — empty + refreshing means
+          "the truth might be different in a moment", so don't claim
+          there are zero contacts yet.
+      */}
+      {loading || (refreshing && filteredContacts.length === 0) ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 6 }).map((_, index) => (
             <div
