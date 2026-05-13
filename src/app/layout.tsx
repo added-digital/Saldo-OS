@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { DevelopmentBadge } from "@/components/app/development-badge"
 import { system } from "@/config/system"
 import { LanguageProvider } from "@/hooks/use-language"
 import "./globals.css"
@@ -37,6 +38,7 @@ export default function RootLayout({
         <LanguageProvider>
           <TooltipProvider delayDuration={300}>
             {children}
+            <DevelopmentBadge />
             <Toaster richColors closeButton position="bottom-right" />
           </TooltipProvider>
         </LanguageProvider>
