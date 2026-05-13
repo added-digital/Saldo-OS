@@ -315,7 +315,7 @@ function parseManualEmailInput(input: string): string[] {
 
 export default function MailPage() {
   const { t } = useTranslation()
-  const { user } = useUser()
+  const { user, isAdmin } = useUser()
   const searchParams = useSearchParams()
   const [customerOptions, setCustomerOptions] = React.useState<MailRecipientCustomer[]>([])
   const [contactOptions, setContactOptions] = React.useState<MailRecipientContact[]>([])
@@ -1693,17 +1693,19 @@ export default function MailPage() {
                   "Using saved template content.",
                 )}
               </span>
-              <Button
-                asChild
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1.5"
-              >
-                <Link href="/settings/mail">
-                  <Pencil className="size-3.5" />
-                  {t("mail.send.savedTemplateEdit", "Edit template")}
-                </Link>
-              </Button>
+              {isAdmin ? (
+                <Button
+                  asChild
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5"
+                >
+                  <Link href="/settings/mail">
+                    <Pencil className="size-3.5" />
+                    {t("mail.send.savedTemplateEdit", "Edit template")}
+                  </Link>
+                </Button>
+              ) : null}
             </div>
           ) : templateType === "plain" ? (
             <>
