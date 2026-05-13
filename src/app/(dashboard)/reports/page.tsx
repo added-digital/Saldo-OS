@@ -1146,10 +1146,20 @@ function renderWorkloadShareCell(percentage: number) {
 
     if (filteredCustomers.length === 0) return;
 
-    const customerScope = filteredCustomers.map((customer) => ({
-      id: customer.id,
-      fortnoxCustomerNumber: customer.fortnox_customer_number,
-    }));
+    // When the metric is customer_hours, drop internal customers (Saldo Redo's
+    // own books) from the scope so their entries never reach the drill-down.
+    // The aggregate already excludes them; mirroring it here keeps the detail
+    // list consistent with the column total.
+    const customerScope = filteredCustomers
+      .map((customer) => ({
+        id: customer.id,
+        fortnoxCustomerNumber: customer.fortnox_customer_number,
+      }))
+      .filter((customer) =>
+        metric === "customerHours"
+          ? !isInternalFortnoxCustomer(customer.fortnoxCustomerNumber)
+          : true,
+      );
     const customerScopeChunks = chunkArray(customerScope, 200);
 
     setTimeDetailsOpen(true);
@@ -1276,10 +1286,18 @@ function renderWorkloadShareCell(percentage: number) {
       `${row.contributorName} · ${metricLabel(metric)} · ${rollingWindow.title}`,
     );
 
-    const customerScope = filteredCustomers.map((customer) => ({
-      id: customer.id,
-      fortnoxCustomerNumber: customer.fortnox_customer_number,
-    }));
+    // See the openMonthlyTimeDetails customer_hours comment — same rule
+    // applies here for the "other managers / contributors" drill-down.
+    const customerScope = filteredCustomers
+      .map((customer) => ({
+        id: customer.id,
+        fortnoxCustomerNumber: customer.fortnox_customer_number,
+      }))
+      .filter((customer) =>
+        metric === "customerHours"
+          ? !isInternalFortnoxCustomer(customer.fortnoxCustomerNumber)
+          : true,
+      );
     const customerScopeChunks = chunkArray(customerScope, 200);
 
     const supabase = createClient();
@@ -1418,10 +1436,17 @@ function renderWorkloadShareCell(percentage: number) {
       `${row.managerName} · ${metricLabel(metric)} · ${rollingWindow.title}`,
     );
 
-    const customerScope = managerCustomers.map((customer) => ({
-      id: customer.id,
-      fortnoxCustomerNumber: customer.fortnox_customer_number,
-    }));
+    // Same internal-customer exclusion as the other two drill-down paths.
+    const customerScope = managerCustomers
+      .map((customer) => ({
+        id: customer.id,
+        fortnoxCustomerNumber: customer.fortnox_customer_number,
+      }))
+      .filter((customer) =>
+        metric === "customerHours"
+          ? !isInternalFortnoxCustomer(customer.fortnoxCustomerNumber)
+          : true,
+      );
     const customerScopeChunks = chunkArray(customerScope, 200);
 
     const supabase = createClient();
