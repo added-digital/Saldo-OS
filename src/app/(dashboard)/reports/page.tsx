@@ -83,6 +83,7 @@ import {
   FETCH_ALL_PAGE_SIZE,
   MONTHLY_UNMAPPED_ARTICLE_GROUP,
   MONTHLY_DEFAULT_EXCLUDED_ARTICLE_GROUP,
+  isInternalFortnoxCustomer,
   REPORTS_FILTERS_STORAGE_KEY,
   turnoverChartConfig,
   parseSavedReportsFilters,
@@ -1120,13 +1121,22 @@ function renderWorkloadShareCell(percentage: number) {
       );
 
       if (metric === "internalHours") {
-        const internalScopeRows = scopedRows.filter(
-          (timeRow) =>
-            normalizeIdentifier(timeRow.fortnox_customer_number) === "1",
+        const internalScopeRows = scopedRows.filter((timeRow) =>
+          isInternalFortnoxCustomer(timeRow.fortnox_customer_number),
         );
         setTimeDetailsRows(
           formatTimeDetailRows(internalScopeRows, "totalHours"),
         );
+      } else if (metric === "customerHours") {
+        // Mirror the aggregate logic in sync-generate-kpis: internal customers
+        // (Saldo Redo's own books) are bucketed as internal_hours, not
+        // customer_hours. Without this filter the drill-down list would leak
+        // those entries even though they don't contribute to the column total.
+        const externalScopeRows = scopedRows.filter(
+          (timeRow) =>
+            !isInternalFortnoxCustomer(timeRow.fortnox_customer_number),
+        );
+        setTimeDetailsRows(formatTimeDetailRows(externalScopeRows, metric));
       } else {
         setTimeDetailsRows(formatTimeDetailRows(scopedRows, metric));
       }

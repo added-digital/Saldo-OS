@@ -16,6 +16,29 @@ export const FETCH_ALL_PAGE_SIZE = 1000;
 export const MONTHLY_UNMAPPED_ARTICLE_GROUP = "__UNMAPPED__";
 export const MONTHLY_DEFAULT_EXCLUDED_ARTICLE_GROUP = "Licenser";
 
+/**
+ * Fortnox customer numbers that represent Saldo Redo's own internal time
+ * (not billable to an external customer). Time logged against these numbers
+ * is bucketed as internal_hours, never as customer_hours.
+ *
+ * Currently only "1" — Saldo Redovisning Stockholm AB. Add more entries
+ * here if Saldo ever introduces additional internal customer rows in
+ * Fortnox. Both the aggregate KPI generator (manager_time_kpis.customer_hours)
+ * and the drill-down detail view import from this list so the rule lives
+ * in one place.
+ */
+export const INTERNAL_FORTNOX_CUSTOMER_NUMBERS = ["1"] as const;
+
+export function isInternalFortnoxCustomer(
+  fortnoxCustomerNumber: string | null | undefined,
+): boolean {
+  if (!fortnoxCustomerNumber) return false;
+  const normalized = fortnoxCustomerNumber.trim();
+  return (INTERNAL_FORTNOX_CUSTOMER_NUMBERS as readonly string[]).includes(
+    normalized,
+  );
+}
+
 export const REPORTS_FILTERS_STORAGE_KEY = "reports.filters.v1";
 
 export const turnoverChartConfig = {
