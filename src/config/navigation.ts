@@ -34,7 +34,7 @@ export const navigation: NavSection[] = [
     title: "Management",
     items: [
       { label: "Customers", href: "/customers", icon: Users, scope: "customers" },
-      { label: "Contacts", href: "/contacts", icon: UserRound, scope: "customers" },
+      { label: "Contacts", href: "/contacts", icon: UserRound },
     ],
   },
   {

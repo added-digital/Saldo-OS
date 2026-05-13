@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 
 import { createAdminClient } from "@/lib/supabase/admin"
 import { createClient } from "@/lib/supabase/server"
-import type { Customer, CustomerContact, Profile } from "@/types/database"
+import type { Customer, CustomerContact } from "@/types/database"
 
 type CustomerOption = Pick<
   Customer,
@@ -94,13 +94,12 @@ async function authorize() {
 
   if (authError || !user) return null
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single<Pick<Profile, "role">>()
-
-  return profile?.role === "admin" ? user : null
+  // The contacts page is now open to all authenticated roles (user,
+  // team_lead, admin). The previous admin-only check 403'd everyone else
+  // before they could see the page. Anyone signed in passes here; the
+  // page can choose to hide destructive controls based on isAdmin in
+  // the UI layer.
+  return user
 }
 
 export async function GET() {
@@ -108,8 +107,8 @@ export async function GET() {
     const user = await authorize()
     if (!user) {
       return NextResponse.json(
-        { error: "Forbidden: Admin access required" },
-        { status: 403 }
+        { error: "Unauthorized" },
+        { status: 401 }
       )
     }
 

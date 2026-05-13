@@ -635,9 +635,12 @@ export default function ContactsPage() {
     await refreshContacts();
   }
 
-  if (!isAdmin) {
-    return <div className="h-48 animate-pulse rounded-lg border bg-muted" />;
-  }
+  // Contacts is now visible to all authenticated roles (user, team_lead,
+  // admin). The previous admin-only gate hid the whole page from regular
+  // users; now they can browse and use it. If specific destructive actions
+  // need to stay admin-only, gate them inline on isAdmin instead of gating
+  // the whole page.
+  void isAdmin;
 
   return (
     <div className="space-y-6">
