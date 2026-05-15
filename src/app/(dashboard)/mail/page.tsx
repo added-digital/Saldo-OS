@@ -130,7 +130,7 @@ function defaultPlainOsForm(t: (key: string, fallback?: string) => string): Plai
     greeting: "",
     paragraphs: t(
       "settings.mail.defaults.paragraphs",
-      "This is a preview of your custom email content.",
+      "This is a preview of your custom email content.\n\n---\n\nAnd this is a second paragraph, separated from the first by a blank line.",
     ),
     ctaLabel: t("settings.mail.defaults.ctaLabel", "Call to action"),
     ctaUrl: process.env.NEXT_PUBLIC_APP_URL || "",

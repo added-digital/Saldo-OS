@@ -123,6 +123,19 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
     scopedCustomerIds = (
       (data ?? []) as unknown as Array<{ id: string }>
     ).map((row) => row.id);
+
+    // Access-restricted detection: the active-customer query returned zero
+    // rows even though we asked for a global rollup. In a real Saldo Redo
+    // database that's never legitimately empty — it means RLS gated the
+    // SELECT and this account doesn't have the customers scope. Surface
+    // explicitly so the model stops looping and tells the user.
+    if (scopedCustomerIds.length === 0) {
+      return {
+        error:
+          "Access restricted: this account doesn't have permission to view customer KPI data.",
+        error_type: "access_restricted",
+      };
+    }
   }
 
   // -------------------------------------------------------------------------

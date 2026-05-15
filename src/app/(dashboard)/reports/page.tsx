@@ -350,6 +350,28 @@ export default function ReportsPage() {
   const [loading, setLoading] = React.useState(true);
   const [teams, setTeams] = React.useState<TeamOption[]>([]);
   const [managers, setManagers] = React.useState<ManagerOption[]>([]);
+  // Lightweight name directory for ALL active profiles, regardless of role.
+  // The filter dropdowns use `managers` (scoped — a team_lead only sees their
+  // own team). But the "Help received / Help given" sections cross team
+  // boundaries by design, so we need a separate directory to resolve names
+  // for managers outside the current scope — otherwise those rows show as
+  // "Unknown" for team_leads and regular users.
+  const [managerDirectory, setManagerDirectory] = React.useState<
+    Map<
+      string,
+      {
+        full_name: string | null
+        email: string
+        fortnox_group_name: string | null
+        team_id: string | null
+      }
+    >
+  >(new Map());
+  // Same idea as managerDirectory but for team names — needed because team_id
+  // → group name resolution otherwise only knows teams in the user's scope.
+  const [teamNameDirectory, setTeamNameDirectory] = React.useState<
+    Map<string, string>
+  >(new Map());
   const [customers, setCustomers] = React.useState<CustomerWithRelations[]>([]);
 
   const [selectedTeamId, setSelectedTeamId] = React.useState<string | null>(
@@ -1593,7 +1615,7 @@ function renderWorkloadShareCell(percentage: number) {
       supabase
         .from("invoices")
         .select(
-          "id, document_number, invoice_date, due_date, total_ex_vat, total, currency_code",
+          "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, currency_code, balance",
         ),
     );
 
@@ -1620,7 +1642,7 @@ function renderWorkloadShareCell(percentage: number) {
         supabase
           .from("invoices")
           .select(
-            "id, document_number, invoice_date, total_ex_vat, total, currency_code",
+            "id, document_number, customer_name, invoice_date, total_ex_vat, total, currency_code, balance",
           ),
       );
 
@@ -1734,7 +1756,7 @@ function renderWorkloadShareCell(percentage: number) {
       supabase
         .from("invoices")
         .select(
-          "id, document_number, invoice_date, due_date, total_ex_vat, total, currency_code",
+          "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, currency_code, balance",
         ),
     );
 
@@ -1761,7 +1783,7 @@ function renderWorkloadShareCell(percentage: number) {
         supabase
           .from("invoices")
           .select(
-            "id, document_number, invoice_date, total_ex_vat, total, currency_code",
+            "id, document_number, customer_name, invoice_date, total_ex_vat, total, currency_code, balance",
           ),
       );
 
@@ -1843,7 +1865,7 @@ function renderWorkloadShareCell(percentage: number) {
       supabase
         .from("invoices")
         .select(
-          "id, document_number, invoice_date, due_date, total_ex_vat, total, currency_code",
+          "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, currency_code, balance",
         ),
     );
 
@@ -1870,7 +1892,7 @@ function renderWorkloadShareCell(percentage: number) {
         supabase
           .from("invoices")
           .select(
-            "id, document_number, invoice_date, total_ex_vat, total, currency_code",
+            "id, document_number, customer_name, invoice_date, total_ex_vat, total, currency_code, balance",
           ),
       );
 
@@ -2255,6 +2277,56 @@ function renderWorkloadShareCell(percentage: number) {
     setTeams(scopedTeams);
     setManagers(sortedManagers);
     setCustomers(enrichedCustomers);
+
+    // Populate the cross-scope directories of profile + team names. For
+    // admins this is redundant with `managers`/`scopedTeams`, but cheap and
+    // keeps a single code path. For team_leads / users this is what lets the
+    // "Help received / Help given" sections show real names AND the manager's
+    // Group column for managers outside their team scope.
+    const [
+      { data: directoryRows },
+      { data: allTeamRows },
+    ] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id, full_name, email, fortnox_group_name, team_id")
+        .eq("is_active", true),
+      supabase.from("teams").select("id, name"),
+    ]);
+
+    const directory = new Map<
+      string,
+      {
+        full_name: string | null
+        email: string
+        fortnox_group_name: string | null
+        team_id: string | null
+      }
+    >();
+    for (const row of (directoryRows ?? []) as Array<{
+      id: string;
+      full_name: string | null;
+      email: string;
+      fortnox_group_name: string | null;
+      team_id: string | null;
+    }>) {
+      directory.set(row.id, {
+        full_name: row.full_name,
+        email: row.email,
+        fortnox_group_name: row.fortnox_group_name,
+        team_id: row.team_id,
+      });
+    }
+    setManagerDirectory(directory);
+
+    const teamsDir = new Map<string, string>();
+    for (const row of (allTeamRows ?? []) as Array<{
+      id: string;
+      name: string;
+    }>) {
+      teamsDir.set(row.id, row.name);
+    }
+    setTeamNameDirectory(teamsDir);
 
     const savedFilters =
       hasAppliedSavedFiltersRef.current || !savedFiltersRef.current
@@ -2802,16 +2874,36 @@ function renderWorkloadShareCell(percentage: number) {
 
       for (const row of rows) {
         const manager = managerById.get(row.manager_profile_id);
+        // Fall back to the cross-scope directory when the scoped lookup
+        // misses (team_leads / users see managers outside their team here).
+        const directoryEntry = !manager
+          ? managerDirectory.get(row.manager_profile_id)
+          : undefined;
         const displayContributorName =
-          manager?.full_name?.trim() || manager?.email || t("reports.unknown", "Unknown");
+          manager?.full_name?.trim() ||
+          manager?.email ||
+          directoryEntry?.full_name?.trim() ||
+          directoryEntry?.email ||
+          t("reports.unknown", "Unknown");
         const contributorId =
           normalizeIdentifier(manager?.fortnox_user_id) ||
           normalizeIdentifier(manager?.fortnox_employee_id) ||
           null;
         const key = `${row.manager_profile_id}:${displayContributorName}`;
+        // Resolve the group column with a flexible fallback chain. Team name
+        // lookups always check both teamNameById (scoped — populated for
+        // admins / team_leads) and teamNameDirectory (full — populated for
+        // every role) so regular users (whose teamNameById is empty by
+        // design) still resolve group names correctly.
+        const teamIdToResolve = manager?.team_id ?? directoryEntry?.team_id ?? null;
         const groupName =
           manager?.fortnox_group_name ??
-          (manager?.team_id ? (teamNameById.get(manager.team_id) ?? "-") : "-");
+          directoryEntry?.fortnox_group_name ??
+          (teamIdToResolve
+            ? (teamNameById.get(teamIdToResolve) ??
+                teamNameDirectory.get(teamIdToResolve) ??
+                "-")
+            : "-");
         const target = byContributor.get(key) ?? {
           contributorKey: key,
           managerProfileId: row.manager_profile_id,
@@ -2861,11 +2953,13 @@ function renderWorkloadShareCell(percentage: number) {
   }, [
     filteredCustomers,
     managerById,
+    managerDirectory,
     rollingWindow,
     selectedCustomerId,
     selectedManagerId,
     t,
     teamNameById,
+    teamNameDirectory,
   ]);
 
   React.useEffect(() => {
@@ -2919,11 +3013,29 @@ function renderWorkloadShareCell(percentage: number) {
         if (!monthKeys.has(monthKey)) continue;
 
         const manager = managerById.get(row.customer_manager_profile_id);
+        // Same fallback as the other cross-manager section — names should
+        // resolve even when the manager is outside the user's scoped list.
+        const directoryEntry = !manager
+          ? managerDirectory.get(row.customer_manager_profile_id)
+          : undefined;
         const managerName =
-          manager?.full_name?.trim() || manager?.email || t("reports.unknown", "Unknown");
+          manager?.full_name?.trim() ||
+          manager?.email ||
+          directoryEntry?.full_name?.trim() ||
+          directoryEntry?.email ||
+          t("reports.unknown", "Unknown");
+        // Same flexible fallback as the other cross-manager section — always
+        // try teamNameDirectory if teamNameById misses, so regular users
+        // (who have an empty teamNameById by design) still get group names.
+        const teamIdToResolve = manager?.team_id ?? directoryEntry?.team_id ?? null;
         const groupName =
           manager?.fortnox_group_name ??
-          (manager?.team_id ? (teamNameById.get(manager.team_id) ?? "-") : "-");
+          directoryEntry?.fortnox_group_name ??
+          (teamIdToResolve
+            ? (teamNameById.get(teamIdToResolve) ??
+                teamNameDirectory.get(teamIdToResolve) ??
+                "-")
+            : "-");
         const current = totalsByManager.get(
           row.customer_manager_profile_id,
         ) ?? {
@@ -2970,10 +3082,12 @@ function renderWorkloadShareCell(percentage: number) {
     };
   }, [
     managerById,
+    managerDirectory,
     rollingWindow,
     selectedCustomerId,
     selectedManagerId,
     t,
+    teamNameDirectory,
     teamNameById,
   ]);
 
@@ -5157,13 +5271,13 @@ function renderWorkloadShareCell(percentage: number) {
                   <h4 className="text-sm font-semibold">
                     {t(
                       "reports.sections.otherManagersOnSelected.title",
-                      "Other customer managers on selected manager customers",
+                      "Help received from other customer managers",
                     )}
                   </h4>
                   <p className="text-sm text-muted-foreground">
                     {t(
                       "reports.sections.otherManagersOnSelected.description",
-                      "Customer-hour time reported by other customer managers on the selected manager customer scope.",
+                      "Hours other customer managers logged on customers in this manager's portfolio.",
                     )}
                   </p>
                 </div>
@@ -5193,13 +5307,13 @@ function renderWorkloadShareCell(percentage: number) {
                   <h4 className="text-sm font-semibold">
                     {t(
                       "reports.sections.helpedManagers.title",
-                      "Customer managers helped most by selected manager",
+                      "Help given to other customer managers",
                     )}
                   </h4>
                   <p className="text-sm text-muted-foreground">
                     {t(
                       "reports.sections.helpedManagers.description",
-                      "Customer-hour entries where the selected customer manager has worked on customers owned by other customer managers.",
+                      "Hours this manager logged on customers owned by other customer managers.",
                     )}
                   </p>
                 </div>

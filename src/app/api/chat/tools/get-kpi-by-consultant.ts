@@ -154,6 +154,21 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
   }
   const customers = (customerRes.data ?? []) as unknown as CustomerRow[];
 
+  // Access-restricted detection. profiles.length > 0 means the caller can
+  // read the profiles table (always returns rows for any authenticated
+  // user). But if customers.length is 0 in the same call, that's a strong
+  // signal that RLS gated the customers SELECT — the caller doesn't have
+  // the `customers` scope. We surface this as an explicit error_type so the
+  // model can stop and tell the user gracefully instead of looping trying
+  // to find data via other tools.
+  if (profiles.length > 0 && customers.length === 0) {
+    return {
+      error:
+        "Access restricted: this account doesn't have permission to view consultant performance data.",
+      error_type: "access_restricted",
+    };
+  }
+
   const customerToCostCenter = new Map<string, string>();
   const costCenterToCustomerIds = new Map<string, string[]>();
   for (const customer of customers) {

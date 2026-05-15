@@ -805,12 +805,12 @@ export default function MailHistoryPage() {
               {t("mail.history.delete.cancel", "Cancel")}
             </AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               onClick={(event) => {
                 event.preventDefault()
                 void handleConfirmDelete()
               }}
               disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deleting
                 ? t("mail.history.delete.confirming", "Deleting…")

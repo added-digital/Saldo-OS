@@ -35,6 +35,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { ConfirmDialog } from "@/components/app/confirm-dialog"
 import { formatDateTime } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { toast } from "sonner"
@@ -86,6 +87,25 @@ export default function SyncPage() {
   const [recentJobs, setRecentJobs] = React.useState<SyncJob[]>([])
   const [loadingJobs, setLoadingJobs] = React.useState(true)
   const [clearing, setClearing] = React.useState(false)
+  const [clearHistoryDialogOpen, setClearHistoryDialogOpen] =
+    React.useState(false)
+
+  async function handleClearHistory() {
+    setClearing(true)
+    const supabase = createClient()
+    const { error } = await supabase
+      .from("sync_jobs")
+      .delete()
+      .not("status", "in", '("pending","processing")' as never)
+    if (error) {
+      toast.error(t("settings.sync.clearFailed", "Failed to clear sync history"))
+    } else {
+      toast.success(t("settings.sync.clearSuccess", "Sync history cleared"))
+      fetchRecentJobs()
+    }
+    setClearing(false)
+    setClearHistoryDialogOpen(false)
+  }
   const [retryingJobId, setRetryingJobId] = React.useState<string | null>(null)
 
   const fetchRecentJobs = React.useCallback(async () => {
@@ -299,21 +319,7 @@ export default function SyncPage() {
                 variant="outline"
                 size="sm"
                 disabled={clearing}
-                onClick={async () => {
-                  setClearing(true)
-                  const supabase = createClient()
-                  const { error } = await supabase
-                    .from("sync_jobs")
-                    .delete()
-                    .not("status", "in", '("pending","processing")' as never)
-                  if (error) {
-                    toast.error(t("settings.sync.clearFailed", "Failed to clear sync history"))
-                  } else {
-                    toast.success(t("settings.sync.clearSuccess", "Sync history cleared"))
-                    fetchRecentJobs()
-                  }
-                  setClearing(false)
-                }}
+                onClick={() => setClearHistoryDialogOpen(true)}
               >
                 <Trash2 className="size-4" />
                 {clearing
@@ -385,6 +391,25 @@ export default function SyncPage() {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={clearHistoryDialogOpen}
+        onOpenChange={(open) => {
+          if (!clearing) setClearHistoryDialogOpen(open)
+        }}
+        title={t(
+          "settings.sync.clearHistoryDialog.title",
+          "Clear sync history?",
+        )}
+        description={t(
+          "settings.sync.clearHistoryDialog.description",
+          "This removes the log of past sync runs (completed and failed). In-flight or pending jobs are kept. The underlying synced data (customers, invoices, KPIs) is unaffected. This cannot be undone.",
+        )}
+        confirmLabel={t("common.delete", "Delete")}
+        variant="destructive"
+        loading={clearing}
+        onConfirm={handleClearHistory}
+      />
     </div>
   )
 }
