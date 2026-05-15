@@ -387,6 +387,21 @@ export interface MailTemplate {
   updated_at: string
 }
 
+export type FeedbackCategory = "bug" | "feature" | "question" | "other"
+export type FeedbackStatus = "new" | "triaged" | "resolved"
+
+export interface FeedbackSubmission {
+  id: string
+  user_id: string
+  category: FeedbackCategory
+  message: string
+  page_url: string | null
+  user_agent: string | null
+  status: FeedbackStatus
+  created_at: string
+  updated_at: string
+}
+
 export type SieConnectionStatus =
   | "pending"
   | "active"

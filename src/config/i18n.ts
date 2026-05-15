@@ -620,6 +620,26 @@ const dictionaries = {
     "mail.history.delete.confirming": "Deleting…",
     "mail.history.delete.success": "Email deleted",
     "mail.history.delete.error": "Failed to delete email",
+    "feedback.button": "Feedback",
+    "feedback.dialog.title": "Send feedback",
+    "feedback.dialog.description":
+      "Spot a bug or have a suggestion? Tell us what you saw and where. We capture the current page automatically.",
+    "feedback.dialog.captureNotice":
+      "We also send your current page URL and browser info to help reproduce issues.",
+    "feedback.fields.category": "Category",
+    "feedback.fields.message": "Message",
+    "feedback.fields.placeholder":
+      "Describe what you saw or what you'd like to see…",
+    "feedback.categories.bug": "Bug",
+    "feedback.categories.feature": "Feature request",
+    "feedback.categories.question": "Question",
+    "feedback.categories.other": "Other",
+    "feedback.cancel": "Cancel",
+    "feedback.submit": "Send",
+    "feedback.submitting": "Sending…",
+    "feedback.toast.sent": "Thanks — feedback sent.",
+    "feedback.toast.empty": "Please add a short description first",
+    "feedback.toast.failed": "Couldn't send feedback",
   },
   sv: {
     "common.home": "Hem",
@@ -1254,6 +1274,26 @@ const dictionaries = {
     "mail.history.delete.confirming": "Raderar…",
     "mail.history.delete.success": "Mail raderat",
     "mail.history.delete.error": "Kunde inte radera mail",
+    "feedback.button": "Feedback",
+    "feedback.dialog.title": "Skicka feedback",
+    "feedback.dialog.description":
+      "Hittat ett fel eller har ett förslag? Berätta vad du såg och var. Vi sparar den aktuella sidan automatiskt.",
+    "feedback.dialog.captureNotice":
+      "Vi skickar även med sidans URL och din webbläsarinfo för att lättare kunna återskapa problem.",
+    "feedback.fields.category": "Kategori",
+    "feedback.fields.message": "Meddelande",
+    "feedback.fields.placeholder":
+      "Beskriv vad du såg eller vad du vill se…",
+    "feedback.categories.bug": "Bugg",
+    "feedback.categories.feature": "Önskemål",
+    "feedback.categories.question": "Fråga",
+    "feedback.categories.other": "Övrigt",
+    "feedback.cancel": "Avbryt",
+    "feedback.submit": "Skicka",
+    "feedback.submitting": "Skickar…",
+    "feedback.toast.sent": "Tack — feedback skickad.",
+    "feedback.toast.empty": "Lägg till en kort beskrivning först",
+    "feedback.toast.failed": "Kunde inte skicka feedback",
   },
 } as const;
 

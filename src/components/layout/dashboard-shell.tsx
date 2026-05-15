@@ -6,6 +6,7 @@ import { SyncProvider } from "@/hooks/use-sync"
 import { SidebarProvider, Sidebar } from "@/components/layout/sidebar"
 import { SidebarNav } from "@/components/layout/sidebar-nav"
 import { Topbar } from "@/components/layout/topbar"
+import { FeedbackWidget } from "@/components/app/feedback-widget"
 
 function DashboardShell({
   profile,
@@ -29,6 +30,7 @@ function DashboardShell({
               </main>
             </div>
           </div>
+          <FeedbackWidget />
         </SidebarProvider>
       </SyncProvider>
     </UserProvider>
