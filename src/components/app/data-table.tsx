@@ -299,10 +299,10 @@ function DataTable<TData, TValue>({
           )}
           {toolbarExtra}
         </div>
-        {table.getPageCount() > 1 && (
+        {(table.getPageCount() > 1 || paginationExtra) && (
           <div className="flex shrink-0 items-center gap-2">
             {paginationExtra}
-            {pageSizeOptions && pageSizeOptions.length > 0 ? (
+            {table.getPageCount() > 1 && pageSizeOptions && pageSizeOptions.length > 0 ? (
               <select
                 value={table.getState().pagination.pageSize}
                 onChange={(event) => table.setPageSize(Number(event.target.value))}
@@ -316,27 +316,31 @@ function DataTable<TData, TValue>({
                 ))}
               </select>
             ) : null}
-            <span className="text-sm text-muted-foreground">
-              {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
-            </span>
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-8"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
-            >
-              <ChevronLeft className="size-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-8"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
-            >
-              <ChevronRight className="size-4" />
-            </Button>
+            {table.getPageCount() > 1 ? (
+              <>
+                <span className="text-sm text-muted-foreground">
+                  {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-8"
+                  onClick={() => table.previousPage()}
+                  disabled={!table.getCanPreviousPage()}
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-8"
+                  onClick={() => table.nextPage()}
+                  disabled={!table.getCanNextPage()}
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </>
+            ) : null}
           </div>
         )}
       </div>

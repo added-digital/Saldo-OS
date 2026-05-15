@@ -42,3 +42,4 @@ next-env.d.ts
 
 # local utility scripts
 /scripts/
+.playwright-mcp/
