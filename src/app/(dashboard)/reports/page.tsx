@@ -4313,6 +4313,17 @@ function renderWorkloadShareCell(percentage: number) {
         ),
     },
     {
+      id: "customerHours",
+      accessorKey: "customerHours",
+      header: t("reports.columns.hours", "Hours"),
+      size: 140,
+      enableSorting: false,
+      cell: ({ row }) =>
+        row.original.customerHours.toLocaleString("sv-SE", {
+          maximumFractionDigits: 1,
+        }),
+    },
+    {
       id: "workloadPercentage",
       accessorKey: "workloadPercentage",
       header: t("reports.columns.workload", "Workload"),

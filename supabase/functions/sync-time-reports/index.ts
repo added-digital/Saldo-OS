@@ -5,9 +5,29 @@ declare const Deno: {
   serve: (handler: (req: Request) => Response | Promise<Response>) => void
 }
 
-const TIME_REPORT_FROM_DATE = "2025-01-01"
 const SOURCE_ENDPOINT = "/api/time/registrations-v2"
 const KPI_BATCH_SIZE = 3000
+const DEBUG_EMPLOYEE_ID = "458"
+
+/**
+ * BACKFILL MODE — set to a fixed date (e.g. "2025-01-01") to force a full
+ * historical resync. Set to `null` to use the rolling 2-month window
+ * (current + previous calendar month, the normal day-to-day behaviour).
+ *
+ * Right now this is in backfill mode because we discovered customer
+ * mis-mapping from the cost-center fallback bug and need to rebuild
+ * historical `time_reports` rows from Fortnox. After the resync completes,
+ * flip this back to `null` and redeploy.
+ */
+const BACKFILL_FROM_DATE: string | null = "2025-01-01"
+
+function getRollingFromDate(today: Date = new Date()): string {
+  if (BACKFILL_FROM_DATE) return BACKFILL_FROM_DATE
+  const d = new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1),
+  )
+  return d.toISOString().slice(0, 10)
+}
 
 interface DateWindow {
   fromDate: string
@@ -33,6 +53,10 @@ function isOnOrAfter(dateValue: string | null, minDate: string): boolean {
 function toHours(value: unknown): number {
   const parsed = Number.parseFloat(normalizeText(value))
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function readSourceEmployeeId(row: Record<string, unknown>): string {
+  return normalizeText(row.EmployeeId ?? row.EmployeeNumber ?? row.UserId ?? row.userId ?? row.StaffId)
 }
 
 function buildPath(fromDate?: string, toDate?: string): string {
@@ -110,12 +134,10 @@ function mapRow(
   row: Record<string, unknown>,
   index: number,
   customerByNumber: Map<string, { id: string; name: string; fortnox_customer_number: string | null }>,
-  customerByCostCenter: Map<string, { id: string; name: string; fortnox_customer_number: string | null }>,
   userIdByEmployeeId: Map<string, string>
 ): Record<string, unknown> | null {
   const registrationCodeField = (row.registrationCode ?? row.RegistrationCode) as Record<string, unknown> | undefined
   const customerField = row.customer as Record<string, unknown> | undefined
-  const costCenterField = row.costCenter as Record<string, unknown> | undefined
   const serviceField = row.service as Record<string, unknown> | undefined
 
   const registrationCode = normalizeText(
@@ -128,11 +150,10 @@ function mapRow(
   const reportDate = normalizeDate(
     row.Date ?? row.ReportDate ?? row.TimeReportDate ?? row.WorkDate ?? row.workedDate ?? row.TransactionDate ?? row.EntryDate
   )
-  const employeeId = normalizeText(row.EmployeeId ?? row.EmployeeNumber ?? row.UserId ?? row.userId ?? row.StaffId)
+  const employeeId = readSourceEmployeeId(row)
   const employeeName = normalizeText(row.EmployeeName ?? row.Name ?? row.StaffName ?? row.UserName)
   const customerNumber = normalizeText(row.CustomerNumber ?? row.CustomerNo ?? row.CustomerId ?? customerField?.number ?? customerField?.id)
   const customerName = normalizeText(row.CustomerName ?? row.Customer ?? row.CustomerFullName ?? customerField?.name)
-  const costCenter = normalizeText(row.CostCenter ?? costCenterField?.id)
   const projectNumber = normalizeText(row.Project ?? row.ProjectNumber ?? row.ProjectNo ?? row.ProjectId)
   const projectName = normalizeText(row.ProjectName ?? row.ProjectDescription)
   const hours = toHours(
@@ -151,19 +172,82 @@ function mapRow(
     row.note ?? row.invoiceText ?? row.Description ?? row.Text ?? row.Comment ?? row.Notes ?? row.Note ?? row.ReferenceText
   )
 
-  if (!reportDate || !isOnOrAfter(reportDate, TIME_REPORT_FROM_DATE)) return null
-  if (registrationCode.toUpperCase() === "FRX") return null
-  if (hours === 0) return null
+  const isDebugEmployee = employeeId === DEBUG_EMPLOYEE_ID
+
+  if (!reportDate || !isOnOrAfter(reportDate, getRollingFromDate())) {
+    if (isDebugEmployee) {
+      console.info("sync-time-reports: skipped debug employee row", {
+        debug_employee_id: DEBUG_EMPLOYEE_ID,
+        reason: "date_out_of_range_or_missing",
+        report_id: reportId || null,
+        report_date: reportDate,
+      })
+    }
+    return null
+  }
+
+  if (registrationCode.toUpperCase() === "FRX") {
+    if (isDebugEmployee) {
+      console.info("sync-time-reports: skipped debug employee row", {
+        debug_employee_id: DEBUG_EMPLOYEE_ID,
+        reason: "registration_code_frx",
+        report_id: reportId || null,
+        report_date: reportDate,
+      })
+    }
+    return null
+  }
+
+  if (hours === 0) {
+    if (isDebugEmployee) {
+      console.info("sync-time-reports: skipped debug employee row", {
+        debug_employee_id: DEBUG_EMPLOYEE_ID,
+        reason: "hours_zero",
+        report_id: reportId || null,
+        report_date: reportDate,
+      })
+    }
+    return null
+  }
 
   const entryType = registrationType && registrationType !== "WORK" ? "absence" : "time"
-  const matchedCustomer = customerByNumber.get(customerNumber) ?? customerByCostCenter.get(costCenter) ?? null
+  // IMPORTANT: only match by fortnox_customer_number. We previously fell back
+  // to matching by cost center, but on v2 time rows `costCenter` is the
+  // *employee's* cost center, not the customer's. Customers that happened to
+  // share a cost center with an employee (e.g. archived Beyond Us AB sharing
+  // Hanna Dahl's cost center 59) ended up collecting every unmatched time
+  // entry that employee logged. Don't bring that fallback back without
+  // changing the data model.
+  const matchedCustomer = customerByNumber.get(customerNumber) ?? null
   const uniqueKey = normalizeText(
     reportId || `${entryType}|${reportDate}|${employeeId}|${customerNumber}|${projectNumber}|${articleNumber}|${hours}|${description}|${index}`
   )
 
   const mappedUserId = employeeId ? (userIdByEmployeeId.get(employeeId) ?? employeeId) : ""
 
-  if (!uniqueKey) return null
+  if (!uniqueKey) {
+    if (isDebugEmployee) {
+      console.info("sync-time-reports: skipped debug employee row", {
+        debug_employee_id: DEBUG_EMPLOYEE_ID,
+        reason: "missing_unique_key",
+        report_id: reportId || null,
+        report_date: reportDate,
+      })
+    }
+    return null
+  }
+
+  if (isDebugEmployee) {
+    console.info("sync-time-reports: mapped debug employee row", {
+      debug_employee_id: DEBUG_EMPLOYEE_ID,
+      report_id: reportId || null,
+      report_date: reportDate,
+      mapped_employee_id: mappedUserId || null,
+      unique_key: uniqueKey,
+      entry_type: entryType,
+      hours,
+    })
+  }
 
   return {
     unique_key: uniqueKey,
@@ -200,19 +284,20 @@ Deno.serve(async (req) => {
     jobId = body.job_id ?? null
     const phase: string = body.phase ?? "list"
     const client = await getFortnoxClient(supabase)
-    const windows = createMonthlyWindows(TIME_REPORT_FROM_DATE)
+    const rollingFromDate = getRollingFromDate()
+    const windows = createMonthlyWindows(rollingFromDate)
 
     if (phase === "list") {
       if (jobId) {
         await updateSyncJob(supabase, jobId, {
           status: "processing",
-          current_step: `Fetching registrations from ${TIME_REPORT_FROM_DATE}...`,
+          current_step: `Fetching registrations from ${rollingFromDate}...`,
         })
       }
 
       const { data: customers } = await supabase
         .from("customers")
-        .select("id, name, fortnox_customer_number, fortnox_cost_center")
+        .select("id, name, fortnox_customer_number")
 
       const { data: profileRows } = await supabase
         .from("profiles")
@@ -221,24 +306,15 @@ Deno.serve(async (req) => {
         .not("fortnox_user_id", "is", null)
 
       const customerByNumber = new Map<string, { id: string; name: string; fortnox_customer_number: string | null }>()
-      const customerByCostCenter = new Map<string, { id: string; name: string; fortnox_customer_number: string | null }>()
       const userIdByEmployeeId = new Map<string, string>()
 
       for (const customer of (customers ?? []) as Array<{
         id: string
         name: string
         fortnox_customer_number: string | null
-        fortnox_cost_center: string | null
       }>) {
         if (customer.fortnox_customer_number) {
           customerByNumber.set(customer.fortnox_customer_number, {
-            id: customer.id,
-            name: customer.name,
-            fortnox_customer_number: customer.fortnox_customer_number,
-          })
-        }
-        if (customer.fortnox_cost_center) {
-          customerByCostCenter.set(customer.fortnox_cost_center, {
             id: customer.id,
             name: customer.name,
             fortnox_customer_number: customer.fortnox_customer_number,
@@ -284,25 +360,92 @@ Deno.serve(async (req) => {
       }
 
       const rows = await fetchRows(client, window)
+
+      const debugFetchedRows = rows.filter((row) => readSourceEmployeeId(row) === DEBUG_EMPLOYEE_ID)
+      if (debugFetchedRows.length > 0) {
+        console.info("sync-time-reports: fetched rows for debug employee", {
+          debug_employee_id: DEBUG_EMPLOYEE_ID,
+          window,
+          fetched_count: debugFetchedRows.length,
+          report_ids: debugFetchedRows.map((row) => normalizeText(row.id ?? row.TimeReportId ?? row.Id ?? row.TimeReportNumber ?? row.TimeSheetRowId ?? row.Number)),
+        })
+      }
+
       const mapped = rows
-        .map((row, index) => mapRow(row, index, customerByNumber, customerByCostCenter, userIdByEmployeeId))
+        .map((row, index) => mapRow(row, index, customerByNumber, userIdByEmployeeId))
         .filter((row): row is Record<string, unknown> => row !== null)
+
+      const debugMappedRows = mapped.filter((row) => normalizeText(row.employee_id) === DEBUG_EMPLOYEE_ID)
+      if (debugFetchedRows.length > 0 || debugMappedRows.length > 0) {
+        console.info("sync-time-reports: debug employee mapping summary", {
+          debug_employee_id: DEBUG_EMPLOYEE_ID,
+          fetched_count: debugFetchedRows.length,
+          mapped_count: debugMappedRows.length,
+          skipped_count: debugFetchedRows.length - debugMappedRows.length,
+        })
+      }
 
       const skipped = previousSkipped + (rows.length - mapped.length)
       let errors = previousErrors
       let synced = previousSynced
 
       if (mapped.length > 0) {
-        const { error } = await supabase
-          .from("time_reports")
-          .upsert(mapped as never, { onConflict: "unique_key" })
-
-        if (error) {
-          console.error("Time report upsert error:", error.message, error.details)
-          errors += mapped.length
-        } else {
-          synced += mapped.length
+        if (debugMappedRows.length > 0) {
+          console.info("sync-time-reports: debug employee rows included in upsert", {
+            debug_employee_id: DEBUG_EMPLOYEE_ID,
+            count: debugMappedRows.length,
+            unique_keys: debugMappedRows.map((row) => normalizeText(row.unique_key)),
+          })
         }
+
+        // Chunked upsert: large monthly windows produce ~5000+ mapped rows,
+        // which can blow Postgres's per-statement timeout for the service
+        // role when upserted in one go ("canceling statement due to statement
+        // timeout"). The whole batch then rolls back and every row is lost.
+        // Splitting into smaller chunks keeps each upsert well under the
+        // timeout and means a failure costs us at most one chunk's worth of
+        // rows instead of the entire window.
+        const UPSERT_CHUNK_SIZE = 500
+        let chunkSynced = 0
+        let chunkErrors = 0
+
+        for (let i = 0; i < mapped.length; i += UPSERT_CHUNK_SIZE) {
+          const chunk = mapped.slice(i, i + UPSERT_CHUNK_SIZE)
+          const { error } = await supabase
+            .from("time_reports")
+            .upsert(chunk as never, { onConflict: "unique_key" })
+
+          if (error) {
+            console.error(
+              "Time report upsert error:",
+              error.message,
+              error.details,
+              `(chunk ${i}-${i + chunk.length}, ${chunk.length} rows)`,
+            )
+            chunkErrors += chunk.length
+          } else {
+            chunkSynced += chunk.length
+          }
+        }
+
+        if (debugMappedRows.length > 0) {
+          if (chunkErrors > 0) {
+            console.error("sync-time-reports: debug employee upsert had errors", {
+              debug_employee_id: DEBUG_EMPLOYEE_ID,
+              count: debugMappedRows.length,
+              chunk_synced: chunkSynced,
+              chunk_errors: chunkErrors,
+            })
+          } else {
+            console.info("sync-time-reports: debug employee upsert succeeded", {
+              debug_employee_id: DEBUG_EMPLOYEE_ID,
+              count: debugMappedRows.length,
+            })
+          }
+        }
+
+        synced += chunkSynced
+        errors += chunkErrors
       }
 
       const total = previousTotal + rows.length
@@ -347,56 +490,18 @@ Deno.serve(async (req) => {
         })
       }
 
-      const hoursByCustomerId = new Map<string, number>()
-      const hoursByCustomerNumber = new Map<string, number>()
-      let offset = 0
-
-      while (true) {
-        const { data: hoursRows, error: hoursError } = await supabase
-          .from("time_reports")
-          .select("customer_id, fortnox_customer_number, hours")
-          .eq("entry_type", "time")
-          .range(offset, offset + KPI_BATCH_SIZE - 1)
-
-        if (hoursError) {
-          throw new Error(`Failed to fetch time report KPIs: ${hoursError.message}`)
-        }
-
-        const rows = (hoursRows ?? []) as Array<{
-          customer_id: string | null
-          fortnox_customer_number: string | null
-          hours: number | null
-        }>
-
-        if (rows.length === 0) break
-
-        for (const row of rows) {
-          if (row.customer_id) {
-            hoursByCustomerId.set(
-              row.customer_id,
-              (hoursByCustomerId.get(row.customer_id) ?? 0) + Number(row.hours ?? 0)
-            )
-          } else if (row.fortnox_customer_number) {
-            hoursByCustomerNumber.set(
-              row.fortnox_customer_number,
-              (hoursByCustomerNumber.get(row.fortnox_customer_number) ?? 0) + Number(row.hours ?? 0)
-            )
-          }
-        }
-
-        if (rows.length < KPI_BATCH_SIZE) break
-        offset += KPI_BATCH_SIZE
-      }
-
-      for (const [customerId, totalHours] of hoursByCustomerId) {
-        await supabase.from("customers").update({ total_hours: totalHours } as never).eq("id", customerId as never)
-      }
-
-      for (const [customerNumber, totalHours] of hoursByCustomerNumber) {
-        await supabase
-          .from("customers")
-          .update({ total_hours: totalHours } as never)
-          .eq("fortnox_customer_number", customerNumber as never)
+      // All aggregation + updates happen inside Postgres in a single RPC.
+      // The earlier approach (JS-side loop over ~700 UPDATEs) blew the edge
+      // function's CPU budget; the one before that (in-memory aggregation
+      // over every row) blew its memory. This pushes both concerns down to
+      // the database where they're cheap.
+      const { error: kpiError } = await supabase.rpc(
+        "sync_customer_total_hours" as never,
+      )
+      if (kpiError) {
+        throw new Error(
+          `Failed to update customer total_hours: ${kpiError.message}`,
+        )
       }
 
       let finalSynced = 0

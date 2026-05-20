@@ -137,6 +137,141 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    // Fetch raw Fortnox time-registrations for a specific employee in a
+    // specific month. Useful for diagnosing "row exists in Fortnox but not in
+    // our DB" cases — returns the untouched API response so you can see
+    // exactly what Fortnox is (or isn't) handing back to us.
+    //
+    //   ?employeeMonth=1&employeeId=458&month=2026-04
+    //   ?employeeMonth=1&employeeId=458&month=2026-04&customerNumber=5453
+    const employeeMonth = request.nextUrl.searchParams.get("employeeMonth")
+    if (employeeMonth === "1") {
+      const employeeId = request.nextUrl.searchParams.get("employeeId")?.trim() ?? ""
+      const month = request.nextUrl.searchParams.get("month")?.trim() ?? ""
+      const customerFilter =
+        request.nextUrl.searchParams.get("customerNumber")?.trim() || null
+
+      if (!employeeId) {
+        return NextResponse.json(
+          { error: "employeeId is required (e.g. employeeId=458)" },
+          { status: 400 }
+        )
+      }
+      if (!/^\d{4}-\d{2}$/.test(month)) {
+        return NextResponse.json(
+          { error: "month must be YYYY-MM (e.g. month=2026-04)" },
+          { status: 400 }
+        )
+      }
+
+      const [yearStr, monthStr] = month.split("-")
+      const year = Number(yearStr)
+      const monthIdx = Number(monthStr) - 1
+      const fromDate = `${month}-01`
+      const lastDay = new Date(Date.UTC(year, monthIdx + 1, 0)).getUTCDate()
+      const toDate = `${month}-${String(lastDay).padStart(2, "0")}`
+
+      const fortnox = await getFortnoxClient(adminClient)
+
+      const readEmployeeId = (row: Record<string, unknown>): string =>
+        String(
+          row.EmployeeId ??
+            row.EmployeeNumber ??
+            row.UserId ??
+            row.userId ??
+            row.StaffId ??
+            ""
+        ).trim()
+
+      const readCustomerNumber = (row: Record<string, unknown>): string => {
+        const customerField = row.customer as Record<string, unknown> | undefined
+        return String(
+          row.CustomerNumber ??
+            row.CustomerNo ??
+            row.CustomerId ??
+            customerField?.number ??
+            customerField?.id ??
+            ""
+        ).trim()
+      }
+
+      const readRowDate = (row: Record<string, unknown>): string | null => {
+        const d =
+          row.Date ??
+          row.ReportDate ??
+          row.TimeReportDate ??
+          row.WorkDate ??
+          row.workedDate ??
+          row.TransactionDate ??
+          row.EntryDate
+        return typeof d === "string" ? d.slice(0, 10) : null
+      }
+
+      // First try the windowed request (fromDate + toDate). Some Fortnox
+      // tenants reject toDate with "Ogiltig parameter" (code 2000588); we fall
+      // back to fromDate-only and filter client-side, mirroring the sync.
+      let rawRows: Array<Record<string, unknown>> = []
+      const params = new URLSearchParams({ fromDate, toDate })
+
+      try {
+        const response = await fortnox.requestPath<
+          Record<string, unknown> | Array<Record<string, unknown>>
+        >(`/api/time/registrations-v2?${params.toString()}`)
+        rawRows = Array.isArray(response)
+          ? response
+          : Array.isArray(response.rows)
+            ? (response.rows as Array<Record<string, unknown>>)
+            : []
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ""
+        const isInvalidParameter =
+          message.includes('"code":2000588') || message.includes("Ogiltig parameter")
+        if (!isInvalidParameter) throw error
+
+        const fallback = await fortnox.requestPath<
+          Record<string, unknown> | Array<Record<string, unknown>>
+        >(`/api/time/registrations-v2?fromDate=${fromDate}`)
+        const allRows = Array.isArray(fallback)
+          ? fallback
+          : Array.isArray(fallback.rows)
+            ? (fallback.rows as Array<Record<string, unknown>>)
+            : []
+        rawRows = allRows.filter((row) => {
+          const d = readRowDate(row)
+          return d !== null && d >= fromDate && d <= toDate
+        })
+      }
+
+      const employeeRows = rawRows.filter((row) => readEmployeeId(row) === employeeId)
+      const filteredRows = customerFilter
+        ? employeeRows.filter((row) => readCustomerNumber(row) === customerFilter)
+        : employeeRows
+
+      const customerNumbersSeen = Array.from(
+        new Set(
+          employeeRows
+            .map((row) => readCustomerNumber(row))
+            .filter((n) => n.length > 0)
+        )
+      ).sort()
+
+      return NextResponse.json({
+        debug: "employeeMonth",
+        employee_id: employeeId,
+        month,
+        fromDate,
+        toDate,
+        customer_filter: customerFilter,
+        counts: {
+          total_rows_in_window: rawRows.length,
+          rows_for_employee: employeeRows.length,
+          rows_after_customer_filter: filteredRows.length,
+        },
+        customer_numbers_logged_by_employee: customerNumbersSeen,
+        rows: filteredRows,
+      })
+    }
+
     const customerNumber = request.nextUrl.searchParams.get("customer")
     if (customerNumber) {
       const fortnox = await getFortnoxClient(adminClient)
@@ -513,6 +648,17 @@ export async function GET(request: NextRequest) {
           params: { registrations: "v2", fromDate: "<YYYY-MM-DD>" },
           description: "Time registrations v2 summary (date range + count)",
           example: "?registrations=v2&fromDate=2025-01-01",
+        },
+        {
+          params: {
+            employeeMonth: "1",
+            employeeId: "<id>",
+            month: "<YYYY-MM>",
+            customerNumber: "<optional customer number>",
+          },
+          description:
+            "Raw Fortnox time registrations for one employee in one month (optionally filtered to a customer). Shows what Fortnox is actually returning before any of our mapping/filtering.",
+          example: "?employeeMonth=1&employeeId=458&month=2026-04&customerNumber=5453",
         },
         {
           params: { fortnoxdump: "1", fromDate: "<YYYY-MM-DD>" },
