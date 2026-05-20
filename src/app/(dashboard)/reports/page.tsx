@@ -4324,6 +4324,23 @@ function renderWorkloadShareCell(percentage: number) {
         }),
     },
     {
+      id: "turnoverPerHour",
+      header: t("reports.columns.turnoverPerHours", "Turnover / Hours"),
+      size: 200,
+      enableSorting: false,
+      cell: ({ row }) => {
+        if (row.original.turnover == null) {
+          return t("reports.missing", "missing");
+        }
+        if (row.original.customerHours <= 0) {
+          return "-";
+        }
+        return `${sekFormatter.format(
+          row.original.turnover / row.original.customerHours,
+        )} / h`;
+      },
+    },
+    {
       id: "workloadPercentage",
       accessorKey: "workloadPercentage",
       header: t("reports.columns.workload", "Workload"),
