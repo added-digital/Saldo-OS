@@ -395,6 +395,10 @@ export default function ReportsPage() {
   >("bar");
   const savedFiltersRef = React.useRef<SavedReportsFilters | null>(null);
   const hasAppliedSavedFiltersRef = React.useRef(false);
+  // Holds the resolved profile id used for "manager filter" defaults. For
+  // users in REPORTS_MANAGER_ALIAS this is the aliased profile's id, not
+  // user.id, so resetting filters stays consistent with the initial load.
+  const effectiveManagerIdRef = React.useRef<string>(user.id);
   const [kpiLoading, setKpiLoading] = React.useState(false);
   const [kpis, setKpis] = React.useState({
     turnover: 0,
@@ -786,7 +790,8 @@ export default function ReportsPage() {
 
     if (user.role === "user") {
       setSelectedTeamId(null);
-      setSelectedManagerId(user.id);
+      // Use the resolved effective profile id (handles aliased managers).
+      setSelectedManagerId(effectiveManagerIdRef.current);
     } else if (user.role === "team_lead" && teams.length === 1 && !isAdmin) {
       setSelectedTeamId(teams[0].id);
       setSelectedManagerId(null);
@@ -797,7 +802,7 @@ export default function ReportsPage() {
 
     setSelectedCustomerId(null);
     setSelectedMonthlyArticleGroups([]);
-  }, [isAdmin, teams, user.id, user.role]);
+  }, [isAdmin, teams, user.role]);
 
   const teamNameById = React.useMemo(() => {
     return new Map(teams.map((team) => [team.id, team.name]));
@@ -2150,6 +2155,10 @@ function renderWorkloadShareCell(percentage: number) {
         >;
       }
     }
+
+    // Cache the resolved id so handleResetFilters defaults to the same
+    // profile we used for the initial load (matters for aliased managers).
+    effectiveManagerIdRef.current = effectiveProfile.id;
 
     let scopedTeams: TeamOption[] = [];
     let scopedManagers: ManagerOption[] = [];

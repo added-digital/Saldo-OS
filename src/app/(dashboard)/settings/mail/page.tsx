@@ -913,10 +913,10 @@ export default function SettingsMailPage() {
               </CardTitle>
               <CardDescription>
                 {editingBuiltInName
-                  ? t(
+                  ? `${t(
                       "settings.mailTemplates.editingBuiltIn",
-                      `Editing built-in draft: ${editingBuiltInName}`,
-                    )
+                      "Editing built-in draft:",
+                    )} ${editingBuiltInName}`
                   : null}
                 {editingBuiltInName ? <br /> : null}
                 {t(

@@ -758,7 +758,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
           onClick={handleStartNewConversation}
         >
           <Plus className="size-4" />
-          {historyCollapsed ? null : "New chat"}
+          {historyCollapsed ? null : t("dashboard.ask.newChat", "New chat")}
         </Button>
 
         <div className={cn("mt-3 flex-1 space-y-1 overflow-y-auto pr-1", historyCollapsed && "hidden")}>
@@ -890,7 +890,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
           onClick={() => setHistoryCollapsed((current) => !current)}
         >
           {historyCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-          {historyCollapsed ? null : "Collapse"}
+          {historyCollapsed ? null : t("dashboard.ask.collapse", "Collapse")}
         </Button>
       </aside>
 
@@ -968,7 +968,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 px-4">
             <div className="text-center">
               <h1 className="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
-                {`What do you need insights on today?`}
+                {t("dashboard.ask.heading", "What do you need insights on today?")}
               </h1>
               <div className="mt-4 flex flex-col items-center gap-2">
                 <div className="flex flex-wrap items-center justify-center gap-2">
@@ -1034,7 +1034,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
                 <Input
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
-                  placeholder="Ask about our services..."
+                  placeholder={t("dashboard.ask.servicesPlaceholder", "Ask about our services...")}
                   className="h-12 rounded-xl border-0 bg-transparent pl-12 pr-12 text-sm shadow-none focus-visible:ring-0"
                 />
                 <button
@@ -1097,7 +1097,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
                 <Input
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
-                  placeholder="Ask about our services..."
+                  placeholder={t("dashboard.ask.servicesPlaceholder", "Ask about our services...")}
                   className="h-12 rounded-xl border-0 bg-transparent pl-12 pr-12 text-sm shadow-none focus-visible:ring-0"
                 />
                 <button

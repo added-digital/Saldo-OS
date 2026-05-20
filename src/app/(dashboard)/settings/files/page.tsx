@@ -177,7 +177,7 @@ export default function SettingsFilesPage() {
     })
 
     if (error) {
-      toast.error(error.message || "Failed to load files")
+      toast.error(error.message || t("settings.files.toast.loadFailed", "Failed to load files"))
       setItems([])
       setLoading(false)
       return
@@ -228,7 +228,7 @@ export default function SettingsFilesPage() {
   async function handleCreateFolder() {
     const normalizedFolderName = normalizeFolderName(folderName)
     if (!normalizedFolderName) {
-      toast.error("Folder name is required")
+      toast.error(t("settings.files.toast.folderRequired", "Folder name is required"))
       return
     }
 
@@ -246,12 +246,12 @@ export default function SettingsFilesPage() {
     })
 
     if (error) {
-      toast.error(error.message || "Failed to create folder")
+      toast.error(error.message || t("settings.files.toast.folderCreateFailed", "Failed to create folder"))
       setCreatingFolder(false)
       return
     }
 
-    toast.success("Folder created")
+    toast.success(t("settings.files.toast.folderCreated", "Folder created"))
     setFolderName("")
     setCreatingFolder(false)
     await loadFolder(currentFolder)
@@ -261,7 +261,7 @@ export default function SettingsFilesPage() {
     const filesToUpload = filesOverride?.length ? filesOverride : selectedFiles
 
     if (filesToUpload.length === 0) {
-      toast.error("Choose file(s) first")
+      toast.error(t("settings.files.toast.chooseFiles", "Choose file(s) first"))
       return
     }
 
@@ -353,14 +353,16 @@ export default function SettingsFilesPage() {
     if (successCount > 0) {
       toast.success(
         successCount === 1
-          ? "1 file uploaded and indexed"
-          : `${successCount} files uploaded and indexed`,
+          ? t("settings.files.toast.uploadSingle", "1 file uploaded and indexed")
+          : `${successCount} ${t("settings.files.toast.uploadManySuffix", "files uploaded and indexed")}`,
       )
     }
 
     if (failedFiles.length > 0) {
       if (failedFiles.length === 1) {
-        toast.error(`Upload failed for ${failedFiles[0].name}: ${failedFiles[0].reason}`)
+        toast.error(
+          `${t("settings.files.toast.uploadFailedForFile", "Upload failed for")} ${failedFiles[0].name}: ${failedFiles[0].reason}`,
+        )
       } else {
         const reasonPreview = failedFiles
           .slice(0, 3)
@@ -368,7 +370,7 @@ export default function SettingsFilesPage() {
           .join(" | ")
         const remaining = failedFiles.length - 3
         toast.error(
-          `Upload failed for ${failedFiles.length} files. ${reasonPreview}${remaining > 0 ? ` | +${remaining} more` : ""}`,
+          `${t("settings.files.toast.uploadFailedForCount", "Upload failed for")} ${failedFiles.length} ${t("settings.files.toast.uploadFiles", "files.")} ${reasonPreview}${remaining > 0 ? ` | +${remaining} ${t("settings.files.toast.uploadFailedMore", "more")}` : ""}`,
         )
       }
     }
@@ -384,7 +386,7 @@ export default function SettingsFilesPage() {
     const { data, error } = await supabase.storage.from(STORAGE_BUCKET).download(objectPath)
 
     if (error || !data) {
-      toast.error(error?.message || "Failed to download file")
+      toast.error(error?.message || t("settings.files.toast.downloadFailed", "Failed to download file"))
       return
     }
 
@@ -410,7 +412,7 @@ export default function SettingsFilesPage() {
     })
 
     if (!response.ok) {
-      throw new Error("Failed to delete indexed document records")
+      throw new Error(t("settings.files.toast.indexDeleteFailed", "Failed to delete indexed document records"))
     }
   }
 
@@ -453,7 +455,7 @@ export default function SettingsFilesPage() {
         detailMessage = await response.text()
       }
 
-      throw new Error(detailMessage || "Failed to index uploaded file")
+      throw new Error(detailMessage || t("settings.files.toast.indexFailed", "Failed to index uploaded file"))
     }
   }
 
@@ -465,7 +467,7 @@ export default function SettingsFilesPage() {
     const { error } = await supabase.storage.from(STORAGE_BUCKET).remove([objectPath])
 
     if (error) {
-      toast.error(error.message || "Failed to delete file")
+      toast.error(error.message || t("settings.files.toast.fileDeleteFailed", "Failed to delete file"))
       setDeletingPath(null)
       return
     }
@@ -473,10 +475,10 @@ export default function SettingsFilesPage() {
     try {
       await removeIndexedDocuments([objectPath])
     } catch {
-      toast.error("File was deleted, but indexed references could not be removed")
+      toast.error(t("settings.files.toast.indexReferencesFailed", "File was deleted, but indexed references could not be removed"))
     }
 
-    toast.success("File deleted")
+    toast.success(t("settings.files.toast.fileDeleted", "File deleted"))
     setDeleteTarget(null)
     setDeletingPath(null)
     await loadFolder(currentFolder)
@@ -495,7 +497,7 @@ export default function SettingsFilesPage() {
     const { error } = await supabase.storage.from(STORAGE_BUCKET).remove(objectPaths)
 
     if (error) {
-      toast.error(error.message || "Failed to delete selected files")
+      toast.error(error.message || t("settings.files.toast.batchDeleteFailed", "Failed to delete selected files"))
       setDeletingPath(null)
       return
     }
@@ -503,10 +505,14 @@ export default function SettingsFilesPage() {
     try {
       await removeIndexedDocuments(objectPaths)
     } catch {
-      toast.error("Some indexed references could not be removed")
+      toast.error(t("settings.files.toast.someIndexFailed", "Some indexed references could not be removed"))
     }
 
-    toast.success(fileNames.length === 1 ? "1 file deleted" : `${fileNames.length} files deleted`)
+    toast.success(
+      fileNames.length === 1
+        ? t("settings.files.toast.batchDeleteSingle", "1 file deleted")
+        : `${fileNames.length} ${t("settings.files.toast.batchDeleteManySuffix", "files deleted")}`,
+    )
     setSelectedFileNames([])
     setDeleteTarget(null)
     setDeletingPath(null)
@@ -550,7 +556,7 @@ export default function SettingsFilesPage() {
       })
 
       if (error) {
-        throw new Error(error.message || "Failed to read folder")
+        throw new Error(error.message || t("settings.files.toast.folderReadFailed", "Failed to read folder"))
       }
 
       for (const item of data ?? []) {
@@ -584,7 +590,7 @@ export default function SettingsFilesPage() {
 
       const { error } = await supabase.storage.from(STORAGE_BUCKET).remove(objectPaths)
       if (error) {
-        toast.error(error.message || "Failed to delete folder")
+        toast.error(error.message || t("settings.files.toast.folderDeleteFailed", "Failed to delete folder"))
         setDeletingPath(null)
         return
       }
@@ -592,15 +598,15 @@ export default function SettingsFilesPage() {
       try {
         await removeIndexedDocuments(objectPaths)
       } catch {
-        toast.error("Folder was deleted, but indexed references could not be fully removed")
+        toast.error(t("settings.files.toast.folderIndexFailed", "Folder was deleted, but indexed references could not be fully removed"))
       }
 
-      toast.success("Folder deleted")
+      toast.success(t("settings.files.toast.folderDeleted", "Folder deleted"))
       setDeleteTarget(null)
       setDeletingPath(null)
       await loadFolder(currentFolder)
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to delete folder"
+      const message = error instanceof Error ? error.message : t("settings.files.toast.folderDeleteFailed", "Failed to delete folder")
       toast.error(message)
       setDeletingPath(null)
     }
@@ -616,7 +622,7 @@ export default function SettingsFilesPage() {
         <CardHeader>
           <CardTitle className="text-base">{t("settings.tabs.files", "Files")}</CardTitle>
           <CardDescription>
-            Upload and organize files in folders for future AI references.
+            {t("settings.files.description", "Upload and organize files in folders for future AI references.")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -645,11 +651,11 @@ export default function SettingsFilesPage() {
             <Input
               value={folderName}
               onChange={(event) => setFolderName(event.target.value)}
-              placeholder={`New folder inside ${currentFolderLabel}`}
+              placeholder={`${t("settings.files.newFolderPlaceholder", "New folder inside")} ${currentFolderLabel}`}
             />
             <Button onClick={handleCreateFolder} disabled={creatingFolder}>
               {creatingFolder ? <Loader2 className="size-4 animate-spin" /> : <FolderPlus className="size-4" />}
-              Create folder
+              {t("settings.files.createFolder", "Create folder")}
             </Button>
           </div>
 
@@ -670,7 +676,7 @@ export default function SettingsFilesPage() {
               />
               <Button onClick={handleUploadButtonClick} disabled={uploading}>
                 {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                Upload file
+                {t("settings.files.uploadFile", "Upload file")}
               </Button>
             </div>
           ) : null}
@@ -679,7 +685,7 @@ export default function SettingsFilesPage() {
             <div className="h-24 animate-pulse rounded-md border bg-muted/20" />
           ) : items.length === 0 ? (
             <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-              No files or folders yet in this path.
+              {t("settings.files.empty", "No files or folders yet in this path.")}
             </div>
           ) : (
             <div className="space-y-2">
@@ -690,7 +696,7 @@ export default function SettingsFilesPage() {
                       checked={allFilesSelected}
                       onCheckedChange={(checked) => toggleSelectAllFiles(Boolean(checked))}
                     />
-                    <span>Select all files</span>
+                    <span>{t("settings.files.selectAll", "Select all files")}</span>
                   </div>
                   <Button
                     variant="outline"
@@ -699,13 +705,17 @@ export default function SettingsFilesPage() {
                     disabled={selectedFileNames.length === 0 || deletingPath === "__batch__"}
                     onClick={() =>
                       setDeleteTarget({
-                        name: `${selectedFileNames.length} file${selectedFileNames.length === 1 ? "" : "s"}`,
+                        name: `${selectedFileNames.length} ${
+                          selectedFileNames.length === 1
+                            ? t("settings.files.filesCountSingular", "file")
+                            : t("settings.files.filesCountPlural", "files")
+                        }`,
                         kind: "files",
                       })
                     }
                   >
                     {deletingPath === "__batch__" ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-                    Delete selected
+                    {t("settings.files.deleteSelected", "Delete selected")}
                   </Button>
                 </div>
               ) : null}
@@ -741,7 +751,7 @@ export default function SettingsFilesPage() {
                       >
                         <p className="text-sm font-medium hover:underline">{item.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {isFolder ? "Folder" : formatBytes(item.metadata?.size)}
+                          {isFolder ? t("settings.files.folder", "Folder") : formatBytes(item.metadata?.size)}
                         </p>
                       </button>
                     </div>
@@ -749,7 +759,7 @@ export default function SettingsFilesPage() {
                     {isFolder ? (
                       <div className="flex items-center gap-2">
                         <Button variant="outline" size="sm" onClick={() => setCurrentFolder(joinStoragePath(currentFolder, item.name))}>
-                          Open
+                          {t("settings.files.open", "Open")}
                         </Button>
                         <Button
                           variant="outline"
@@ -763,14 +773,14 @@ export default function SettingsFilesPage() {
                           ) : (
                             <Trash2 className="size-4" />
                           )}
-                          <span className="sr-only">Delete folder</span>
+                          <span className="sr-only">{t("settings.files.deleteFolderSr", "Delete folder")}</span>
                         </Button>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
                         <Button variant="outline" size="sm" onClick={() => handleDownloadFile(item.name)}>
                           <Download className="size-4" />
-                          Download
+                          {t("settings.files.download", "Download")}
                         </Button>
                         <Button
                           variant="outline"
@@ -784,7 +794,7 @@ export default function SettingsFilesPage() {
                           ) : (
                             <Trash2 className="size-4" />
                           )}
-                          <span className="sr-only">Delete file</span>
+                          <span className="sr-only">{t("settings.files.deleteFileSr", "Delete file")}</span>
                         </Button>
                       </div>
                     )}
@@ -801,19 +811,19 @@ export default function SettingsFilesPage() {
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         title={
           deleteTarget?.kind === "folder"
-            ? "Delete folder"
+            ? t("settings.files.confirm.deleteFolderTitle", "Delete folder")
             : deleteTarget?.kind === "files"
-              ? "Delete files"
-              : "Delete file"
+              ? t("settings.files.confirm.deleteFilesTitle", "Delete files")
+              : t("settings.files.confirm.deleteFileTitle", "Delete file")
         }
         description={
           deleteTarget?.kind === "files"
-            ? `Permanently delete ${deleteTarget.name}?`
+            ? `${t("settings.files.confirm.deletePrefix", "Permanently delete")} ${deleteTarget.name}?`
             : deleteTarget
-              ? `Permanently delete "${deleteTarget.name}"?`
-              : "Permanently delete item?"
+              ? `${t("settings.files.confirm.deletePrefix", "Permanently delete")} "${deleteTarget.name}"?`
+              : t("settings.files.confirm.deleteGeneric", "Permanently delete item?")
         }
-        confirmLabel="Delete"
+        confirmLabel={t("settings.files.confirm.delete", "Delete")}
         variant="destructive"
         loading={
           deleteTarget
