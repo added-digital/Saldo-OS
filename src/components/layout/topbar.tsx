@@ -20,6 +20,7 @@ import { useLanguage } from "@/hooks/use-language";
 import { useTranslation } from "@/hooks/use-translation";
 import { createClient } from "@/lib/supabase/client";
 import { UserAvatar } from "@/components/app/user-avatar";
+import { FlagGB, FlagSE } from "@/components/ui/flag";
 import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { useSidebar } from "@/components/layout/sidebar";
 
@@ -95,15 +96,15 @@ function Topbar({ className }: TopbarProps) {
               <button
                 type="button"
                 className={cn(
-                  "flex h-7 w-9 items-center justify-center rounded-full text-sm transition-colors",
+                  "flex h-7 w-9 items-center justify-center rounded-full transition-colors",
                   language === "sv"
                     ? "bg-background ring-1 ring-border"
-                    : "text-muted-foreground hover:text-foreground",
+                    : "opacity-60 hover:opacity-100",
                 )}
                 onClick={() => setLanguage("sv")}
                 aria-label={t("common.switchToSwedish", "Switch to Swedish")}
               >
-                🇸🇪
+                <FlagSE />
               </button>
               <span className="px-2 text-[11px] font-semibold uppercase tracking-wide">
                 {language === "sv" ? "SV" : "EN"}
@@ -111,15 +112,15 @@ function Topbar({ className }: TopbarProps) {
               <button
                 type="button"
                 className={cn(
-                  "flex h-7 w-9 items-center justify-center rounded-full text-sm transition-colors",
+                  "flex h-7 w-9 items-center justify-center rounded-full transition-colors",
                   language === "en"
                     ? "bg-background ring-1 ring-border"
-                    : "text-muted-foreground hover:text-foreground",
+                    : "opacity-60 hover:opacity-100",
                 )}
                 onClick={() => setLanguage("en")}
                 aria-label={t("common.switchToEnglish", "Switch to English")}
               >
-                🇬🇧
+                <FlagGB />
               </button>
             </div>
           </div>

@@ -512,7 +512,7 @@ const dictionaries = {
     "dashboard.home.askQuestion": "Ask a question",
     "dashboard.home.beta": "Beta",
     "dashboard.ask.heading": "What do you need insights on today?",
-    "dashboard.ask.servicesPlaceholder": "Ask about our services...",
+    "dashboard.ask.servicesPlaceholder": "Ask a question...",
     "dashboard.ask.thinking": "Thinking...",
     "dashboard.ask.failed": "Failed to ask question",
     "dashboard.ask.timeout":
@@ -1238,7 +1238,7 @@ const dictionaries = {
     "dashboard.home.askQuestion": "Ställ en fråga",
     "dashboard.home.beta": "Beta",
     "dashboard.ask.heading": "Vad behöver du insikter om idag?",
-    "dashboard.ask.servicesPlaceholder": "Fråga om våra tjänster...",
+    "dashboard.ask.servicesPlaceholder": "Ställ en fråga...",
     "dashboard.ask.thinking": "Tänker...",
     "dashboard.ask.failed": "Kunde inte ställa frågan",
     "dashboard.ask.timeout":

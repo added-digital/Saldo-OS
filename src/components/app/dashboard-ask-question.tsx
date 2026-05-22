@@ -2,7 +2,8 @@
 
 import * as React from "react"
 import ReactMarkdown from "react-markdown"
-import { ArrowUp, GripVertical, Loader2, MoreHorizontal, Paperclip, PanelLeftClose, PanelLeftOpen, Pin, Plus, Trash2, X } from "lucide-react"
+import remarkGfm from "remark-gfm"
+import { ArrowUp, GripVertical, Info, Loader2, MoreHorizontal, Paperclip, PanelLeftClose, PanelLeftOpen, Pin, Plus, Trash2, X } from "lucide-react"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
@@ -177,6 +178,16 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
       "Which customers have the highest turnover this year?",
       "Show me contracts that are active right now.",
     ]
+  }, [language])
+
+  // Empty-state hint shown beneath the input on a fresh chat. Explains what
+  // the assistant currently has access to and what's still coming so users
+  // don't waste a turn asking about data that isn't wired up yet.
+  const chatContextHint = React.useMemo(() => {
+    if (language === "sv") {
+      return "Saldo OS Chat kan svara på frågor om CRM:et — kunder, fakturor, timmar, avtal, konsulter och KPI:er — samt interna dokument (t.ex. handboken). Ej anslutet ännu: SIE-filer och kundernas egna bokföringsunderlag."
+    }
+    return "Saldo OS Chat can answer questions about your CRM — customers, invoices, hours, contracts, consultants and KPIs — and your internal documents (e.g. handboken). Not yet connected: SIE files and customers' own bookkeeping records."
   }, [language])
 
   void customers
@@ -938,6 +949,15 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
                     <div
                       className={cn(
                         "prose prose-sm prose-zinc dark:prose-invert max-w-none text-sm leading-relaxed text-foreground [&_p]:text-foreground [&_li]:text-foreground [&_strong]:text-foreground [&_em]:text-foreground [&_code]:text-foreground [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground [&_blockquote]:text-muted-foreground [&_a]:text-primary",
+                        // Tables: react-markdown + remark-gfm renders them as
+                        // bare <table>/<thead>/<tbody>/<tr>/<th>/<td>. The
+                        // `prose` plugin styles tables only in non-compact
+                        // mode, and we use prose-sm here, so we paint the
+                        // borders, padding and colors ourselves.
+                        "[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-xs",
+                        "[&_thead]:border-b [&_thead]:border-border [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-medium [&_th]:text-foreground",
+                        "[&_tbody_tr]:border-b [&_tbody_tr]:border-border/60 [&_tbody_tr:last-child]:border-b-0",
+                        "[&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top [&_td]:text-foreground",
                         // While we wait for the LLM the placeholder text
                         // ("Thinking...") fades in and out so it visibly
                         // signals "we're working on it" instead of looking
@@ -946,7 +966,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
                           "animate-pulse text-muted-foreground [&_p]:text-muted-foreground",
                       )}
                     >
-                      <ReactMarkdown>{message.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                     </div>
                     {message.sources && message.sources.length > 0 && (
                       <div className="mt-2 space-y-1 text-xs text-muted-foreground">
@@ -1006,9 +1026,10 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
                 </div>
               </div>
             </div>
+            <div className="flex w-full max-w-[600px] flex-col items-stretch gap-2.5">
             <form
               onSubmit={(e) => { e.preventDefault(); void submitQuestion() }}
-              className="w-full max-w-[600px] rounded-2xl border bg-background p-2 shadow-sm"
+              className="w-full rounded-2xl border bg-background p-2 shadow-sm"
             >
               {chatAttachments.length > 0 ? (
                 <div className="mb-2 flex flex-wrap gap-1.5 px-1">
@@ -1064,6 +1085,11 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
                 </button>
               </div>
             </form>
+              <div className="flex items-start gap-1.5 rounded-md border border-border/40 bg-muted/30 px-3 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                <Info className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                <p className="text-left">{chatContextHint}</p>
+              </div>
+            </div>
           </div>
         )}
 
