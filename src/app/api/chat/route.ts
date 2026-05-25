@@ -204,6 +204,37 @@ async function handleChat(request: Request) {
   const anthropic = new Anthropic({ apiKey });
   const model = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5";
   const system = buildSystemPrompt(context);
+
+  // -------------------------------------------------------------------------
+  // Prompt caching.
+  //
+  // The system prompt (~1.3K tokens) and the tool definitions (~3K tokens)
+  // are identical across every iteration of the tool-calling loop, and
+  // largely identical across different users within a 5-minute window.
+  // Marking them as cacheable tells Anthropic to remember the rendered
+  // preamble and serve it from cache on subsequent calls at ~10% of the
+  // normal input-token cost and latency.
+  //
+  // Two breakpoints, longest match wins:
+  //   1. cache_control on the LAST tool       → caches tools alone
+  //      (matches even when the user/role in the system prompt differs).
+  //   2. cache_control on the system block    → caches tools + system
+  //      (matches when the same user fires multiple calls in 5 minutes —
+  //       e.g. all iterations of one tool-heavy turn).
+  // -------------------------------------------------------------------------
+  const systemBlocks: Anthropic.TextBlockParam[] = [
+    {
+      type: "text",
+      text: system,
+      cache_control: { type: "ephemeral" },
+    },
+  ];
+  const cachedTools: Anthropic.Tool[] = TOOL_DEFINITIONS.map((tool, index) =>
+    index === TOOL_DEFINITIONS.length - 1
+      ? { ...tool, cache_control: { type: "ephemeral" } }
+      : tool,
+  );
+
   const toolTrace: ToolCallTrace[] = [];
   const collectedSources = new Map<string, DocumentSource>();
 
@@ -226,14 +257,31 @@ async function handleChat(request: Request) {
       anthropic.messages.create({
         model,
         max_tokens: MAX_OUTPUT_TOKENS,
-        system,
-        tools: TOOL_DEFINITIONS,
+        system: systemBlocks,
+        tools: cachedTools,
         messages,
       }),
       ANTHROPIC_CALL_TIMEOUT_MS,
       `anthropic.messages.create (iter ${iteration + 1})`,
     );
     lastResponse = response;
+
+    // Surface prompt-cache usage so we can verify caching is actually firing.
+    // `cache_read_input_tokens` > 0 means we hit the cache; `cache_creation_input_tokens`
+    // > 0 means we just wrote a new cache entry (the first call of a 5-min window).
+    const usage = response.usage;
+    if (
+      usage &&
+      ((usage.cache_read_input_tokens ?? 0) > 0 ||
+        (usage.cache_creation_input_tokens ?? 0) > 0)
+    ) {
+      console.log(
+        `[/api/chat] iter ${iteration + 1} cache: ` +
+          `read=${usage.cache_read_input_tokens ?? 0}, ` +
+          `write=${usage.cache_creation_input_tokens ?? 0}, ` +
+          `input=${usage.input_tokens}, output=${usage.output_tokens}`,
+      );
+    }
 
     if (response.stop_reason === "tool_use") {
       // Buffer intermediate narration so we still have something to show if
