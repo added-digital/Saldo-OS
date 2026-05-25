@@ -259,20 +259,14 @@ export default function SettingsSiePage() {
   )
 
   function handleConnect(row: SieRow) {
-    // Real OAuth wiring lands once we have FORTNOX_SIE_CLIENT_ID + a
-    // /api/fortnox-sie/auth route. For now this is a stub that surfaces a
-    // friendly toast so the table is testable end-to-end.
+    // Navigate the top-level browser context to /api/fortnox-sie/auth so
+    // Fortnox's authorize page can take over the tab. The route sets a
+    // short-lived CSRF cookie and redirects to Fortnox; on return, the
+    // /api/fortnox-sie/callback route persists the tokens and redirects
+    // back here with ?success=true&customer_id=... (or ?error=...).
     setConnectingCustomerId(row.customerId)
-    toast.message(
-      t(
-        "settings.sie.toast.connectStub",
-        "SIE OAuth not yet wired — awaiting Fortnox app credentials.",
-      ),
-      {
-        description: `Customer: ${row.customerName}`,
-      },
-    )
-    window.setTimeout(() => setConnectingCustomerId(null), 600)
+    const url = `/api/fortnox-sie/auth?customer_id=${encodeURIComponent(row.customerId)}`
+    window.location.assign(url)
   }
 
   if (!isAdmin) {
