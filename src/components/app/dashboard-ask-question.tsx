@@ -134,6 +134,13 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
   const hasMessages = messages.length > 0
   const persistTimerRef = React.useRef<number | null>(null)
   const conversationSignaturesRef = React.useRef<Record<string, string>>({})
+  // Guards against a duplicate INSERT when two callers race to persist a
+  // fresh conversation (the explicit call in submitQuestion AND the debounced
+  // effect both fire while conversationId is still null). The first caller
+  // stores its promise here; any concurrent caller awaits the same promise
+  // and gets the same inserted id back.
+  const pendingNewConversationRef =
+    React.useRef<Promise<string | null> | null>(null)
   const isMountedRef = React.useRef(true)
   const messagesRef = React.useRef<ChatMessage[]>([])
   const conversationIdRef = React.useRef<string | null>(null)
@@ -164,19 +171,27 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
     })
   }, [])
 
+  // Starter questions cover the three main capability categories the chat
+  // supports, phrased so they work for every role: "our" is naturally scoped
+  // by row-level security (admin sees firm-wide, team lead sees their team,
+  // consultant sees their own customers). The questions are also length-
+  // matched so the buttons line up evenly in the UI.
+  //   1. Top customers (KPI breakdown) → get_kpi_summary with by_customer
+  //   2. Invoice count this year       → get_kpi_summary
+  //   3. Services we offer             → search_documents
   const starterQuestions = React.useMemo(() => {
     if (language === "sv") {
       return [
-        "Hur många fakturor skickades förra månaden?",
-        "Vilka kunder har högst omsättning i år?",
-        "Visa mig avtal som är aktiva just nu.",
+        "Visa kunderna med högst omsättning i år",
+        "Hur många fakturor har vi skickat i år?",
+        "Vilka tjänster erbjuder vi våra kunder?",
       ]
     }
 
     return [
-      "How many invoices were sent last month?",
-      "Which customers have the highest turnover this year?",
-      "Show me contracts that are active right now.",
+      "Show top customers by turnover this year",
+      "How many invoices did we send this year?",
+      "What services do we offer our customers?",
     ]
   }, [language])
 
@@ -351,39 +366,61 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
       const title = getConversationTitle(nextMessages)
 
       if (!conversationId) {
-        const { data } = await supabase
-          .from("conversations")
-          .insert({
-            user_id: userId,
-            title,
-            messages: nextMessages as unknown as Record<string, unknown>[],
-          } as never)
-          .select("id, title, messages, updated_at")
-          .single()
-
-        if (!data) return null
-
-        const inserted = data as {
-          id: string
-          title: string | null
-          messages: unknown
-          updated_at: string
+        // Race guard: if another caller is already inserting the new
+        // conversation row, wait on that promise instead of firing a second
+        // INSERT. Without this, the explicit persist in submitQuestion and
+        // the debounced effect on `messages` change can both reach this
+        // branch before either has set `conversationId`, producing two
+        // duplicate rows in the conversations sidebar.
+        if (pendingNewConversationRef.current) {
+          return pendingNewConversationRef.current
         }
 
-        conversationSignaturesRef.current[inserted.id] = nextSignature
+        const insertPromise = (async (): Promise<string | null> => {
+          const { data } = await supabase
+            .from("conversations")
+            .insert({
+              user_id: userId,
+              title,
+              messages: nextMessages as unknown as Record<string, unknown>[],
+            } as never)
+            .select("id, title, messages, updated_at")
+            .single()
 
-        setConversationId(inserted.id)
-        setConversationHistory((current) => [
-          {
-            id: inserted.id,
-            title: inserted.title,
-            messages: Array.isArray(inserted.messages) ? (inserted.messages as ChatMessage[]) : nextMessages,
-            updated_at: inserted.updated_at,
-          },
-          ...current,
-        ])
-        setConversationOrder((current) => [inserted.id, ...current.filter((id) => id !== inserted.id)])
-        return inserted.id
+          if (!data) return null
+
+          const inserted = data as {
+            id: string
+            title: string | null
+            messages: unknown
+            updated_at: string
+          }
+
+          conversationSignaturesRef.current[inserted.id] = nextSignature
+
+          setConversationId(inserted.id)
+          setConversationHistory((current) => [
+            {
+              id: inserted.id,
+              title: inserted.title,
+              messages: Array.isArray(inserted.messages) ? (inserted.messages as ChatMessage[]) : nextMessages,
+              updated_at: inserted.updated_at,
+            },
+            ...current,
+          ])
+          setConversationOrder((current) => [inserted.id, ...current.filter((id) => id !== inserted.id)])
+          return inserted.id
+        })()
+
+        pendingNewConversationRef.current = insertPromise
+
+        try {
+          return await insertPromise
+        } finally {
+          // Clear the guard regardless of success/failure so the next
+          // genuinely-new conversation can be inserted.
+          pendingNewConversationRef.current = null
+        }
       }
 
       const { data } = await supabase
