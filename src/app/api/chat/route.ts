@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 
 import { buildSystemPrompt } from "./prompt";
 import { TOOL_DEFINITIONS, executeTool } from "./tools";
+import { compactToolResult } from "./tools/compact-result";
 import type { ToolContext } from "./tools/types";
 
 export const runtime = "nodejs";
@@ -280,10 +281,22 @@ async function handleChat(request: Request) {
           }
         }
 
+        // Compact the result before sending it back to Claude. The full
+        // `result` object stays available above for source-extraction etc.;
+        // only the JSON that lands in `messages` (and therefore counts
+        // toward input tokens on every subsequent iteration) is trimmed.
+        const { compacted, stats } = compactToolResult(block.name, result);
+        if (stats.trimmed_fields.length > 0) {
+          console.log(
+            `[/api/chat] compacted ${block.name}: ${stats.before} → ${stats.after} chars`,
+            stats.trimmed_fields,
+          );
+        }
+
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,
-          content: JSON.stringify(result ?? null),
+          content: JSON.stringify(compacted ?? null),
         });
       }
 
