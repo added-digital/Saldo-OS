@@ -4,6 +4,10 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 import { buildSystemPrompt } from "./prompt";
+import {
+  DEFAULT_HISTORY_TOKEN_BUDGET,
+  trimHistoryByTokenBudget,
+} from "./history";
 import { TOOL_DEFINITIONS, executeTool } from "./tools";
 import { compactToolResult } from "./tools/compact-result";
 import type { ToolContext } from "./tools/types";
@@ -38,7 +42,6 @@ type DocumentSource = {
 
 const MAX_TOOL_ITERATIONS = 12;
 const MAX_OUTPUT_TOKENS = 4096;
-const HISTORY_TURNS = 10;
 // Per-call ceiling for the Anthropic round-trip. If the API hangs we want a
 // concrete error within ~30s rather than letting the loop sit until the
 // function-level maxDuration kills the whole request.
@@ -170,12 +173,27 @@ async function handleChat(request: Request) {
       : [];
   }
 
-  // Trim to the last N turns to keep context tight (a "turn" here is a
-  // user/assistant pair, but we just slice messages to keep this simple).
-  const trimmedHistory = storedHistory.slice(-HISTORY_TURNS * 2);
+  // Trim history with a token-budget walker that keeps whole turns
+  // (never splits an assistant tool_use from its matching user tool_result,
+  // which would otherwise crash the request with a 400 from Anthropic).
+  const historyMessages: Anthropic.MessageParam[] = storedHistory.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+  const { kept: trimmedHistory, stats: historyStats } =
+    trimHistoryByTokenBudget(historyMessages, DEFAULT_HISTORY_TOKEN_BUDGET);
+
+  if (historyStats.total_messages > 0) {
+    console.log(
+      `[/api/chat] history: kept ${historyStats.kept_messages}/${historyStats.total_messages} msgs ` +
+        `(${historyStats.kept_turns} turn${historyStats.kept_turns === 1 ? "" : "s"}, ` +
+        `~${historyStats.estimated_tokens} tokens, budget ${historyStats.budget_tokens})` +
+        (historyStats.over_budget ? " [OVER BUDGET — latest turn alone]" : ""),
+    );
+  }
 
   const messages: Anthropic.MessageParam[] = [
-    ...trimmedHistory.map((m) => ({ role: m.role, content: m.content })),
+    ...trimmedHistory,
     { role: "user", content: message },
   ];
 
