@@ -105,11 +105,17 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
   const activeConsultantsOnly = input.active_consultants_only ?? true;
   const activeCustomersOnly = input.active_customers_only ?? true;
   const sortBy = input.sort_by ?? "total_turnover";
+  // Default to top 30 — enough to answer almost every ranking question
+  // ("which consultants are top performers", "compare team turnover") while
+  // keeping the JSON payload (which is re-sent on every tool-loop iteration)
+  // small. Callers can override up to a hard ceiling of 200.
+  const DEFAULT_LIMIT = 30;
+  const MAX_LIMIT = 200;
   const limitRaw = input.limit;
   const limit =
     typeof limitRaw === "number" && Number.isInteger(limitRaw) && limitRaw > 0
-      ? Math.min(limitRaw, 200)
-      : null;
+      ? Math.min(limitRaw, MAX_LIMIT)
+      : DEFAULT_LIMIT;
 
   // -------------------------------------------------------------------------
   // 1. Consultants
@@ -337,9 +343,24 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
     return b.totals[sortBy] - a.totals[sortBy];
   });
 
-  if (limit !== null) {
+  const totalConsultants = consultantList.length;
+  if (consultantList.length > limit) {
     consultantList = consultantList.slice(0, limit);
   }
+
+  // Mirror the `_compacted` shape used by the route-level compactor so the
+  // model has one consistent signal that "this list is a slice of a bigger
+  // ranking" regardless of where the truncation happened.
+  const compactedNotes =
+    totalConsultants > consultantList.length
+      ? [
+          {
+            field: "consultants",
+            total_count: totalConsultants,
+            shown_count: consultantList.length,
+          },
+        ]
+      : undefined;
 
   return {
     period: {
@@ -356,6 +377,7 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
       customers_in_scope: inScopeCustomerIds.length,
     },
     consultants: consultantList,
+    ...(compactedNotes ? { _compacted: compactedNotes } : {}),
     totals: grandTotals,
     notes: [
       "When `shared_cost_center` is true on a consultant, multiple " +

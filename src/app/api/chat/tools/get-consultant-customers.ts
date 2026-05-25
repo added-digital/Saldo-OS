@@ -39,7 +39,9 @@ export const getConsultantCustomers: ToolHandler<GetConsultantCustomersInput> = 
   }
 
   const activeOnly = input.active_only ?? true;
-  const limit = Math.min(Math.max(input.limit ?? 100, 1), 1000);
+  // Default 30 keeps the JSON small (this result is re-sent on every loop
+  // iteration). Callers can override up to a hard ceiling of 200.
+  const limit = Math.min(Math.max(input.limit ?? 30, 1), 200);
 
   const profileRes = await supabase
     .from("profiles")
@@ -89,11 +91,29 @@ export const getConsultantCustomers: ToolHandler<GetConsultantCustomersInput> = 
 
   const customers = (data ?? []) as unknown as CustomerRow[];
 
+  // We fetched up to `limit` rows. If we got exactly that many, there may be
+  // more — surface this with the same `_compacted` shape the route compactor
+  // and other tools use so the model can say "showing first 30, ask for more
+  // if needed".
+  const hitLimit = customers.length === limit;
+
   return {
     consultant,
     cost_center: costCenter,
     customer_count: customers.length,
     active_only: activeOnly,
     customers,
+    ...(hitLimit
+      ? {
+          _compacted: [
+            {
+              field: "customers",
+              total_count: null,
+              shown_count: customers.length,
+              note: "Result reached the requested limit; there may be more — call again with a higher `limit` (max 200) if a full list is needed.",
+            },
+          ],
+        }
+      : {}),
   };
 };

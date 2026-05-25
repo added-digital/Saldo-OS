@@ -175,8 +175,9 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
         limit: {
           type: "integer",
           description:
-            "Optional cap on the number of consultants returned (top-N " +
-            "after sorting). Max 200. Omit for full ranking.",
+            "Cap on the number of consultants returned (top-N after " +
+            "sorting). Default 30, max 200. Increase only if the user " +
+            "explicitly wants a full ranking.",
           minimum: 1,
           maximum: 200,
         },
@@ -331,9 +332,11 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
         },
         limit: {
           type: "integer",
-          description: "Max customers to return (1-1000). Default 100.",
+          description:
+            "Max customers to return. Default 30, max 200. Raise only if " +
+            "the user explicitly asks for a full list.",
           minimum: 1,
-          maximum: 1000,
+          maximum: 200,
         },
       },
       required: ["consultant_id"],
@@ -362,9 +365,11 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
         },
         match_count: {
           type: "integer",
-          description: "Max chunks to return (1-10). Default 5.",
+          description:
+            "Max chunks to return. Default 4, max 6. Each chunk excerpt " +
+            "is independently truncated to ~800 chars for token safety.",
           minimum: 1,
-          maximum: 10,
+          maximum: 6,
         },
       },
       required: ["query"],

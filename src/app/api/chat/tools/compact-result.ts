@@ -48,17 +48,22 @@ const TOOL_RULES: Record<string, CompactionRule> = {
   resolve_consultant: {
     arrayCaps: [{ field: "matches", limit: 10 }],
   },
+  // The next three tools cap their results internally now (default 25 each).
+  // The caps below are pure safety nets — they only fire if a caller
+  // explicitly requests close to the tool's own max (200) AND the result is
+  // still large enough to be a token risk. Setting them to the same max
+  // means the compactor respects an explicit user-requested limit.
   get_kpi_by_consultant: {
-    arrayCaps: [{ field: "consultants", limit: 30 }],
+    arrayCaps: [{ field: "consultants", limit: 200 }],
   },
   get_kpi_summary: {
-    // by_customer entries are sorted by total_turnover desc inside the tool,
-    // so slicing to 30 keeps the most relevant rows. by_month is naturally
-    // capped at 12 by the calendar, so no rule needed there.
+    // by_customer is now capped to 25 inside the tool, sorted by turnover.
+    // by_month is naturally capped at 12 by the calendar (and omitted
+    // entirely for single-month queries).
     arrayCaps: [{ field: "by_customer", limit: 30 }],
   },
   get_consultant_customers: {
-    arrayCaps: [{ field: "customers", limit: 30 }],
+    arrayCaps: [{ field: "customers", limit: 200 }],
   },
   get_cost_center_details: {
     arrayCaps: [

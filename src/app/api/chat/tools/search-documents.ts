@@ -47,8 +47,11 @@ type DirectChunkRow = {
 
 const VOYAGE_MODEL = "voyage-3";
 const EXPECTED_EMBEDDING_DIM = 1024;
-const DEFAULT_MATCH_COUNT = 5;
-const MAX_MATCH_COUNT = 10;
+// Defaults tuned for token cost: chunk_text is unbounded in length, so even
+// a small `match_count` can produce a fat tool result. The route compactor
+// additionally truncates each excerpt to ~800 chars as a backstop.
+const DEFAULT_MATCH_COUNT = 4;
+const MAX_MATCH_COUNT = 6;
 
 function toVectorString(embedding: number[]): string {
   return `[${embedding.join(",")}]`;

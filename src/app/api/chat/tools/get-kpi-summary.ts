@@ -330,6 +330,17 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
   // -------------------------------------------------------------------------
   // 5. Build response
   // -------------------------------------------------------------------------
+  // When the caller asked for a single month, the by_month array is just one
+  // row that duplicates `totals` — omit it to save tokens. Same logic for
+  // each customer's nested by_month.
+  const isSingleMonth = month != null;
+
+  // Cap by_customer to top 30 (sorted desc by total_turnover) so a portfolio
+  // of 200 customers doesn't balloon the tool-result JSON. The model still
+  // gets the aggregate totals; if the user asks for a specific customer not
+  // in the top 30 they can request that customer by id.
+  const BY_CUSTOMER_LIMIT = 30;
+
   const response: Record<string, unknown> = {
     period: {
       year,
@@ -344,24 +355,47 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
       customers_contributing: customersContributing.size,
     },
     totals,
-    by_month: Array.from(byMonth.values()).sort(
-      (a, b) => a.period_month - b.period_month,
-    ),
     source: "customer_kpis (precomputed rollup — matches reports dashboard)",
   };
 
+  if (!isSingleMonth) {
+    response.by_month = Array.from(byMonth.values()).sort(
+      (a, b) => a.period_month - b.period_month,
+    );
+  }
+
   if (includePerCustomer) {
-    response.by_customer = Array.from(byCustomer.values())
+    const allCustomers = Array.from(byCustomer.values())
       .map((bucket) => ({
         customer_id: bucket.customer_id,
         name: bucket.name,
         fortnox_customer_number: bucket.fortnox_customer_number,
         totals: bucket.totals,
-        by_month: Array.from(bucket.by_month.values()).sort(
-          (a, b) => a.period_month - b.period_month,
-        ),
+        // Per-customer by_month is omitted for single-month queries: the row
+        // would just repeat the customer's totals for that month.
+        ...(isSingleMonth
+          ? {}
+          : {
+              by_month: Array.from(bucket.by_month.values()).sort(
+                (a, b) => a.period_month - b.period_month,
+              ),
+            }),
       }))
       .sort((a, b) => b.totals.total_turnover - a.totals.total_turnover);
+
+    const totalCustomers = allCustomers.length;
+    response.by_customer = allCustomers.slice(0, BY_CUSTOMER_LIMIT);
+
+    if (totalCustomers > BY_CUSTOMER_LIMIT) {
+      response._compacted = [
+        {
+          field: "by_customer",
+          total_count: totalCustomers,
+          shown_count: BY_CUSTOMER_LIMIT,
+          note: "Showing the top 30 customers by turnover. Call again with `customer_ids: [...]` for specific customers, or interpret these as the leaders.",
+        },
+      ];
+    }
   }
 
   return response;
