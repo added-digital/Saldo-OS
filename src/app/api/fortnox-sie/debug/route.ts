@@ -7,6 +7,7 @@ import {
   type SieType,
 } from "@/lib/fortnox-sie/client";
 import { parseSieFile } from "@/lib/fortnox-sie/parser";
+import { syncSieForCustomer } from "@/lib/fortnox-sie/sync";
 
 export const runtime = "nodejs";
 // Long-ish so a slow Fortnox response (SIE files can be large) doesn't
@@ -194,6 +195,43 @@ export async function GET(request: NextRequest) {
       console.error("[SIE debug whoami] failed:", error);
       return NextResponse.json(
         { ok: false, error: "whoami_failed", message },
+        { status: 500 },
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Mode switch — `?mode=sync` runs the full fetch→parse→upsert orchestrator
+  // for one customer + year. The nightly cron (future) will call this same
+  // function in a loop. Returns the structured SyncSieResult.
+  // -------------------------------------------------------------------------
+  if (sp.get("mode") === "sync") {
+    try {
+      const typeArg = parseTypeArg(sp.get("type"));
+      if (typeof typeArg === "string") return badRequest(typeArg);
+      const periodArg = parsePeriodArgs(
+        sp.get("year"),
+        sp.get("financialyear"),
+      );
+      if (typeof periodArg === "string") return badRequest(periodArg);
+      if (periodArg.financialYearId != null) {
+        return badRequest(
+          "sync mode does not accept financialyear; pass year= instead",
+        );
+      }
+
+      const result = await syncSieForCustomer({
+        customerId,
+        year: periodArg.year,
+        sieType: typeArg,
+      });
+      return NextResponse.json({ ok: result.status === "success", result });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown error.";
+      console.error("[SIE debug sync] failed:", error);
+      return NextResponse.json(
+        { ok: false, error: "sync_failed", message },
         { status: 500 },
       );
     }
