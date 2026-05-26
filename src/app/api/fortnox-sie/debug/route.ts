@@ -85,6 +85,46 @@ export async function GET(request: NextRequest) {
   // (e.g. when the customer in CRM and the Fortnox account being read
   // don't appear to match).
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Mode switch — `?mode=financialyears` lists every financial year on the
+  // connection's tenant (no date filter). Uses the `bookkeeping` scope we
+  // already have, so it works even without `companyinformation`. Useful to
+  // distinguish "no year matching this calendar year" from "tenant has no
+  // bookkeeping data at all".
+  // -------------------------------------------------------------------------
+  if (sp.get("mode") === "financialyears") {
+    try {
+      const { accessToken, tenantId } = await getValidSieAccessToken(customerId);
+      const response = await fetch(
+        "https://api.fortnox.se/3/financialyears",
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: "application/json",
+            ...(tenantId ? { TenantId: tenantId } : {}),
+          },
+        },
+      );
+      const body = (await response.json().catch(() => null)) as unknown;
+      return NextResponse.json({
+        ok: response.ok,
+        customer_id: customerId,
+        stored_tenant_id: tenantId,
+        fortnox_status: response.status,
+        fortnox_response: body,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown error.";
+      console.error("[SIE debug financialyears] failed:", error);
+      return NextResponse.json(
+        { ok: false, error: "financialyears_failed", message },
+        { status: 500 },
+      );
+    }
+  }
+
   if (sp.get("mode") === "whoami") {
     try {
       const { accessToken, tenantId } = await getValidSieAccessToken(customerId);
