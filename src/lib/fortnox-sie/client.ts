@@ -320,8 +320,13 @@ export interface FetchSieResult {
   headers: Record<string, string>;
   byteLength: number;
   /** Decoded as latin1 so all bytes are preserved and the text is readable
-   *  even for CP437-encoded SIE files. Callers can re-decode if needed. */
+   *  even for CP437-encoded SIE files. Callers can re-decode if needed.
+   *  For correct Swedish characters use `buffer` with the parser instead. */
   text: string;
+  /** Raw bytes as returned by Fortnox. SIE files are typically CP437/PC8
+   *  encoded — pass this to the parser which detects the encoding from
+   *  the `#FORMAT` header and decodes accordingly. */
+  buffer: Buffer;
 }
 
 /**
@@ -392,12 +397,14 @@ export async function fetchSieFile(opts: {
     );
   }
 
+  const buffer = Buffer.from(arrayBuffer);
   return {
     url,
     status: response.status,
     headers,
     byteLength: arrayBuffer.byteLength,
-    text: Buffer.from(arrayBuffer).toString("latin1"),
+    text: buffer.toString("latin1"),
+    buffer,
     financialYearId,
   };
 }
