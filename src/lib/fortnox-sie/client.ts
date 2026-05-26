@@ -232,12 +232,16 @@ export async function getValidSieAccessToken(
 /**
  * Resolve a Fortnox `financialyear` numeric id for a given calendar year.
  * Fortnox's SIE endpoint requires the internal id, not the calendar year.
+ *
+ * `?debugBody` is filled in on the return value when present — useful for
+ * the debug route to surface what Fortnox actually sent back when no
+ * match is found.
  */
 export async function resolveFinancialYearId(opts: {
   accessToken: string;
   tenantId: string | null;
   year: number;
-}): Promise<number | null> {
+}): Promise<{ id: number | null; rawBody: unknown; url: string }> {
   // GET /3/financialyears?date=YYYY-06-30
   // Mid-year date guarantees we land inside the financial year row even
   // for organisations using non-calendar fiscal years (1 Jul → 30 Jun).
@@ -254,21 +258,60 @@ export async function resolveFinancialYearId(opts: {
     );
   }
 
-  // Two response shapes observed in the wild:
-  //   { FinancialYear: { Id: 1, ... } }
-  //   { FinancialYears: { FinancialYear: [ {...} ] } }
-  // Handle both defensively.
   const body = (await response.json()) as Record<string, unknown>;
-  const single = (body as { FinancialYear?: { Id?: number } }).FinancialYear;
-  if (single && typeof single.Id === "number") return single.Id;
 
-  const list = (
-    body as { FinancialYears?: { FinancialYear?: Array<{ Id?: number }> } }
-  ).FinancialYears?.FinancialYear;
-  if (Array.isArray(list) && list.length > 0 && typeof list[0].Id === "number") {
-    return list[0].Id;
+  // Fortnox returns financial years in one of several wrapping shapes
+  // depending on the endpoint variant and whether the resource is treated
+  // as a list or a single record. Handle all observed variants:
+  //
+  //   1. { FinancialYears: [ { Id, ... } ] }          (modern REST list)
+  //   2. { FinancialYears: { FinancialYear: [ … ] } } (legacy XML-style list)
+  //   3. { FinancialYear: { Id, ... } }               (single-record fetch)
+  //   4. [ { Id, ... } ]                              (bare array)
+  //
+  // We also handle lower-case `id` defensively because some Fortnox
+  // endpoints have inconsistent casing.
+  const pickId = (item: unknown): number | null => {
+    if (!item || typeof item !== "object") return null;
+    const rec = item as Record<string, unknown>;
+    const cand = rec.Id ?? rec.id;
+    return typeof cand === "number" ? cand : null;
+  };
+
+  // Shape 1: { FinancialYears: [...] }
+  const listDirect = (body as { FinancialYears?: unknown }).FinancialYears;
+  if (Array.isArray(listDirect) && listDirect.length > 0) {
+    const id = pickId(listDirect[0]);
+    if (id != null) return { id, rawBody: body, url };
   }
-  return null;
+
+  // Shape 2: { FinancialYears: { FinancialYear: [...] } }
+  if (
+    listDirect &&
+    typeof listDirect === "object" &&
+    "FinancialYear" in (listDirect as Record<string, unknown>)
+  ) {
+    const nested = (listDirect as { FinancialYear?: unknown }).FinancialYear;
+    if (Array.isArray(nested) && nested.length > 0) {
+      const id = pickId(nested[0]);
+      if (id != null) return { id, rawBody: body, url };
+    }
+  }
+
+  // Shape 3: { FinancialYear: { Id, ... } }
+  const single = (body as { FinancialYear?: unknown }).FinancialYear;
+  if (single && !Array.isArray(single)) {
+    const id = pickId(single);
+    if (id != null) return { id, rawBody: body, url };
+  }
+
+  // Shape 4: bare array at the top
+  if (Array.isArray(body) && body.length > 0) {
+    const id = pickId(body[0]);
+    if (id != null) return { id, rawBody: body, url };
+  }
+
+  return { id: null, rawBody: body, url };
 }
 
 export interface FetchSieResult {
@@ -304,16 +347,21 @@ export async function fetchSieFile(opts: {
   let financialYearId = opts.financialYearId ?? null;
   if (financialYearId == null) {
     const year = opts.year ?? new Date().getFullYear();
-    financialYearId = await resolveFinancialYearId({
+    const resolved = await resolveFinancialYearId({
       accessToken,
       tenantId,
       year,
     });
-    if (financialYearId == null) {
+    if (resolved.id == null) {
+      // Include the raw response shape in the error so the debug route can
+      // surface what Fortnox actually sent back. Helps diagnose "no match"
+      // cases that turn out to be a parser miss rather than a missing year.
+      const preview = JSON.stringify(resolved.rawBody).slice(0, 600);
       throw new Error(
-        `No Fortnox financial year matching ${year} for customer ${opts.customerId}.`,
+        `No Fortnox financial year matching ${year} for customer ${opts.customerId}. Fortnox responded (${resolved.url}): ${preview}`,
       );
     }
+    financialYearId = resolved.id;
   }
 
   const url = `${FORTNOX_API_BASE}/3/sie/${opts.type}?financialyear=${financialYearId}`;

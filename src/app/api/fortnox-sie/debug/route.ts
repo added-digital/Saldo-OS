@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
-import { fetchSieFile, type SieType } from "@/lib/fortnox-sie/client";
+import {
+  fetchSieFile,
+  getValidSieAccessToken,
+  type SieType,
+} from "@/lib/fortnox-sie/client";
 
 export const runtime = "nodejs";
 // Long-ish so a slow Fortnox response (SIE files can be large) doesn't
@@ -72,6 +76,46 @@ export async function GET(request: NextRequest) {
   const customerId = sp.get("customer_id");
   if (!customerId) {
     return badRequest("customer_id is required");
+  }
+
+  // -------------------------------------------------------------------------
+  // Mode switch — `?mode=whoami` short-circuits the SIE fetch and instead
+  // calls /3/companyinformation against this connection's tokens. Useful
+  // for confirming which Fortnox tenant the OAuth actually authorised
+  // (e.g. when the customer in CRM and the Fortnox account being read
+  // don't appear to match).
+  // -------------------------------------------------------------------------
+  if (sp.get("mode") === "whoami") {
+    try {
+      const { accessToken, tenantId } = await getValidSieAccessToken(customerId);
+      const response = await fetch(
+        "https://api.fortnox.se/3/companyinformation",
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: "application/json",
+            ...(tenantId ? { TenantId: tenantId } : {}),
+          },
+        },
+      );
+      const body = (await response.json().catch(() => null)) as unknown;
+      return NextResponse.json({
+        ok: response.ok,
+        customer_id: customerId,
+        stored_tenant_id: tenantId,
+        fortnox_status: response.status,
+        fortnox_response: body,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown error.";
+      console.error("[SIE debug whoami] failed:", error);
+      return NextResponse.json(
+        { ok: false, error: "whoami_failed", message },
+        { status: 500 },
+      );
+    }
   }
 
   const typeRaw = sp.get("type");
