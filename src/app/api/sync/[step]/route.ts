@@ -11,6 +11,12 @@ const VALID_STEPS = new Set([
   "time-reports",
   "contracts",
   "generate-kpis",
+  // sie-kpis: derives financial KPIs (revenue, EBIT, kassalikviditet,
+  // soliditet, gross margin) from sie_period_balances + sie_account_balances
+  // into sie_kpis. Reserved here so the dispatcher accepts it once a
+  // sync-sie-kpis Edge Function exists. Until then the UI triggers the
+  // computation directly via /api/fortnox-sie/generate-kpis instead.
+  "sie-kpis",
 ])
 
 const STEP_LABELS: Record<string, string> = {
@@ -22,6 +28,7 @@ const STEP_LABELS: Record<string, string> = {
   "time-reports": "Time Reports",
   contracts: "Contracts",
   "generate-kpis": "Generate KPIs",
+  "sie-kpis": "SIE Nyckeltal",
 }
 
 async function authorize() {

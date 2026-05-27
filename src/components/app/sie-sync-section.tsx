@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Database, Loader2, Play } from "lucide-react"
+import { Calculator, Database, Loader2, Play } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -147,6 +147,139 @@ export function SieSyncCard() {
         >
           <Play className="size-3" />
           {syncButtonLabel}
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * SIE KPI generation card.
+ *
+ * Sibling of SieSyncCard. Runs the KPI engine over every customer that
+ * has at least one successful sie_imports row. The engine reads from
+ * sie_period_balances + sie_account_balances and writes computed values
+ * into sie_kpis, which powers the Nyckeltal pages.
+ *
+ * Kept separate from SieSyncCard because the two steps are independent —
+ * you can re-run KPIs after a KPI-definition tweak without re-fetching
+ * any SIE files. Same visual shape so the grid still reads uniformly.
+ */
+export function SieKpisCard() {
+  const { t } = useTranslation()
+  const [importCount, setImportCount] = React.useState<number | null>(null)
+  const [generating, setGenerating] = React.useState(false)
+
+  React.useEffect(() => {
+    // Count of (customer, year) pairs we'd compute KPIs for. Same
+    // distinct-pair logic as the engine uses for its loop, so the button
+    // count matches the work it'll actually do.
+    const supabase = createClient()
+    let cancelled = false
+    void (async () => {
+      const { count, error } = await supabase
+        .from("sie_imports")
+        .select("id", { count: "exact", head: true })
+        .eq("import_status", "success")
+      if (!cancelled && !error) setImportCount(count ?? 0)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function handleGenerate() {
+    if (generating) return
+    setGenerating(true)
+    try {
+      const response = await fetch("/api/fortnox-sie/generate-kpis", {
+        method: "POST",
+      })
+      const data = (await response.json()) as
+        | {
+            ok: true
+            summary: {
+              total: number
+              success: number
+              failure: number
+              duration_ms: number
+            }
+          }
+        | { ok: false; error: string; message?: string }
+
+      if (data.ok) {
+        const { total, success, failure } = data.summary
+        const stem = t("settings.sync.sieKpis.generatedStem", "Generated")
+        if (failure === 0) {
+          toast.success(`${stem} ${success}/${total}`)
+        } else {
+          const failedLabel = t("settings.sync.sieKpis.failedLabel", "failed")
+          toast.warning(
+            `${stem} ${success}/${total} — ${failure} ${failedLabel}`,
+          )
+        }
+      } else {
+        toast.error(
+          data.message ??
+            t("settings.sync.sieKpis.failed", "KPI generation failed"),
+        )
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : t("settings.sync.sieKpis.failed", "KPI generation failed"),
+      )
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const description =
+    importCount === 0
+      ? t(
+          "settings.sync.sieKpis.descriptionNone",
+          "No SIE imports yet. Run the SIE sync first to populate ledger data, then KPIs can be computed.",
+        )
+      : t(
+          "settings.sync.sieKpis.description",
+          "Recompute revenue, gross margin, EBIT, kassalikviditet and soliditet for every customer with a synced SIE.",
+        )
+
+  const generateButtonLabel = (() => {
+    if (generating) return t("settings.sync.sieKpis.generating", "Generating…")
+    const label = t("settings.sync.sieKpis.generateAll", "Generate KPIs")
+    if (importCount && importCount > 0) return `${label} (${importCount})`
+    return label
+  })()
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Calculator className="size-4 text-muted-foreground" />
+            {t("settings.sync.sieKpis.title", "SIE Nyckeltal")}
+          </CardTitle>
+          {generating && (
+            <Badge variant="secondary" className="font-normal">
+              <Loader2 className="mr-1 size-3 animate-spin" />
+              {t("common.running", "Running")}
+            </Badge>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">{description}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full"
+          disabled={generating || importCount === 0 || importCount == null}
+          onClick={handleGenerate}
+        >
+          <Play className="size-3" />
+          {generateButtonLabel}
         </Button>
       </CardContent>
     </Card>

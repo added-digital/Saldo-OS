@@ -6,6 +6,7 @@ import {
   History,
   Settings,
   BarChart3,
+  Calculator,
   type LucideIcon,
 } from "lucide-react"
 
@@ -48,6 +49,10 @@ export const navigation: NavSection[] = [
     title: "Analytics",
     items: [
       { label: "Reports", href: "/reports", icon: BarChart3, minRole: "user" },
+      // Financial KPIs derived from synced SIE files (revenue, gross margin,
+      // EBIT, kassalikviditet, soliditet). Scoped to `customers` because
+      // consultants should only see KPIs for their own portfolio.
+      { label: "Key Metrics", href: "/key-metrics", icon: Calculator, scope: "customers" },
     ],
   },
   {

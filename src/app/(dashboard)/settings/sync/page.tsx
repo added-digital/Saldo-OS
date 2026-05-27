@@ -36,7 +36,7 @@ import {
 } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/app/confirm-dialog"
-import { SieSyncCard } from "@/components/app/sie-sync-section"
+import { SieKpisCard, SieSyncCard } from "@/components/app/sie-sync-section"
 import { formatDateTime } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { toast } from "sonner"
@@ -309,6 +309,11 @@ export default function SyncPage() {
             facing trigger is the same shape: one button to run a sync.
             Detailed per-customer status lives on /settings/sie. */}
         <SieSyncCard />
+        {/* SIE Nyckeltal — derived KPI computation step. Independent from
+            the SIE sync above: re-running KPIs doesn't refetch anything,
+            it just walks the already-stored ledger and rewrites sie_kpis.
+            Surfaced on /key-metrics. */}
+        <SieKpisCard />
       </div>
 
       <Card>

@@ -89,6 +89,7 @@ function Breadcrumbs({ className }: BreadcrumbsProps) {
       customers: "navigation.items.customers",
       contacts: "navigation.items.contacts",
       reports: "navigation.items.reports",
+      "key-metrics": "navigation.items.keyMetrics",
       settings: "navigation.items.settings",
     }
 
