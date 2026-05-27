@@ -14,14 +14,18 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Legend,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
+  LabelList,
   XAxis,
   YAxis,
 } from "recharts"
 
 import { createClient } from "@/lib/supabase/client"
+import { sekFormatter, getRoundedChartMax } from "@/lib/reports"
+import {
+  ChartContainer,
+  ChartTooltip,
+  type ChartConfig,
+} from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
@@ -85,6 +89,21 @@ interface CustomerInfo {
 const KR_FORMATTER = new Intl.NumberFormat("sv-SE", {
   maximumFractionDigits: 0,
 })
+
+// Chart config powers ChartContainer's CSS-variable injection. The keys
+// (revenue, ebit) become `--color-revenue` / `--color-ebit` inside the
+// chart's scoped scope. Color tokens come from the theme's chart palette
+// to match /reports' turnover chart styling.
+const trendChartConfig = {
+  revenue: {
+    label: "Omsättning",
+    color: "var(--chart-1)",
+  },
+  ebit: {
+    label: "Rörelseresultat",
+    color: "var(--chart-3)",
+  },
+} satisfies ChartConfig
 
 function formatValue(
   value: number | null,
@@ -390,71 +409,90 @@ export default function NyckeltalDetailPage() {
               )}
             </div>
           ) : (
-            <div className="h-[320px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={monthlyChartData}
-                  margin={{ top: 12, right: 12, bottom: 8, left: 8 }}
+            <ChartContainer config={trendChartConfig} className="h-[280px]">
+              <BarChart
+                accessibilityLayer
+                data={monthlyChartData}
+                margin={{ top: 20, bottom: 12 }}
+              >
+                <CartesianGrid className="stroke-muted-foreground/20" />
+                <XAxis
+                  dataKey="label"
+                  tickLine={false}
+                  tickMargin={10}
+                  axisLine={false}
+                />
+                {/* Y axis hidden to match /reports; bar height + label-list
+                    on top communicate magnitude. Domain dips below zero when
+                    there are loss months so negative bars are not clipped. */}
+                <YAxis
+                  hide
+                  tickCount={6}
+                  domain={[
+                    (dataMin: number) => Math.min(dataMin, 0),
+                    (dataMax: number) => getRoundedChartMax(dataMax),
+                  ]}
+                />
+                <ChartTooltip
+                  cursor={false}
+                  content={
+                    <TrendTooltipContent
+                      revenueLabel={t("keyMetrics.kpi.revenue", "Omsättning")}
+                      ebitLabel={t("keyMetrics.kpi.ebit", "Rörelseresultat")}
+                    />
+                  }
+                />
+                <Bar
+                  dataKey="revenue"
+                  fill="var(--color-revenue)"
+                  barSize={16}
+                  radius={0}
                 >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    className="stroke-muted-foreground/20"
-                  />
-                  <XAxis
-                    dataKey="label"
-                    tickLine={false}
-                    axisLine={false}
+                  <LabelList
+                    dataKey="revenue"
+                    position="top"
+                    offset={10}
+                    className="fill-foreground"
                     fontSize={11}
-                  />
-                  <YAxis
-                    tickFormatter={(v) =>
-                      KR_FORMATTER.format(Number(v)).replace(/ /g, " ")
-                    }
-                    width={70}
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <RechartsTooltip
-                    formatter={(value) =>
-                      `${KR_FORMATTER.format(Number(value))} kr`
-                    }
-                    labelClassName="text-xs"
-                    contentStyle={{
-                      backgroundColor: "var(--color-bg-secondary)",
-                      borderColor: "var(--color-border-default)",
-                      fontSize: "12px",
+                    formatter={(value: unknown) => {
+                      const n = Number(value ?? 0)
+                      return n === 0 ? "" : sekFormatter.format(n)
                     }}
                   />
-                  <Legend wrapperStyle={{ fontSize: "12px" }} />
-                  <Bar
-                    name={t("keyMetrics.kpi.revenue", "Omsättning")}
-                    dataKey="revenue"
-                    fill="var(--color-brand-primary)"
-                    radius={[2, 2, 0, 0]}
-                  />
-                  <Bar
-                    name={t("keyMetrics.kpi.ebit", "Rörelseresultat")}
+                </Bar>
+                <Bar
+                  dataKey="ebit"
+                  fill="var(--color-ebit)"
+                  barSize={16}
+                  radius={0}
+                >
+                  {/* Per-cell colouring kept: loss months render with the
+                      error colour, profitable months with chart-3. Domain
+                      signal, not stylistic deviation. */}
+                  {monthlyChartData.map((entry, i) => (
+                    <Cell
+                      key={i}
+                      fill={
+                        entry.ebit < 0
+                          ? "var(--color-error)"
+                          : "var(--color-ebit)"
+                      }
+                    />
+                  ))}
+                  <LabelList
                     dataKey="ebit"
-                    radius={[2, 2, 0, 0]}
-                  >
-                    {/* Per-cell colouring so a loss-month is rendered with the
-                        warning colour instead of the brand colour — quick visual
-                        signal alongside the flag badges in the cards above. */}
-                    {monthlyChartData.map((entry, i) => (
-                      <Cell
-                        key={i}
-                        fill={
-                          entry.ebit < 0
-                            ? "var(--color-error)"
-                            : "var(--color-success)"
-                        }
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+                    position="top"
+                    offset={10}
+                    className="fill-foreground"
+                    fontSize={11}
+                    formatter={(value: unknown) => {
+                      const n = Number(value ?? 0)
+                      return n === 0 ? "" : sekFormatter.format(n)
+                    }}
+                  />
+                </Bar>
+              </BarChart>
+            </ChartContainer>
           )}
         </CardContent>
       </Card>
@@ -654,3 +692,81 @@ function PlRow({
   )
 }
 
+
+// ---------------------------------------------------------------------------
+// Trend chart tooltip
+// ---------------------------------------------------------------------------
+//
+// Custom tooltip body — same visual shape as /reports' TurnoverTooltipContent
+// (rounded card, bg-background, font-xs) so the two charts feel like part of
+// the same family. Generic over the two series we render.
+
+interface TrendTooltipPayloadItem {
+  value?: number | string | null
+  dataKey?: string | number
+  payload?: { period?: string; label?: string }
+}
+
+interface TrendTooltipContentProps {
+  active?: boolean
+  payload?: TrendTooltipPayloadItem[]
+  label?: string | number
+  revenueLabel?: string
+  ebitLabel?: string
+}
+
+function TrendTooltipContent({
+  active,
+  payload,
+  label,
+  revenueLabel = "Revenue",
+  ebitLabel = "Operating result",
+}: TrendTooltipContentProps) {
+  if (!active || !Array.isArray(payload) || payload.length === 0) return null
+
+  const revenueEntry = payload.find((p) => p.dataKey === "revenue")
+  const ebitEntry = payload.find((p) => p.dataKey === "ebit")
+  const revenue = Number(revenueEntry?.value ?? 0)
+  const ebit = Number(ebitEntry?.value ?? 0)
+
+  return (
+    <div className="grid min-w-[12rem] gap-1.5 rounded-md border bg-background px-3 py-2 text-xs shadow-xl">
+      {label != null ? (
+        <div className="font-medium">{String(label)}</div>
+      ) : null}
+      <div className="grid gap-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span
+              className="inline-block size-2 rounded-sm"
+              style={{ backgroundColor: "var(--color-revenue)" }}
+            />
+            {revenueLabel}
+          </span>
+          <span className="tabular-nums">{sekFormatter.format(revenue)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span
+              className="inline-block size-2 rounded-sm"
+              style={{
+                backgroundColor:
+                  ebit < 0 ? "var(--color-error)" : "var(--color-ebit)",
+              }}
+            />
+            {ebitLabel}
+          </span>
+          <span
+            className={
+              ebit < 0
+                ? "tabular-nums text-semantic-error"
+                : "tabular-nums"
+            }
+          >
+            {sekFormatter.format(ebit)}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
