@@ -209,18 +209,35 @@ export default function NyckeltalDetailPage() {
         console.error("[key-metrics detail] failed to load sie_kpis:", kpiRes.error)
         setKpiRows([])
       } else {
+        // Normalise snake_case → camelCase. Supabase returns columns with
+        // their database names; the KpiRow type uses camelCase. Without
+        // this rename every consumer (yearByKpi, monthlyChartData, the
+        // P&L summary inputs) sees `undefined` and the page renders empty.
         setKpiRows(
-          ((kpiRes.data ?? []) as Array<KpiRow & { value: number | string | null }>).map(
-            (r) => ({
-              ...r,
-              value:
-                r.value == null
-                  ? null
-                  : typeof r.value === "string"
-                    ? Number(r.value)
-                    : r.value,
-            }),
-          ),
+          ((kpiRes.data ?? []) as Array<{
+            kpi_key: string
+            period: string
+            value: number | string | null
+            unit: string
+            flagged: boolean
+            target: KpiTarget | null
+            inputs: Record<string, number | null> | null
+            financial_year_from: string
+          }>).map((r) => ({
+            kpiKey: r.kpi_key,
+            period: r.period,
+            value:
+              r.value == null
+                ? null
+                : typeof r.value === "string"
+                  ? Number(r.value)
+                  : r.value,
+            unit: r.unit,
+            flagged: r.flagged,
+            target: r.target,
+            inputs: r.inputs ?? {},
+            financialYearFrom: r.financial_year_from,
+          })),
         )
       }
       setLoading(false)
