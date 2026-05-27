@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/app/confirm-dialog"
+import { SieSyncCard } from "@/components/app/sie-sync-section"
 import { formatDateTime } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { toast } from "sonner"
@@ -303,6 +304,11 @@ export default function SyncPage() {
             </Card>
           )
         })}
+        {/* SIE Bookkeeping — slotted as another grid cell so the layout is
+            uniform. Per-customer scoped (not firm-wide), but the user-
+            facing trigger is the same shape: one button to run a sync.
+            Detailed per-customer status lives on /settings/sie. */}
+        <SieSyncCard />
       </div>
 
       <Card>
