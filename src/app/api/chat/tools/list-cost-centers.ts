@@ -1,3 +1,4 @@
+import { canAccessConsultant } from "./consultant-access";
 import type { ToolHandler } from "./types";
 
 export type ListCostCentersInput = {
@@ -14,6 +15,12 @@ type CostCenterRow = {
 
 type CodeOnlyRow = { fortnox_cost_center: string | null };
 
+type ProfileWithTeam = {
+  id: string;
+  team_id: string | null;
+  fortnox_cost_center: string | null;
+};
+
 /**
  * Return every cost center the caller can see, with the number of customers
  * and consultants currently assigned to each. Counts are computed in the API
@@ -22,7 +29,7 @@ type CodeOnlyRow = { fortnox_cost_center: string | null };
  */
 export const listCostCenters: ToolHandler<ListCostCentersInput> = async (
   input,
-  { supabase },
+  { supabase, user },
 ) => {
   const activeOnly = input.active_only ?? true;
   // Default 50, hard cap 200. The customer/consultant count maps still
@@ -41,10 +48,14 @@ export const listCostCenters: ToolHandler<ListCostCentersInput> = async (
     centerQuery = centerQuery.eq("active", true);
   }
 
+  // We need profiles WITH id + team_id (not just cost_center) so the
+  // role-based access filter can run per cost center.
   const [centersRes, customersRes, profilesRes] = await Promise.all([
     centerQuery,
     supabase.from("customers").select("fortnox_cost_center"),
-    supabase.from("profiles").select("fortnox_cost_center"),
+    supabase
+      .from("profiles")
+      .select("id, team_id, fortnox_cost_center"),
   ]);
 
   if (centersRes.error) {
@@ -54,7 +65,7 @@ export const listCostCenters: ToolHandler<ListCostCentersInput> = async (
   const centers = (centersRes.data ?? []) as unknown as CostCenterRow[];
   const totalCount = centersRes.count ?? centers.length;
   const customers = (customersRes.data ?? []) as unknown as CodeOnlyRow[];
-  const profiles = (profilesRes.data ?? []) as unknown as CodeOnlyRow[];
+  const profiles = (profilesRes.data ?? []) as unknown as ProfileWithTeam[];
 
   const customerCounts = new Map<string, number>();
   for (const row of customers) {
@@ -63,17 +74,41 @@ export const listCostCenters: ToolHandler<ListCostCentersInput> = async (
     customerCounts.set(code, (customerCounts.get(code) ?? 0) + 1);
   }
 
-  const consultantCounts = new Map<string, number>();
-  for (const row of profiles) {
-    const code = row.fortnox_cost_center?.trim();
+  // Group profiles by cost center, retaining id + team_id so we can ask
+  // canAccessConsultant whether any consultant in the center is visible
+  // to the caller.
+  const profilesByCenter = new Map<string, ProfileWithTeam[]>();
+  for (const profile of profiles) {
+    const code = profile.fortnox_cost_center?.trim();
     if (!code) continue;
-    consultantCounts.set(code, (consultantCounts.get(code) ?? 0) + 1);
+    const list = profilesByCenter.get(code) ?? [];
+    list.push(profile);
+    profilesByCenter.set(code, list);
   }
 
-  const shownCount = centers.length;
+  const consultantCounts = new Map<string, number>();
+  for (const [code, list] of profilesByCenter) {
+    consultantCounts.set(code, list.length);
+  }
+
+  // Role-based scoping: a cost center is accessible to the caller iff at
+  // least one consultant in that center is accessible. Admin sees every
+  // center. User sees only their own. Team_lead sees centers with any
+  // same-team consultant. This closes the leak where the model would
+  // enumerate cost centers, drill into get_cost_center_details, sum
+  // customer turnover per center, and report consultants' KPIs.
+  const accessibleCenters = centers.filter((center) => {
+    const profilesInCenter = profilesByCenter.get(center.code) ?? [];
+    return profilesInCenter.some((p) =>
+      canAccessConsultant(user, { id: p.id, team_id: p.team_id }),
+    );
+  });
+  const accessFilteredCount = centers.length - accessibleCenters.length;
+
+  const shownCount = accessibleCenters.length;
 
   return {
-    cost_centers: centers.map((center) => ({
+    cost_centers: accessibleCenters.map((center) => ({
       id: center.id,
       code: center.code,
       name: center.name,
@@ -83,7 +118,14 @@ export const listCostCenters: ToolHandler<ListCostCentersInput> = async (
     })),
     shown_count: shownCount,
     total_count: totalCount,
-    ...(totalCount > shownCount
+    ...(accessFilteredCount > 0
+      ? {
+          access_filtered_count: accessFilteredCount,
+          access_filtered_note:
+            "Some cost centers are outside your access scope and have been omitted. They exist; you don't have permission to view their consultants or KPIs.",
+        }
+      : {}),
+    ...(totalCount > shownCount + accessFilteredCount
       ? {
           _compacted: [
             {

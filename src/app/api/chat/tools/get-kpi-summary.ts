@@ -144,23 +144,22 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
   // -------------------------------------------------------------------------
   const allRows: KpiRow[] = [];
 
+  // Paginated: 200 customer_ids per chunk × 12 monthly rows per customer
+  // can produce 2400 rows once the year fills out, blowing past PostgREST's
+  // 1000-row cap. Without drainPages we silently lose rows late in the year.
   const runKpiQuery = async (idChunk: string[] | null) => {
-    let query = supabase
-      .from("customer_kpis")
-      .select(KPI_COLUMNS)
-      .eq("period_type", "month")
-      .eq("period_year", year);
-
-    if (month != null) {
-      query = query.eq("period_month", month);
-    }
-    if (idChunk) {
-      query = query.in("customer_id", idChunk);
-    }
-
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    allRows.push(...((data ?? []) as unknown as KpiRow[]));
+    const { rows, error } = await drainPages<KpiRow>(() => {
+      let q = supabase
+        .from("customer_kpis")
+        .select(KPI_COLUMNS)
+        .eq("period_type", "month")
+        .eq("period_year", year);
+      if (month != null) q = q.eq("period_month", month);
+      if (idChunk) q = q.in("customer_id", idChunk);
+      return q;
+    });
+    if (error) throw new Error(error);
+    allRows.push(...rows);
   };
 
   try {
@@ -177,6 +176,150 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
     return {
       error: error instanceof Error ? error.message : "Failed to load KPIs.",
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // 2b. Current-month invoice overlay
+  //
+  // customer_kpis is finalized after a month closes — the sync writes its
+  // monthly rollup for month M sometime after M ends. For the current
+  // calendar month the rollup is either missing or stale, so turnover and
+  // invoice_count read from it under-count what's actually been invoiced.
+  // The dashboard reads `customer_kpis` too, but reports' include-current-
+  // month toggle is paired with a fresher snapshot elsewhere in the
+  // dashboard pipeline. To match what the user sees on reports, we
+  // overlay the current month from the `invoices` table directly.
+  //
+  // Only applied when the requested period includes the current month.
+  // Other months (historical, or explicitly-requested non-current month)
+  // stay on the customer_kpis rollup. Hours and contract_value are NOT
+  // overlaid (they have their own truth sources).
+  // -------------------------------------------------------------------------
+  {
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1;
+    const requestingCurrentMonth =
+      year === currentYear &&
+      (month == null || month === currentMonth);
+
+    if (
+      requestingCurrentMonth &&
+      (scopedCustomerIds == null || scopedCustomerIds.length > 0)
+    ) {
+      const monthStart = `${currentYear}-${String(currentMonth).padStart(2, "0")}-01`;
+      const monthEndDate = new Date(currentYear, currentMonth, 0);
+      const monthEnd = `${currentYear}-${String(currentMonth).padStart(2, "0")}-${String(monthEndDate.getDate()).padStart(2, "0")}`;
+
+      type InvoiceRow = {
+        customer_id: string | null;
+        total_ex_vat: number | null;
+      };
+
+      const invoicesByCustomer = new Map<
+        string,
+        { turnover: number; invoiceCount: number }
+      >();
+
+      const consumeInvoices = (rows: InvoiceRow[]) => {
+        for (const row of rows) {
+          if (!row.customer_id) continue;
+          const prev = invoicesByCustomer.get(row.customer_id) ?? {
+            turnover: 0,
+            invoiceCount: 0,
+          };
+          prev.turnover += Number(row.total_ex_vat ?? 0);
+          prev.invoiceCount += 1;
+          invoicesByCustomer.set(row.customer_id, prev);
+        }
+      };
+
+      try {
+        if (scopedCustomerIds == null) {
+          const { rows, error } = await drainPages<InvoiceRow>(() =>
+            supabase
+              .from("invoices")
+              .select("customer_id, total_ex_vat")
+              .gte("invoice_date", monthStart)
+              .lte("invoice_date", monthEnd),
+          );
+          if (error) throw new Error(error);
+          consumeInvoices(rows);
+        } else {
+          for (const chunk of chunkArray(
+            scopedCustomerIds,
+            CUSTOMER_ID_CHUNK,
+          )) {
+            const { rows, error } = await drainPages<InvoiceRow>(() =>
+              supabase
+                .from("invoices")
+                .select("customer_id, total_ex_vat")
+                .gte("invoice_date", monthStart)
+                .lte("invoice_date", monthEnd)
+                .in("customer_id", chunk),
+            );
+            if (error) throw new Error(error);
+            consumeInvoices(rows);
+          }
+        }
+
+        // Map current-month customer_kpis rows by customer_id so we can
+        // overwrite their turnover/invoice_count in place.
+        const currentMonthRowsByCustomer = new Map<string, KpiRow>();
+        for (const row of allRows) {
+          if (
+            row.period_year === currentYear &&
+            row.period_month === currentMonth
+          ) {
+            currentMonthRowsByCustomer.set(row.customer_id, row);
+          }
+        }
+
+        // For each customer that has invoices this month, override the
+        // (stale) customer_kpis values with the live aggregation.
+        for (const [customerId, data] of invoicesByCustomer) {
+          const existing = currentMonthRowsByCustomer.get(customerId);
+          if (existing) {
+            existing.total_turnover = data.turnover;
+            existing.invoice_count = data.invoiceCount;
+          } else {
+            // Customer has invoices this month but no customer_kpis row
+            // yet (sync hasn't written it). Synthesize a row so the
+            // downstream aggregation picks it up.
+            allRows.push({
+              customer_id: customerId,
+              period_year: currentYear,
+              period_month: currentMonth,
+              total_turnover: data.turnover,
+              invoice_count: data.invoiceCount,
+              total_hours: null,
+              customer_hours: null,
+              absence_hours: null,
+              internal_hours: null,
+              other_hours: null,
+              contract_value: null,
+            });
+          }
+        }
+
+        // Customers that had a current-month customer_kpis row but NO
+        // invoices this month should have their turnover/invoice_count
+        // zeroed — the rollup may carry stale residue from a partial sync.
+        for (const [customerId, row] of currentMonthRowsByCustomer) {
+          if (!invoicesByCustomer.has(customerId)) {
+            row.total_turnover = 0;
+            row.invoice_count = 0;
+          }
+        }
+      } catch (error) {
+        console.error(
+          "getKpiSummary: current-month invoice overlay failed",
+          error,
+        );
+        // Best-effort: leave customer_kpis values as-is. The model will
+        // still get a roughly-right answer based on the rollup.
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
