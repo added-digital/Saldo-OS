@@ -1,5 +1,6 @@
 import { chunkArray } from "@/lib/reports";
 
+import { filterAccessibleConsultants } from "./consultant-access";
 import { fetchAnnualizedContractValuesByCustomerId } from "./contract-values";
 import type { ToolHandler } from "./types";
 
@@ -87,7 +88,7 @@ const ZERO_TOTALS = () => ({
  */
 export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
   input,
-  { supabase },
+  { supabase, user },
 ) => {
   const year = Math.trunc(input.year);
   if (!Number.isInteger(year) || year < 2000 || year > 3000) {
@@ -134,7 +135,18 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
   if (profileRes.error) {
     return { error: profileRes.error.message };
   }
-  const profiles = (profileRes.data ?? []) as unknown as ProfileRow[];
+  // Apply role-based scoping at the source: a `user` only sees themselves,
+  // a `team_lead` sees same-team consultants (+ self), admins see all.
+  // Filtering here cascades through the rest of the function naturally —
+  // costCenterToConsultants only carries in-scope consultants, KPI buckets
+  // are only built for them, and the response can't leak others' data.
+  const rawProfiles = (profileRes.data ?? []) as unknown as ProfileRow[];
+  const profiles = filterAccessibleConsultants(user, rawProfiles);
+  // How many consultants exist in the firm but are hidden from the caller
+  // by role-based scoping. Surface only the count (not names) so the
+  // model can tell the user "you see N of M consultants" or similar
+  // instead of pretending the others don't exist.
+  const accessFilteredCount = rawProfiles.length - profiles.length;
 
   const costCenterToConsultants = new Map<string, ProfileRow[]>();
   for (const profile of profiles) {
@@ -414,6 +426,13 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
       sort_by: sortBy,
       consultants_in_scope: profiles.length,
       customers_in_scope: inScopeCustomerIds.length,
+      ...(accessFilteredCount > 0
+        ? {
+            access_filtered_count: accessFilteredCount,
+            access_filtered_note:
+              "There are additional consultants in the firm that are outside your access scope. The numbers above only cover the consultants you can see.",
+          }
+        : {}),
     },
     consultants: consultantList,
     ...(compactedNotes ? { _compacted: compactedNotes } : {}),

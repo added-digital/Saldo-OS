@@ -1,6 +1,10 @@
 import { annualizeContractTotal, chunkArray } from "@/lib/reports";
 
 import {
+  accessRestricted,
+  canAccessConsultant,
+} from "./consultant-access";
+import {
   drainPages,
   fetchAnnualizedContractValuesByCustomerId,
 } from "./contract-values";
@@ -107,7 +111,7 @@ const METRIC_LABEL: Record<TopCustomerMetric, string> = {
 
 export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
   input,
-  { supabase },
+  { supabase, user },
 ) => {
   // ---------------------------------------------------------------------------
   // Validate inputs.
@@ -162,7 +166,7 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
   if (consultantId) {
     const profileRes = await supabase
       .from("profiles")
-      .select("id, full_name, fortnox_cost_center")
+      .select("id, full_name, team_id, fortnox_cost_center")
       .eq("id", consultantId)
       .maybeSingle();
 
@@ -177,8 +181,20 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
     const profile = profileRes.data as unknown as {
       id: string;
       full_name: string | null;
+      team_id: string | null;
       fortnox_cost_center: string | null;
     };
+
+    // Role-based scope: refuse if the caller can't see this consultant.
+    // get_top_customers with a consultant_id is functionally "show me this
+    // consultant's customer ranking" — the same access bar as
+    // get_consultant_customers.
+    if (!canAccessConsultant(user, profile)) {
+      return accessRestricted(
+        "You don't have permission to view this consultant's customer ranking.",
+      );
+    }
+
     consultantName = profile.full_name;
     consultantCostCenter = profile.fortnox_cost_center ?? null;
 

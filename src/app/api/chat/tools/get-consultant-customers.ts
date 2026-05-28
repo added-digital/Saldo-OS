@@ -1,3 +1,7 @@
+import {
+  accessRestricted,
+  canAccessConsultant,
+} from "./consultant-access";
 import { fetchAnnualizedContractValuesByCustomerId } from "./contract-values";
 import type { ToolHandler } from "./types";
 
@@ -11,6 +15,7 @@ type ProfileRow = {
   id: string;
   full_name: string | null;
   email: string;
+  team_id: string | null;
   fortnox_cost_center: string | null;
 };
 
@@ -32,7 +37,7 @@ type CustomerRow = {
  */
 export const getConsultantCustomers: ToolHandler<GetConsultantCustomersInput> = async (
   input,
-  { supabase },
+  { supabase, user },
 ) => {
   const consultantId = input.consultant_id?.trim();
   if (!consultantId) {
@@ -46,7 +51,7 @@ export const getConsultantCustomers: ToolHandler<GetConsultantCustomersInput> = 
 
   const profileRes = await supabase
     .from("profiles")
-    .select("id, full_name, email, fortnox_cost_center")
+    .select("id, full_name, email, team_id, fortnox_cost_center")
     .eq("id", consultantId)
     .maybeSingle();
 
@@ -57,6 +62,17 @@ export const getConsultantCustomers: ToolHandler<GetConsultantCustomersInput> = 
   }
 
   const consultant = profileRes.data as unknown as ProfileRow;
+
+  // Role-based scope: refuse outright if the caller isn't allowed to see
+  // this consultant's portfolio. The error_type is recognized by the
+  // system prompt — the model will tell the user they don't have access
+  // rather than retrying or fabricating.
+  if (!canAccessConsultant(user, consultant)) {
+    return accessRestricted(
+      "You don't have permission to view this consultant's customer portfolio.",
+    );
+  }
+
   const costCenter = consultant.fortnox_cost_center?.trim() ?? null;
 
   if (!costCenter) {
