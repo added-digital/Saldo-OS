@@ -1,7 +1,10 @@
 import { chunkArray } from "@/lib/reports";
 
 import { filterAccessibleConsultants } from "./consultant-access";
-import { fetchAnnualizedContractValuesByCustomerId } from "./contract-values";
+import {
+  drainPages,
+  fetchAnnualizedContractValuesByCustomerId,
+} from "./contract-values";
 import type { ToolHandler } from "./types";
 
 export type GetKpiByConsultantInput = {
@@ -159,19 +162,24 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
 
   // -------------------------------------------------------------------------
   // 2. Customers
+  //
+  // Paginated: real installations have >1000 active customers; without
+  // drainPages, customer_to_cost_center mapping would silently lose
+  // everyone past the 1000-row cap, dropping their KPI contribution from
+  // the consultant aggregation downstream.
   // -------------------------------------------------------------------------
-  let customerQuery = supabase
-    .from("customers")
-    .select("id, fortnox_cost_center, status")
-    .not("fortnox_cost_center", "is", null);
-  if (activeCustomersOnly) {
-    customerQuery = customerQuery.eq("status", "active");
+  const customersResult = await drainPages<CustomerRow>(() => {
+    let q = supabase
+      .from("customers")
+      .select("id, fortnox_cost_center, status")
+      .not("fortnox_cost_center", "is", null);
+    if (activeCustomersOnly) q = q.eq("status", "active");
+    return q;
+  });
+  if (customersResult.error) {
+    return { error: customersResult.error };
   }
-  const customerRes = await customerQuery;
-  if (customerRes.error) {
-    return { error: customerRes.error.message };
-  }
-  const customers = (customerRes.data ?? []) as unknown as CustomerRow[];
+  const customers = customersResult.rows;
 
   // Access-restricted detection. profiles.length > 0 means the caller can
   // read the profiles table (always returns rows for any authenticated
@@ -228,27 +236,142 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
 
   // -------------------------------------------------------------------------
   // 3. KPIs
+  //
+  // Paginated. 200 customer_ids per chunk × 12 monthly rows = 2400 rows
+  // late in the year, blowing past PostgREST's 1000-row cap. Without
+  // drainPages, KPI rows for some customers get silently dropped — which
+  // makes the per-consultant aggregation undercount by ~50% for affected
+  // consultants. (This was the bug that made Hanna Dahl's chat number
+  // come back as ~half her true revenue.)
   // -------------------------------------------------------------------------
   const kpiRows: KpiRow[] = [];
   try {
     for (const idChunk of chunkArray(inScopeCustomerIds, CUSTOMER_ID_CHUNK)) {
-      let query = supabase
-        .from("customer_kpis")
-        .select(KPI_COLUMNS)
-        .eq("period_type", "month")
-        .eq("period_year", year)
-        .in("customer_id", idChunk);
-      if (month != null) {
-        query = query.eq("period_month", month);
-      }
-      const { data, error } = await query;
-      if (error) throw new Error(error.message);
-      kpiRows.push(...((data ?? []) as unknown as KpiRow[]));
+      const { rows, error } = await drainPages<KpiRow>(() => {
+        let q = supabase
+          .from("customer_kpis")
+          .select(KPI_COLUMNS)
+          .eq("period_type", "month")
+          .eq("period_year", year)
+          .in("customer_id", idChunk);
+        if (month != null) q = q.eq("period_month", month);
+        return q;
+      });
+      if (error) throw new Error(error);
+      kpiRows.push(...rows);
     }
   } catch (error) {
     return {
       error: error instanceof Error ? error.message : "Failed to load KPIs.",
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // 3b. Current-month invoice overlay
+  //
+  // customer_kpis is finalized after a month closes — the current calendar
+  // month's row is stale-or-missing relative to what's actually been
+  // invoiced. Replace it with the live aggregation from `invoices` so the
+  // per-consultant numbers match what the reports dashboard shows. Mirrors
+  // the same overlay in get_kpi_summary.
+  // -------------------------------------------------------------------------
+  {
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1;
+    const requestingCurrentMonth =
+      year === currentYear &&
+      (month == null || month === currentMonth);
+
+    if (requestingCurrentMonth && inScopeCustomerIds.length > 0) {
+      const monthStart = `${currentYear}-${String(currentMonth).padStart(2, "0")}-01`;
+      const monthEndDate = new Date(currentYear, currentMonth, 0);
+      const monthEnd = `${currentYear}-${String(currentMonth).padStart(2, "0")}-${String(monthEndDate.getDate()).padStart(2, "0")}`;
+
+      type InvoiceRow = {
+        customer_id: string | null;
+        total_ex_vat: number | null;
+      };
+
+      const invoicesByCustomer = new Map<
+        string,
+        { turnover: number; invoiceCount: number }
+      >();
+
+      try {
+        for (const chunk of chunkArray(inScopeCustomerIds, CUSTOMER_ID_CHUNK)) {
+          const { rows, error } = await drainPages<InvoiceRow>(() =>
+            supabase
+              .from("invoices")
+              .select("customer_id, total_ex_vat")
+              .gte("invoice_date", monthStart)
+              .lte("invoice_date", monthEnd)
+              .in("customer_id", chunk),
+          );
+          if (error) throw new Error(error);
+          for (const row of rows) {
+            if (!row.customer_id) continue;
+            const prev = invoicesByCustomer.get(row.customer_id) ?? {
+              turnover: 0,
+              invoiceCount: 0,
+            };
+            prev.turnover += Number(row.total_ex_vat ?? 0);
+            prev.invoiceCount += 1;
+            invoicesByCustomer.set(row.customer_id, prev);
+          }
+        }
+
+        // Map current-month kpiRows by customer_id so we can overwrite
+        // turnover/invoice_count in place.
+        const currentMonthRowsByCustomer = new Map<string, KpiRow>();
+        for (const row of kpiRows) {
+          if (
+            row.period_year === currentYear &&
+            row.period_month === currentMonth
+          ) {
+            currentMonthRowsByCustomer.set(row.customer_id, row);
+          }
+        }
+
+        // Override existing rows + synthesize missing ones.
+        for (const [customerId, data] of invoicesByCustomer) {
+          const existing = currentMonthRowsByCustomer.get(customerId);
+          if (existing) {
+            existing.total_turnover = data.turnover;
+            existing.invoice_count = data.invoiceCount;
+          } else {
+            kpiRows.push({
+              customer_id: customerId,
+              period_year: currentYear,
+              period_month: currentMonth,
+              total_turnover: data.turnover,
+              invoice_count: data.invoiceCount,
+              total_hours: null,
+              customer_hours: null,
+              absence_hours: null,
+              internal_hours: null,
+              other_hours: null,
+              contract_value: null,
+            });
+          }
+        }
+
+        // Customers with a stale current-month rollup but no invoices →
+        // zero them out so they don't contribute spurious turnover.
+        for (const [customerId, row] of currentMonthRowsByCustomer) {
+          if (!invoicesByCustomer.has(customerId)) {
+            row.total_turnover = 0;
+            row.invoice_count = 0;
+          }
+        }
+      } catch (error) {
+        console.error(
+          "getKpiByConsultant: current-month invoice overlay failed",
+          error,
+        );
+        // Best-effort: leave the rollup as-is rather than fail the whole call.
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
