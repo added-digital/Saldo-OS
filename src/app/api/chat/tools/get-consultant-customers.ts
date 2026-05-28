@@ -122,6 +122,18 @@ export const getConsultantCustomers: ToolHandler<GetConsultantCustomersInput> = 
     contract_value_unit: "SEK/år",
   }));
 
+  // Precomputed total so the model never has to sum dozens of rows in its
+  // head — that arithmetic is unreliable (off-by-tens-of-thousands errors
+  // are routine across 25+ values with thousands and decimals). The model
+  // should echo THIS number as the portfolio total, not recompute it.
+  const totalContractValueAnnualized = customers.reduce(
+    (sum, c) => sum + (c.contract_value ?? 0),
+    0,
+  );
+  const customersWithContracts = customers.filter(
+    (c) => (c.contract_value ?? 0) > 0,
+  ).length;
+
   // We fetched up to `limit` rows. If we got exactly that many, there may be
   // more — surface this with the same `_compacted` shape the route compactor
   // and other tools use so the model can say "showing first 30, ask for more
@@ -132,7 +144,10 @@ export const getConsultantCustomers: ToolHandler<GetConsultantCustomersInput> = 
     consultant,
     cost_center: costCenter,
     customer_count: customers.length,
+    customers_with_active_contracts: customersWithContracts,
     active_only: activeOnly,
+    total_contract_value_annualized: totalContractValueAnnualized,
+    total_contract_value_unit: "SEK/år",
     customers,
     ...(hitLimit
       ? {

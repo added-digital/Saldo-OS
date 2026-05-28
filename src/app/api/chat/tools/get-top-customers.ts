@@ -401,6 +401,15 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
       ),
     );
 
+    // Precomputed sum of the ranked slice so the model doesn't tally row
+    // values by hand. Only meaningful for additive metrics (turnover,
+    // hours, invoice_count); semantically wrong for derived ratios.
+    const totalValueInRanked = ranked.reduce(
+      (sum, row) =>
+        sum + Number((row as { value?: number }).value ?? 0),
+      0,
+    );
+
     return {
       metric,
       metric_label: METRIC_LABEL[metric],
@@ -417,6 +426,7 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
       },
       n,
       ranked,
+      total_value_in_ranked: totalValueInRanked,
       // total_count is the pool of customers with > 0 on this metric for the
       // period. Lets the model say "showing 10 of 47 customers with revenue
       // this period" rather than implying these are the ONLY customers.
@@ -568,6 +578,19 @@ async function runDerivedPath(opts: DerivedPathInput) {
     ),
   );
 
+  // Precomputed sum of the ranked slice — only meaningful for additive
+  // metrics. Summing turnover_per_hour ratios is nonsense, so we skip it
+  // there. The model should reach for `total_value_in_ranked` instead of
+  // summing rows itself when it's present.
+  const isAdditive = metric !== "turnover_per_hour";
+  const totalValueInRanked = isAdditive
+    ? ranked.reduce(
+        (sum, row) =>
+          sum + Number((row as { value?: number }).value ?? 0),
+        0,
+      )
+    : null;
+
   return {
     metric,
     metric_label: METRIC_LABEL[metric],
@@ -584,6 +607,9 @@ async function runDerivedPath(opts: DerivedPathInput) {
     },
     n,
     ranked,
+    ...(totalValueInRanked != null
+      ? { total_value_in_ranked: totalValueInRanked }
+      : {}),
     total_count: total,
     source: "customer_kpis (precomputed rollup — matches reports dashboard)",
     notes:
@@ -853,9 +879,27 @@ async function runContractValuePath(opts: ContractValuePathInput) {
     },
   }));
 
+  // Precomputed totals so the model doesn't sum the ranked rows in its
+  // head. `total_value_in_ranked` is the sum of the slice the model sees;
+  // `total_value_full_match_set` is the sum across the entire matched pool
+  // (pre-slice), useful for "what's our total ARR for customers over X kr?"
+  // questions where N caps the visible rows but the user wants the total
+  // matched.
+  const totalValueInRanked = ranked.reduce(
+    (sum, row) => sum + (row.value ?? 0),
+    0,
+  );
+  const totalValueFullMatchSet = filtered.reduce(
+    (sum, entry) => sum + entry.annualizedContractValue,
+    0,
+  );
+
   return {
     ...emptyResult,
     ranked,
+    total_value_in_ranked: totalValueInRanked,
+    total_value_full_match_set: totalValueFullMatchSet,
+    total_value_unit: "SEK/år",
     // total_count is the pool of customers with > 0 (and >= min_value if set)
     // contract value in scope. Lets the model say "13 of 68 customers
     // matched, showing 10".
