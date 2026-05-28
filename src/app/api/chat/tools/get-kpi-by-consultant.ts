@@ -1,5 +1,6 @@
 import { chunkArray } from "@/lib/reports";
 
+import { fetchAnnualizedContractValuesByCustomerId } from "./contract-values";
 import type { ToolHandler } from "./types";
 
 export type GetKpiByConsultantInput = {
@@ -209,7 +210,7 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
       consultants: [],
       totals: ZERO_TOTALS(),
       source:
-        "customer_kpis (precomputed rollup — matches reports dashboard)",
+        "customer_kpis rollup for turnover/hours/invoice_count (matches reports dashboard); contract_value overlaid from contract_accruals (annualized, SEK/år).",
     };
   }
 
@@ -322,6 +323,44 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
   }
 
   // -------------------------------------------------------------------------
+  // 4b. Override contract_value with annualized truth from contract_accruals.
+  //
+  // The customer_kpis.contract_value rollup is unreliable (see the
+  // contract-value bug investigation). Recompute it from the source of
+  // truth, scoped to the consultants' own customer portfolios.
+  // -------------------------------------------------------------------------
+  {
+    const annualizedByCustomerId =
+      await fetchAnnualizedContractValuesByCustomerId(
+        supabase,
+        inScopeCustomerIds,
+      );
+
+    grandTotals.contract_value = 0;
+    for (const bucket of buckets.values()) {
+      bucket.totals.contract_value = 0;
+    }
+
+    for (const customerId of inScopeCustomerIds) {
+      const annualized = annualizedByCustomerId.get(customerId) ?? 0;
+      if (annualized === 0) continue;
+
+      grandTotals.contract_value += annualized;
+
+      const code = customerToCostCenter.get(customerId);
+      if (!code) continue;
+      const consultantsForCode = costCenterToConsultants.get(code);
+      if (!consultantsForCode) continue;
+      for (const consultant of consultantsForCode) {
+        const bucket = buckets.get(consultant.id);
+        if (bucket) {
+          bucket.totals.contract_value += annualized;
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // 5. Build, sort, slice
   // -------------------------------------------------------------------------
   let consultantList = Array.from(buckets.values()).map((bucket) => ({
@@ -385,6 +424,6 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
         "(the same KPI rows are attributed to each). Be explicit about this " +
         "in answers when summing across consultants.",
     ],
-    source: "customer_kpis (precomputed rollup — matches reports dashboard)",
+    source: "customer_kpis rollup for turnover/hours/invoice_count (matches reports dashboard); contract_value overlaid from contract_accruals (annualized, SEK/år).",
   };
 };

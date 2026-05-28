@@ -1,3 +1,6 @@
+import { annualizeContractTotal } from "@/lib/reports";
+
+import { fetchAnnualizedContractValuesByCustomerId } from "./contract-values";
 import type { ToolHandler } from "./types";
 
 export type GetCustomerOverviewInput = {
@@ -83,11 +86,55 @@ export const getCustomerOverview: ToolHandler<GetCustomerOverviewInput> = async 
       : Promise.resolve({ data: [], count: 0, error: null }),
   ]);
 
+  // Replace the rollup-sourced contract_value on `customer` (denormalized
+  // column populated by the broken sync) with the annualized truth from
+  // contract_accruals.
+  const annualizedByCustomerId =
+    await fetchAnnualizedContractValuesByCustomerId(supabase, [customerId]);
+  const annualizedContractValue =
+    annualizedByCustomerId.get(customerId) ?? 0;
+  const customerWithTruth = {
+    ...customer,
+    contract_value: annualizedContractValue,
+    contract_value_unit: "SEK/år (annualized from active contracts)",
+  };
+
+  // Same fix for the latest monthly KPI snapshot — the contract_value field
+  // there comes from the same rollup. The other KPI fields (turnover,
+  // hours, etc.) are flow metrics and stay as-is.
+  const rawLatestKpi = kpiRes.data as
+    | (Record<string, unknown> & { contract_value?: number | null })
+    | null;
+  const latestMonthlyKpi = rawLatestKpi
+    ? {
+        ...rawLatestKpi,
+        contract_value: annualizedContractValue,
+        contract_value_unit: "SEK/år (overlaid from contract_accruals)",
+      }
+    : null;
+
+  // Annotate each contract sample row with its annualized value so the
+  // model sees per-contract SEK/år alongside the raw total_ex_vat.
+  type ContractSampleRow = {
+    id: string;
+    contract_number: string;
+    total_ex_vat: number | null;
+    period: string | null;
+    end_date: string | null;
+  };
+  const contractsSample = (
+    ((contractsRes.data ?? []) as unknown as ContractSampleRow[]).slice(0, 5)
+  ).map((row) => ({
+    ...row,
+    annualized_value: annualizeContractTotal(row.total_ex_vat, row.period),
+    annualized_value_unit: "SEK/år",
+  }));
+
   return {
-    customer,
-    latest_monthly_kpi: kpiRes.data ?? null,
+    customer: customerWithTruth,
+    latest_monthly_kpi: latestMonthlyKpi,
     active_contract_count: contractsRes.count ?? (contractsRes.data?.length ?? 0),
-    active_contracts_sample: (contractsRes.data ?? []).slice(0, 5),
+    active_contracts_sample: contractsSample,
     recent_activities: activitiesRes.data ?? [],
   };
 };

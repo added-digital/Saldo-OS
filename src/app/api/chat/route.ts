@@ -42,6 +42,14 @@ type DocumentSource = {
 
 const MAX_TOOL_ITERATIONS = 12;
 const MAX_OUTPUT_TOKENS = 4096;
+// Document sources are only surfaced beneath assistant messages when their
+// vector-similarity score is at least this high. The model sometimes calls
+// `search_documents` speculatively on questions that aren't really about
+// internal docs (KPI queries, customer lookups, etc.) and gets back weak
+// 0.14–0.20 matches. Showing those as "Källa: ..." citations is misleading,
+// so we filter at extraction time. Tune this if legit doc questions return
+// strong-but-lower scores.
+const MIN_SOURCE_SIMILARITY = 0.4;
 
 /**
  * Detect Anthropic's context-window-exceeded error. The SDK exposes status
@@ -399,6 +407,16 @@ async function handleChat(request: Request) {
           for (const source of (result as { sources: DocumentSource[] })
             .sources) {
             if (!source?.file_name) continue;
+            // Drop weak matches — see MIN_SOURCE_SIMILARITY comment. The
+            // model sometimes calls search_documents speculatively, and
+            // surfacing 0.14-similarity files as "Källa" footers misleads
+            // the user into thinking the answer was grounded in those docs.
+            if (
+              typeof source.similarity !== "number" ||
+              source.similarity < MIN_SOURCE_SIMILARITY
+            ) {
+              continue;
+            }
             const key = source.file_name.trim().toLowerCase();
             const existing = collectedSources.get(key);
             if (!existing || source.similarity > existing.similarity) {

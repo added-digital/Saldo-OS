@@ -87,6 +87,10 @@ export function parseSavedReportsFilters(
       comparisonMode: isComparisonMode
         ? (parsed.comparisonMode as ComparisonMode)
         : null,
+      includeCurrentMonth:
+        typeof parsed.includeCurrentMonth === "boolean"
+          ? parsed.includeCurrentMonth
+          : null,
     };
   } catch {
     return null;

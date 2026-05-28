@@ -60,19 +60,51 @@ export function createMonthOptions(count: number): SelectOption[] {
   return options.filter((option) => option.id >= minSelectableMonth);
 }
 
+export type ReportingWindowOptions = {
+  /**
+   * When `true` (default) and `mode` is a rolling window, anchor the window
+   * at the current calendar month and end it at today's date so the current,
+   * in-progress month is included in calculations. When `false`, anchor at
+   * `selectedMonthKey` (which defaults to the last completed month) and end
+   * at the last day of that month so the unfinished current month is
+   * excluded.
+   *
+   * Ignored for `current-month` mode — the explicit month picker fully
+   * specifies the window in that mode.
+   */
+  includeCurrentMonth?: boolean;
+};
+
 export function getReportingWindowRange(
   selectedMonthKey: string,
   mode: ReportingWindowMode,
+  options: ReportingWindowOptions = {},
 ): {
   from: string;
   to: string;
   months: RollingMonth[];
   title: string;
 } {
-  const { year, month } = parseMonthKey(selectedMonthKey);
+  const { includeCurrentMonth = true } = options;
+
+  // For rolling modes, the toggle lets the user pick the anchor: either
+  // today's calendar month (include current/partial) or the last completed
+  // month (exclude it). For current-month mode, the explicit picker wins
+  // and the toggle is ignored.
+  const today = new Date();
+  const useLiveAnchor = mode !== "current-month" && includeCurrentMonth;
+  const anchorYear = useLiveAnchor ? today.getFullYear() : parseMonthKey(selectedMonthKey).year;
+  const anchorMonth = useLiveAnchor
+    ? today.getMonth() + 1
+    : parseMonthKey(selectedMonthKey).month;
+
+  const year = anchorYear;
+  const month = anchorMonth;
   const monthDate = new Date(year, month - 1, 1);
-  const endDate =
-    mode === "rolling-year" ? new Date(year, month, 0) : new Date(year, month, 0);
+  // When the anchor is the live current month, end the window at today so
+  // the partial month flows through. Otherwise end at the last day of the
+  // anchor month (existing behavior).
+  const endDate = useLiveAnchor ? today : new Date(year, month, 0);
   const startDate =
     mode === "current-month"
       ? new Date(year, month - 1, 1)
@@ -176,13 +208,15 @@ export function getPreviousReportingWindowRange(
   selectedMonthKey: string,
   mode: ReportingWindowMode,
   comparison: ComparisonMode,
+  options: ReportingWindowOptions = {},
 ): {
   from: string;
   to: string;
   months: RollingMonth[];
   title: string;
 } {
-  const current = getReportingWindowRange(selectedMonthKey, mode);
+  const { includeCurrentMonth = true } = options;
+  const current = getReportingWindowRange(selectedMonthKey, mode, options);
   const monthCount = current.months.length;
   const shiftMonths = comparison === "year-over-year" ? 12 : monthCount;
 
@@ -199,7 +233,22 @@ export function getPreviousReportingWindowRange(
   const firstMonth = previousMonths[0];
   const lastMonth = previousMonths[previousMonths.length - 1];
   const startDate = new Date(firstMonth.year, firstMonth.month - 1, 1);
-  const endDate = new Date(lastMonth.year, lastMonth.month, 0);
+  // When the current window includes the in-progress month, mirror that
+  // onto the comparison: truncate the comparison's last month to the same
+  // day-of-month as today so we compare apples to apples (e.g. May 1–28
+  // 2026 vs. May 1–28 2025), not partial-vs-full. We cap the day at the
+  // last valid day of the target month to handle month-length differences.
+  const useLiveAnchor = mode !== "current-month" && includeCurrentMonth;
+  const today = new Date();
+  const lastDayOfTargetMonth = new Date(
+    lastMonth.year,
+    lastMonth.month,
+    0,
+  ).getDate();
+  const targetDay = useLiveAnchor
+    ? Math.min(today.getDate(), lastDayOfTargetMonth)
+    : lastDayOfTargetMonth;
+  const endDate = new Date(lastMonth.year, lastMonth.month - 1, targetDay);
 
   const title =
     monthCount === 1

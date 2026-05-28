@@ -66,6 +66,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -388,6 +389,21 @@ export default function ReportsPage() {
   );
   const [selectedWindowMode, setSelectedWindowMode] =
     React.useState<ReportingWindowMode>("rolling-12-months");
+  // Defaults to `true`: rolling-12-months and rolling-year include the
+  // current (in-progress) month. When `false`, both windows end on the
+  // last completed month. Has no effect in `current-month` mode.
+  const [includeCurrentMonth, setIncludeCurrentMonth] =
+    React.useState<boolean>(true);
+  // Pre-hydration we can't trust `new Date()` — the server's "now" and the
+  // client's "now" differ (timezone, midnight crossings) and any DOM that
+  // depends on the live current month would mismatch on hydration. Until
+  // this flag flips after mount, getReportingWindowRange uses the old
+  // anchor (selectedMonth) so SSR == CSR. After mount, the toggle takes
+  // effect.
+  const [hasMounted, setHasMounted] = React.useState(false);
+  React.useEffect(() => {
+    setHasMounted(true);
+  }, []);
   const [comparisonMode, setComparisonMode] =
     React.useState<ComparisonMode>("year-over-year");
   const [turnoverChartMode, setTurnoverChartMode] = React.useState<
@@ -564,6 +580,10 @@ export default function ReportsPage() {
     if (saved.comparisonMode) {
       setComparisonMode(saved.comparisonMode);
     }
+
+    if (typeof saved.includeCurrentMonth === "boolean") {
+      setIncludeCurrentMonth(saved.includeCurrentMonth);
+    }
   }, []);
 
   const showTeamFilter = isAdmin || user.role === "team_lead";
@@ -588,8 +608,13 @@ export default function ReportsPage() {
     [],
   );
   const rollingWindow = React.useMemo(
-    () => getReportingWindowRange(selectedMonth, selectedWindowMode),
-    [selectedMonth, selectedWindowMode],
+    () =>
+      getReportingWindowRange(selectedMonth, selectedWindowMode, {
+        // Force off pre-hydration to keep the SSR DOM stable — see
+        // hasMounted comment above.
+        includeCurrentMonth: hasMounted ? includeCurrentMonth : false,
+      }),
+    [hasMounted, includeCurrentMonth, selectedMonth, selectedWindowMode],
   );
   const monthlyArticleGroupLabel = React.useCallback(
     (value: string) =>
@@ -787,6 +812,7 @@ export default function ReportsPage() {
 
     setSelectedMonth(getDefaultReportsMonthKey());
     setSelectedWindowMode("rolling-12-months");
+    setIncludeCurrentMonth(true);
 
     if (user.role === "user") {
       setSelectedTeamId(null);
@@ -2443,11 +2469,13 @@ function renderWorkloadShareCell(percentage: number) {
       selectedManagerId,
       selectedCustomerId,
       comparisonMode,
+      includeCurrentMonth,
     };
 
     localStorage.setItem(REPORTS_FILTERS_STORAGE_KEY, JSON.stringify(payload));
   }, [
     comparisonMode,
+    includeCurrentMonth,
     loading,
     selectedCustomerId,
     selectedManagerId,
@@ -2483,6 +2511,7 @@ function renderWorkloadShareCell(percentage: number) {
             selectedMonth,
             selectedWindowMode,
             comparisonMode,
+            { includeCurrentMonth: hasMounted ? includeCurrentMonth : false },
           )
         : null;
       const previousMonthKeys = new Set(
@@ -2684,7 +2713,15 @@ function renderWorkloadShareCell(percentage: number) {
     return () => {
       cancelled = true;
     };
-  }, [comparisonMode, filteredCustomers, rollingWindow, selectedMonth, selectedWindowMode]);
+  }, [
+    comparisonMode,
+    filteredCustomers,
+    hasMounted,
+    includeCurrentMonth,
+    rollingWindow,
+    selectedMonth,
+    selectedWindowMode,
+  ]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -4027,7 +4064,8 @@ function renderWorkloadShareCell(percentage: number) {
             mapping?.articleName ||
             row.article_name?.trim() ||
             t("reports.unknown", "Unknown");
-          const groupName = (mapping?.groupName ?? null) ??
+          const groupName =
+            mapping?.groupName ??
             t("reports.articleGroups.unmapped", "Unmapped");
           const turnoverExVat = Number(row.total_ex_vat ?? 0);
           const quantity = Number(row.quantity ?? 0);
@@ -4899,7 +4937,25 @@ function renderWorkloadShareCell(percentage: number) {
           />
         </div>
 
-        <div className="flex items-center gap-2 lg:shrink-0">
+        <div className="flex flex-wrap items-center gap-2 lg:shrink-0">
+          {selectedWindowMode !== "current-month" ? (
+            <label
+              htmlFor="reports-include-current-month"
+              className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
+              <Switch
+                id="reports-include-current-month"
+                checked={includeCurrentMonth}
+                onCheckedChange={setIncludeCurrentMonth}
+              />
+              <span>
+                {t(
+                  "reports.filters.includeCurrentMonth",
+                  "Include current month",
+                )}
+              </span>
+            </label>
+          ) : null}
           <Button variant="outline" className="h-9 self-center" onClick={handleResetFilters}>
             {t("reports.filters.reset", "Reset filters")}
           </Button>

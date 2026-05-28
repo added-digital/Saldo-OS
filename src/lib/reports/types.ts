@@ -21,6 +21,12 @@ export type SavedReportsFilters = {
   selectedManagerId: string | null;
   selectedCustomerId: string | null;
   comparisonMode: ComparisonMode | null;
+  // Controls whether rolling-window modes (rolling-12-months / rolling-year)
+  // include the current, in-progress month or end at the last completed
+  // month. Only meaningful for those two modes; current-month mode ignores
+  // it. `null` means "not persisted yet" — callers should default to true
+  // (include) when loading.
+  includeCurrentMonth: boolean | null;
 };
 
 export type TeamOption = Pick<Team, "id" | "name">;

@@ -208,6 +208,12 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       "lönsamma kunder', 'kunder med högst omsättning', etc. Never fetch a " +
       "full customer list and rank in your head — that overflows the " +
       "context window on real customer counts.\n\n" +
+      "ALSO use this for THRESHOLD-shaped questions — 'customers with " +
+      "contract value over 200 000 kr', 'kunder med avtalsvärde över X', " +
+      "'med minst X kr i omsättning', 'more than X', etc. Pass `min_value` " +
+      "with the threshold. Do NOT infer threshold matches from " +
+      "get_kpi_summary.by_customer; that list is capped and may silently " +
+      "exclude qualifying customers. Get the answer here.\n\n" +
       "Metrics:\n" +
       "  - 'turnover' (default) → total invoiced amount. Maps to both " +
       "'omsättning' and 'lönsamma' (colloquial Swedish business usage). " +
@@ -215,17 +221,25 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       "PER HOUR.\n" +
       "  - 'turnover_per_hour' → effective hourly rate (turnover ÷ hours). " +
       "Use only for explicit margin/profitability-per-engagement questions.\n" +
-      "  - 'contract_value' → recurring contract value (årsavtal).\n" +
+      "  - 'contract_value' → annualized recurring contract value (årsavtal). " +
+      "Read live from contract_accruals (per-contract total_ex_vat × billing " +
+      "frequency, summed per active contract). This is the truth — the " +
+      "monthly KPI rollup understates it for many customers.\n" +
       "  - 'hours' → total billed hours.\n" +
       "  - 'invoice_count' → number of invoices.\n\n" +
       "Scope:\n" +
-      "  - `year` is required. Optional `month` for monthly ranking.\n" +
+      "  - `year` is required. Optional `month` for monthly ranking. " +
+      "(`month` has no effect for `contract_value` — contract value is a " +
+      "stock metric, not a flow.)\n" +
       "  - Optional `consultant_id` to scope to one consultant's portfolio " +
       "(call resolve_consultant first).\n" +
+      "  - Optional `min_value` — only customers whose metric value is " +
+      "at least this number are included. Use for 'över X', 'minst X', " +
+      "'more than X', 'with at least X' questions.\n" +
       "  - `n` defaults to 10, max 50. Use 5 or 10 unless the user asks " +
       "for a larger ranking.\n\n" +
-      "Same data source as the reports dashboard (customer_kpis rollup), " +
-      "so numbers match the UI.",
+      "Data sources: customer_kpis rollup for turnover/hours/invoice_count " +
+      "(matches dashboard); contract_accruals live for contract_value.",
     input_schema: {
       type: "object",
       properties: {
@@ -272,6 +286,14 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
           description:
             "If true (default), only customers with status='active' are " +
             "ranked. Matches dashboard behaviour.",
+        },
+        min_value: {
+          type: "number",
+          description:
+            "Optional threshold. Only customers whose metric value is at " +
+            "least this number are returned. Use for threshold questions " +
+            "('över X kr', 'med minst X', 'more than X', 'with at least X').",
+          minimum: 0,
         },
       },
       required: ["year"],

@@ -1,5 +1,6 @@
-import { chunkArray } from "@/lib/reports";
+import { annualizeContractTotal, chunkArray } from "@/lib/reports";
 
+import { fetchAnnualizedContractValuesByCustomerId } from "./contract-values";
 import type { ToolHandler } from "./types";
 
 /**
@@ -49,6 +50,13 @@ export type GetTopCustomersInput = {
   n?: number | null;
   consultant_id?: string | null;
   active_only?: boolean;
+  /**
+   * Optional threshold: only customers whose metric value is >= min_value
+   * are included. Use this for threshold-shaped questions like "över 200
+   * 000 kr", "more than X", "with at least X". Returns 0 results cleanly
+   * rather than the top-N when no customers meet the threshold.
+   */
+  min_value?: number | null;
 };
 
 type CustomerJoinRow = {
@@ -89,7 +97,7 @@ const METRIC_COLUMN: Record<
 const METRIC_LABEL: Record<TopCustomerMetric, string> = {
   turnover: "Omsättning (kr)",
   turnover_per_hour: "Omsättning per timme (kr/h)",
-  contract_value: "Avtalsvärde (kr)",
+  contract_value: "Avtalsvärde (kr/år)",
   hours: "Timmar",
   invoice_count: "Antal fakturor",
 };
@@ -129,6 +137,15 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
 
   const activeOnly = input.active_only ?? true;
   const consultantId = input.consultant_id?.trim() || null;
+
+  // Optional threshold — must be a non-negative finite number when present.
+  const minValueRaw = input.min_value;
+  const minValue =
+    typeof minValueRaw === "number" &&
+    Number.isFinite(minValueRaw) &&
+    minValueRaw > 0
+      ? minValueRaw
+      : null;
 
   // ---------------------------------------------------------------------------
   // Optional consultant scope. We resolve the consultant's cost center and
@@ -229,6 +246,34 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
   }
 
   // ---------------------------------------------------------------------------
+  // contract_value path — bypass customer_kpis entirely.
+  //
+  // contract_value is a STOCK metric (current annual commitment), not a flow
+  // metric, so it doesn't naturally fit a per-month rollup. The
+  // `customer_kpis.contract_value` field has been observed to disagree with
+  // the truth from `contract_accruals` by an order of magnitude on real data
+  // (top customer reported as 183 666 kr/år when the raw-derived annualized
+  // value is 1 288 866 kr/år). Until the sync is repaired we read directly
+  // from `contract_accruals` and annualize on the fly — the same path the
+  // dashboard's `/reports` page uses. That makes "kunder med avtalsvärde
+  // över X kr" answer correctly.
+  // ---------------------------------------------------------------------------
+  if (metric === "contract_value") {
+    return runContractValuePath({
+      supabase,
+      n,
+      minValue,
+      activeOnly,
+      consultantCustomerIds,
+      consultantId,
+      consultantName,
+      consultantCostCenter,
+      year,
+      month,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Build the customer_kpis query.
   //
   // Period encoding in customer_kpis:
@@ -273,6 +318,13 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
       .order(orderColumn, { ascending: false, nullsFirst: false })
       .limit(n);
 
+    // Threshold filter — only customers whose metric value is at least
+    // `min_value` qualify. Applied at the database level so we don't waste a
+    // round-trip on rows that won't pass.
+    if (minValue != null) {
+      query = query.gte(orderColumn, minValue);
+    }
+
     if (activeOnly) {
       // PostgREST filter on the embedded resource — only customers with
       // status='active' qualify.
@@ -300,6 +352,7 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
           consultantId,
           consultantName,
           consultantCostCenter,
+          minValue,
         });
       }
     }
@@ -307,8 +360,26 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
     const { data, error, count } = await query;
     if (error) return { error: error.message };
 
-    const ranked = ((data ?? []) as unknown as KpiRow[]).map((row, index) =>
-      formatRow(row, index, metric),
+    const rows = (data ?? []) as unknown as KpiRow[];
+
+    // Overlay supporting.contract_value with the annualized truth from
+    // contract_accruals. The rollup value in customer_kpis is unreliable;
+    // since the ranking metric here isn't contract_value, we don't reorder,
+    // but we do want the supporting numbers shown alongside to be honest.
+    const annualizedByCustomerId =
+      await fetchAnnualizedContractValuesByCustomerId(
+        supabase,
+        rows.map((row) => row.customer_id),
+      );
+
+    const ranked = rows.map((row, index) =>
+      formatRow(
+        row,
+        index,
+        metric,
+        undefined,
+        annualizedByCustomerId.get(row.customer_id) ?? 0,
+      ),
     );
 
     return {
@@ -331,7 +402,8 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
       // period. Lets the model say "showing 10 of 47 customers with revenue
       // this period" rather than implying these are the ONLY customers.
       total_count: count ?? ranked.length,
-      source: "customer_kpis (precomputed rollup — matches reports dashboard)",
+      source:
+        "customer_kpis rollup for the ranking metric; supporting.contract_value overlaid from contract_accruals (annualized).",
     };
   }
 
@@ -354,6 +426,7 @@ export const getTopCustomers: ToolHandler<GetTopCustomersInput> = async (
     consultantId,
     consultantName,
     consultantCostCenter,
+    minValue,
   });
 };
 
@@ -373,6 +446,7 @@ interface DerivedPathInput {
   consultantId: string | null;
   consultantName: string | null;
   consultantCostCenter: string | null;
+  minValue: number | null;
 }
 
 async function runDerivedPath(opts: DerivedPathInput) {
@@ -388,6 +462,7 @@ async function runDerivedPath(opts: DerivedPathInput) {
     consultantId,
     consultantName,
     consultantCostCenter,
+    minValue,
   } = opts;
 
   const selectClause =
@@ -448,11 +523,31 @@ async function runDerivedPath(opts: DerivedPathInput) {
       return { row, ratio };
     })
     .filter((r) => Number.isFinite(r.ratio) && r.ratio > 0)
+    // Apply min_value AFTER the ratio is computed — the derived metric
+    // doesn't exist as a column so we can't push the filter to the DB.
+    .filter((r) => (minValue == null ? true : r.ratio >= minValue))
     .sort((a, b) => b.ratio - a.ratio);
 
-  const ranked = withRatio
-    .slice(0, n)
-    .map(({ row, ratio }, index) => formatRow(row, index, metric, ratio));
+  const topRatios = withRatio.slice(0, n);
+
+  // Overlay supporting.contract_value with annualized truth — same reason
+  // as the fast path: the ranking metric isn't contract_value, but the
+  // supporting number shown should still be honest.
+  const annualizedByCustomerId =
+    await fetchAnnualizedContractValuesByCustomerId(
+      supabase,
+      topRatios.map(({ row }) => row.customer_id),
+    );
+
+  const ranked = topRatios.map(({ row, ratio }, index) =>
+    formatRow(
+      row,
+      index,
+      metric,
+      ratio,
+      annualizedByCustomerId.get(row.customer_id) ?? 0,
+    ),
+  );
 
   return {
     metric,
@@ -492,6 +587,13 @@ function formatRow(
   index: number,
   metric: TopCustomerMetric,
   derivedValue?: number,
+  /**
+   * When provided, overrides the rollup's `contract_value` field with the
+   * annualized truth (computed from contract_accruals). Pass when the
+   * ranking metric isn't contract_value but we still want the supporting
+   * column to reflect annualized SEK/år.
+   */
+  annualizedContractValueOverride?: number,
 ): Record<string, unknown> {
   // PostgREST may return the embedded join as an array of one (for !inner)
   // or a single object depending on the relationship cardinality detected.
@@ -502,7 +604,10 @@ function formatRow(
 
   const turnover = Number(row.total_turnover ?? 0);
   const hours = Number(row.total_hours ?? 0);
-  const contractValue = Number(row.contract_value ?? 0);
+  const contractValue =
+    annualizedContractValueOverride != null
+      ? annualizedContractValueOverride
+      : Number(row.contract_value ?? 0);
   const invoiceCount = Number(row.invoice_count ?? 0);
 
   let value: number;
@@ -546,5 +651,179 @@ function formatRow(
       invoice_count: invoiceCount,
       turnover_per_hour: hours > 0 ? turnover / hours : null,
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// contract_value helper — reads `contract_accruals` directly and annualizes.
+//
+// Mirrors what the dashboard's `/reports` page does for its KPI card
+// (annualizeContractTotal of total_ex_vat over period, filtered by
+// is_active=true, summed per customer). Bypasses the broken customer_kpis
+// rollup until the sync is repaired.
+// ---------------------------------------------------------------------------
+
+type CustomerScopeRow = {
+  id: string;
+  name: string;
+  fortnox_customer_number: string | null;
+  fortnox_cost_center: string | null;
+  status: string | null;
+};
+
+type ContractAccrualRow = {
+  fortnox_customer_number: string | null;
+  total_ex_vat: number | null;
+  period: string | null;
+};
+
+interface ContractValuePathInput {
+  supabase: Parameters<ToolHandler<GetTopCustomersInput>>[1]["supabase"];
+  n: number;
+  minValue: number | null;
+  activeOnly: boolean;
+  consultantCustomerIds: string[] | null;
+  consultantId: string | null;
+  consultantName: string | null;
+  consultantCostCenter: string | null;
+  year: number;
+  month: number | null;
+}
+
+async function runContractValuePath(opts: ContractValuePathInput) {
+  const {
+    supabase,
+    n,
+    minValue,
+    activeOnly,
+    consultantCustomerIds,
+    consultantId,
+    consultantName,
+    consultantCostCenter,
+    year,
+    month,
+  } = opts;
+
+  // ---------------------------------------------------------------------------
+  // Step 1 — resolve the customer scope (active filter + consultant scope).
+  // ---------------------------------------------------------------------------
+  let custQuery = supabase
+    .from("customers")
+    .select("id, name, fortnox_customer_number, fortnox_cost_center, status");
+
+  if (activeOnly) custQuery = custQuery.eq("status", "active");
+  if (consultantCustomerIds && consultantCustomerIds.length > 0) {
+    custQuery = custQuery.in("id", consultantCustomerIds);
+  }
+
+  const custRes = await custQuery;
+  if (custRes.error) return { error: custRes.error.message };
+
+  const customers = (custRes.data ?? []) as unknown as CustomerScopeRow[];
+  const fortnoxNumbers = customers
+    .map((c) => c.fortnox_customer_number)
+    .filter((v): v is string => Boolean(v));
+
+  const emptyResult = {
+    metric: "contract_value" as const,
+    metric_label: METRIC_LABEL.contract_value,
+    period: {
+      year,
+      month: month ?? null,
+      type: month != null ? "month" : "year",
+    },
+    scope: {
+      consultant_id: consultantId,
+      consultant_name: consultantName,
+      consultant_cost_center: consultantCostCenter,
+      active_only: activeOnly,
+      min_value: minValue,
+    },
+    n,
+    ranked: [] as Record<string, unknown>[],
+    total_count: 0,
+    source:
+      "contract_accruals (live, sum of annualized active contracts per customer)",
+    notes: [
+      "contract_value is computed live from contract_accruals: SUM of " +
+        "annualizeContractTotal(total_ex_vat, period) across is_active=true " +
+        "contracts per customer. Period codes: '1' → ×12 (monthly), '3' → ×4 " +
+        "(quarterly), else ×1 (annual).",
+    ],
+  };
+
+  if (fortnoxNumbers.length === 0) return emptyResult;
+
+  // ---------------------------------------------------------------------------
+  // Step 2 — fetch active contract accruals for the scoped customers and sum
+  // the annualized value per customer.
+  // ---------------------------------------------------------------------------
+  const sumsByFortnox = new Map<string, number>();
+  for (const chunk of chunkArray(fortnoxNumbers, CUSTOMER_ID_CHUNK)) {
+    const { data, error } = await supabase
+      .from("contract_accruals")
+      .select("fortnox_customer_number, total_ex_vat, period")
+      .in("fortnox_customer_number", chunk)
+      .eq("is_active", true);
+
+    if (error) return { error: error.message };
+
+    for (const row of (data ?? []) as unknown as ContractAccrualRow[]) {
+      if (!row.fortnox_customer_number) continue;
+      const annualized = annualizeContractTotal(row.total_ex_vat, row.period);
+      const prev = sumsByFortnox.get(row.fortnox_customer_number) ?? 0;
+      sumsByFortnox.set(row.fortnox_customer_number, prev + annualized);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 3 — build the ranked list. Filter by min_value, sort, slice.
+  // ---------------------------------------------------------------------------
+  const allRanked = customers
+    .map((c) => ({
+      customer: c,
+      annualizedContractValue: c.fortnox_customer_number
+        ? sumsByFortnox.get(c.fortnox_customer_number) ?? 0
+        : 0,
+    }))
+    .filter((entry) => entry.annualizedContractValue > 0);
+
+  const filtered =
+    minValue != null
+      ? allRanked.filter(
+          (entry) => entry.annualizedContractValue >= minValue,
+        )
+      : allRanked;
+
+  filtered.sort(
+    (a, b) => b.annualizedContractValue - a.annualizedContractValue,
+  );
+
+  const ranked = filtered.slice(0, n).map((entry, index) => ({
+    rank: index + 1,
+    customer_id: entry.customer.id,
+    customer_name: entry.customer.name,
+    fortnox_customer_number: entry.customer.fortnox_customer_number,
+    fortnox_cost_center: entry.customer.fortnox_cost_center,
+    value: entry.annualizedContractValue,
+    // Same supporting shape as formatRow, but turnover/hours/invoice_count
+    // aren't queried here — null signals "not loaded in this call" rather
+    // than zero.
+    supporting: {
+      total_turnover: null,
+      total_hours: null,
+      contract_value: entry.annualizedContractValue,
+      invoice_count: null,
+      turnover_per_hour: null,
+    },
+  }));
+
+  return {
+    ...emptyResult,
+    ranked,
+    // total_count is the pool of customers with > 0 (and >= min_value if set)
+    // contract value in scope. Lets the model say "13 of 68 customers
+    // matched, showing 10".
+    total_count: filtered.length,
   };
 }

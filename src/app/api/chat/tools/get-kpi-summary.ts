@@ -1,4 +1,4 @@
-import { chunkArray } from "@/lib/reports";
+import { annualizeContractTotal, chunkArray } from "@/lib/reports";
 
 import type { ToolHandler } from "./types";
 
@@ -328,6 +328,160 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
   }
 
   // -------------------------------------------------------------------------
+  // 4b. Override contract_value with the truth from contract_accruals.
+  //
+  // The customer_kpis.contract_value rollup is known to misrepresent the
+  // annualized contract commitment for many customers (top customer reported
+  // as 183 666 kr/år when the raw-derived value is 1 288 866). Until the
+  // sync is fixed we recompute contract_value here the same way the reports
+  // dashboard does: SUM(annualizeContractTotal(total_ex_vat, period)) across
+  // is_active=true rows in contract_accruals, scoped to the in-scope
+  // customers.
+  // -------------------------------------------------------------------------
+  {
+    // a) Collect (customer_id, fortnox_customer_number) for everyone in
+    //    scope. When we have per-customer buckets that's already in
+    //    customerInfo; otherwise we fetch the mapping for scopedCustomerIds
+    //    (or all relevant customers when the caller asked for a global
+    //    rollup including inactive customers).
+    type CustomerKey = { id: string; fortnox_customer_number: string | null };
+    const customersInScope = new Map<string, CustomerKey>();
+
+    if (includePerCustomer) {
+      for (const [id, bucket] of byCustomer) {
+        customersInScope.set(id, {
+          id,
+          fortnox_customer_number: bucket.fortnox_customer_number,
+        });
+      }
+    }
+
+    // For ids we don't already have fortnox numbers for (the !includePerCustomer
+    // path, or buckets created with no customerInfo entry), fetch them.
+    let idsNeedingFortnoxLookup: string[];
+    if (includePerCustomer) {
+      idsNeedingFortnoxLookup = Array.from(customersInScope.values())
+        .filter((c) => !c.fortnox_customer_number)
+        .map((c) => c.id);
+    } else if (scopedCustomerIds && scopedCustomerIds.length > 0) {
+      idsNeedingFortnoxLookup = scopedCustomerIds;
+    } else if (scopedCustomerIds == null) {
+      // Caller asked for a global rollup including inactive customers — we
+      // need every customer's fortnox number. Fetch the full list, scoped
+      // by status to match what the KPI rows reflect.
+      const customerListRes = await supabase
+        .from("customers")
+        .select("id, fortnox_customer_number");
+      if (customerListRes.error) {
+        // Best-effort: leave contract_value as-is (rollup value) and move
+        // on rather than fail the whole call.
+        console.error(
+          "getKpiSummary: failed to load customers for contract_value override",
+          customerListRes.error,
+        );
+        idsNeedingFortnoxLookup = [];
+      } else {
+        for (const row of (customerListRes.data ?? []) as unknown as Array<{
+          id: string;
+          fortnox_customer_number: string | null;
+        }>) {
+          customersInScope.set(row.id, {
+            id: row.id,
+            fortnox_customer_number: row.fortnox_customer_number,
+          });
+        }
+        idsNeedingFortnoxLookup = [];
+      }
+    } else {
+      idsNeedingFortnoxLookup = [];
+    }
+
+    if (idsNeedingFortnoxLookup.length > 0) {
+      try {
+        for (const chunk of chunkArray(
+          idsNeedingFortnoxLookup,
+          CUSTOMER_ID_CHUNK,
+        )) {
+          const { data, error } = await supabase
+            .from("customers")
+            .select("id, fortnox_customer_number")
+            .in("id", chunk);
+          if (error) throw new Error(error.message);
+          for (const row of (data ?? []) as unknown as Array<{
+            id: string;
+            fortnox_customer_number: string | null;
+          }>) {
+            customersInScope.set(row.id, {
+              id: row.id,
+              fortnox_customer_number: row.fortnox_customer_number,
+            });
+          }
+        }
+      } catch (error) {
+        console.error(
+          "getKpiSummary: fortnox_customer_number lookup failed",
+          error,
+        );
+      }
+    }
+
+    // b) Sum annualized active contracts per fortnox_customer_number.
+    const fortnoxNumbers = Array.from(customersInScope.values())
+      .map((c) => c.fortnox_customer_number)
+      .filter((n): n is string => Boolean(n));
+
+    const annualizedByFortnox = new Map<string, number>();
+    if (fortnoxNumbers.length > 0) {
+      try {
+        for (const chunk of chunkArray(fortnoxNumbers, CUSTOMER_ID_CHUNK)) {
+          const { data, error } = await supabase
+            .from("contract_accruals")
+            .select("fortnox_customer_number, total_ex_vat, period")
+            .in("fortnox_customer_number", chunk)
+            .eq("is_active", true);
+          if (error) throw new Error(error.message);
+          for (const row of (data ?? []) as unknown as Array<{
+            fortnox_customer_number: string | null;
+            total_ex_vat: number | null;
+            period: string | null;
+          }>) {
+            if (!row.fortnox_customer_number) continue;
+            const annualized = annualizeContractTotal(
+              row.total_ex_vat,
+              row.period,
+            );
+            const prev =
+              annualizedByFortnox.get(row.fortnox_customer_number) ?? 0;
+            annualizedByFortnox.set(
+              row.fortnox_customer_number,
+              prev + annualized,
+            );
+          }
+        }
+      } catch (error) {
+        console.error(
+          "getKpiSummary: contract_accruals lookup failed",
+          error,
+        );
+      }
+    }
+
+    // c) Overwrite global and per-customer contract_value with the truth.
+    let globalAnnualized = 0;
+    for (const [customerId, info] of customersInScope) {
+      const annualized = info.fortnox_customer_number
+        ? annualizedByFortnox.get(info.fortnox_customer_number) ?? 0
+        : 0;
+      globalAnnualized += annualized;
+      const bucket = byCustomer.get(customerId);
+      if (bucket) {
+        bucket.totals.contract_value = annualized;
+      }
+    }
+    totals.contract_value = globalAnnualized;
+  }
+
+  // -------------------------------------------------------------------------
   // 5. Build response
   // -------------------------------------------------------------------------
   // When the caller asked for a single month, the by_month array is just one
@@ -335,11 +489,26 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
   // each customer's nested by_month.
   const isSingleMonth = month != null;
 
-  // Cap by_customer to top 30 (sorted desc by total_turnover) so a portfolio
-  // of 200 customers doesn't balloon the tool-result JSON. The model still
-  // gets the aggregate totals; if the user asks for a specific customer not
-  // in the top 30 they can request that customer by id.
+  // Cap by_customer so a portfolio of hundreds of customers doesn't balloon
+  // the tool-result JSON.
+  //
+  // The slice is built as a UNION of top-N across each meaningful ranking
+  // metric (turnover, contract value, hours, invoice count), not "top N by
+  // turnover" alone. Sorting by turnover only made the leaders of any other
+  // metric invisible: a customer with 1.2M SEK in contract value but mid
+  // turnover would silently fall off the list, and the model — looking at
+  // the 30 it received — would confidently report a max well below the real
+  // one. (See the contract-value bug investigation for the smoking gun.)
   const BY_CUSTOMER_LIMIT = 30;
+  // Top-N per metric — 4 metrics × 10 = 40 candidates max, typically 20-30
+  // after deduplication. Final list is then capped at BY_CUSTOMER_LIMIT.
+  const TOP_PER_METRIC = 10;
+  const RANKING_METRICS = [
+    "total_turnover",
+    "contract_value",
+    "total_hours",
+    "invoice_count",
+  ] as const;
 
   const response: Record<string, unknown> = {
     period: {
@@ -355,7 +524,11 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
       customers_contributing: customersContributing.size,
     },
     totals,
-    source: "customer_kpis (precomputed rollup — matches reports dashboard)",
+    source:
+      "customer_kpis rollup for turnover/hours/invoice_count (matches " +
+      "reports dashboard). contract_value is overridden live from " +
+      "contract_accruals (sum of annualized active contracts per customer) " +
+      "because the rollup's contract_value field is currently unreliable.",
   };
 
   if (!isSingleMonth) {
@@ -365,34 +538,65 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
   }
 
   if (includePerCustomer) {
-    const allCustomers = Array.from(byCustomer.values())
-      .map((bucket) => ({
-        customer_id: bucket.customer_id,
-        name: bucket.name,
-        fortnox_customer_number: bucket.fortnox_customer_number,
-        totals: bucket.totals,
-        // Per-customer by_month is omitted for single-month queries: the row
-        // would just repeat the customer's totals for that month.
-        ...(isSingleMonth
-          ? {}
-          : {
-              by_month: Array.from(bucket.by_month.values()).sort(
-                (a, b) => a.period_month - b.period_month,
-              ),
-            }),
-      }))
+    const allCustomers = Array.from(byCustomer.values()).map((bucket) => ({
+      customer_id: bucket.customer_id,
+      name: bucket.name,
+      fortnox_customer_number: bucket.fortnox_customer_number,
+      totals: bucket.totals,
+      // Per-customer by_month is omitted for single-month queries: the row
+      // would just repeat the customer's totals for that month.
+      ...(isSingleMonth
+        ? {}
+        : {
+            by_month: Array.from(bucket.by_month.values()).sort(
+              (a, b) => a.period_month - b.period_month,
+            ),
+          }),
+    }));
+
+    // Build the slice as the union of top-N across each ranking metric so
+    // questions about any metric (not just turnover) see the actual leaders.
+    // Explicitly-requested customers are always included regardless of rank.
+    const includedIds = new Set<string>();
+    for (const id of explicitIds) includedIds.add(id);
+
+    for (const metric of RANKING_METRICS) {
+      const ranked = [...allCustomers].sort((a, b) => {
+        const av =
+          (a.totals as unknown as Record<string, number>)[metric] ?? 0;
+        const bv =
+          (b.totals as unknown as Record<string, number>)[metric] ?? 0;
+        return bv - av;
+      });
+      for (const customer of ranked.slice(0, TOP_PER_METRIC)) {
+        includedIds.add(customer.customer_id);
+      }
+    }
+
+    // Filter to the union, sort by turnover desc for stable presentation,
+    // then cap. The cap should rarely bite — the union typically holds
+    // 20-30 customers — but it protects against pathological cases where
+    // every metric points at disjoint customers.
+    const totalCustomers = allCustomers.length;
+    const selected = allCustomers
+      .filter((customer) => includedIds.has(customer.customer_id))
       .sort((a, b) => b.totals.total_turnover - a.totals.total_turnover);
 
-    const totalCustomers = allCustomers.length;
-    response.by_customer = allCustomers.slice(0, BY_CUSTOMER_LIMIT);
+    response.by_customer = selected.slice(0, BY_CUSTOMER_LIMIT);
 
-    if (totalCustomers > BY_CUSTOMER_LIMIT) {
+    const shownCount = (response.by_customer as unknown[]).length;
+    if (totalCustomers > shownCount) {
       response._compacted = [
         {
           field: "by_customer",
           total_count: totalCustomers,
-          shown_count: BY_CUSTOMER_LIMIT,
-          note: "Showing the top 30 customers by turnover. Call again with `customer_ids: [...]` for specific customers, or interpret these as the leaders.",
+          shown_count: shownCount,
+          note:
+            "Showing the union of top-" +
+            String(TOP_PER_METRIC) +
+            " customers across turnover, contract_value, total_hours, and invoice_count (deduped, capped at " +
+            String(BY_CUSTOMER_LIMIT) +
+            "). This means you can safely rank or threshold-filter this slice by ANY of those four metrics — the leaders of each are present. For customers outside this slice, call `get_top_customers` with the specific metric, or call back with `customer_ids: [...]`.",
         },
       ];
     }

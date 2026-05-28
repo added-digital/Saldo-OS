@@ -1,3 +1,4 @@
+import { fetchAnnualizedContractValuesByCustomerId } from "./contract-values";
 import type { ToolHandler } from "./types";
 
 export type GetConsultantCustomersInput = {
@@ -89,7 +90,21 @@ export const getConsultantCustomers: ToolHandler<GetConsultantCustomersInput> = 
     return { error: error.message, customers: [] };
   }
 
-  const customers = (data ?? []) as unknown as CustomerRow[];
+  const customersRaw = (data ?? []) as unknown as CustomerRow[];
+
+  // Overlay contract_value with the annualized truth from contract_accruals.
+  // The denormalized `customers.contract_value` column is populated by the
+  // same broken sync as customer_kpis — see the contract-value bug.
+  const annualizedByCustomerId =
+    await fetchAnnualizedContractValuesByCustomerId(
+      supabase,
+      customersRaw.map((c) => c.id),
+    );
+  const customers = customersRaw.map((c) => ({
+    ...c,
+    contract_value: annualizedByCustomerId.get(c.id) ?? 0,
+    contract_value_unit: "SEK/år",
+  }));
 
   // We fetched up to `limit` rows. If we got exactly that many, there may be
   // more — surface this with the same `_compacted` shape the route compactor

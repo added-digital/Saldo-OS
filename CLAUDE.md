@@ -255,3 +255,17 @@ When implementing Figma designs:
 7. **Icons:** Use Lucide React — search for the closest match.
 8. **Dark mode:** Design tokens already handle dark/light; just use semantic color tokens.
 9. **Animations:** Use `--duration-*` and `--easing-default` tokens. Use GSAP for complex sequences, Tailwind animate for simple transitions.
+
+---
+
+## Chat Assistant — Person vs. Customer Resolution
+
+When a user query includes a person's first name (or last name, or any partial name) alongside words like `timmar`, `lönsamhet`, `kunder`, `jobbat`, `sammanställ`, or `omsättning` — always search for a consultant/customer manager first using `resolve_consultant`, **not** `resolve_customer`. Consultants (a.k.a. customer managers) are internal employees stored in the `profiles` table; customers are external companies stored in the `customers` table.
+
+`resolve_consultant` performs a case-insensitive substring match against `full_name` and `email`, so first names, last names, and partial names all resolve:
+
+- "Derya" → "Derya Kuzey"
+- "Kuzey" → "Derya Kuzey"
+- "kuzey" → "Derya Kuzey"
+
+If `resolve_consultant` returns multiple matches (e.g. two people named Oscar), ask the user to clarify which person they mean before proceeding with any downstream tool that needs a specific `consultant_id`.
