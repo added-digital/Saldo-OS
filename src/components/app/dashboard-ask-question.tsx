@@ -799,7 +799,14 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
       "grid h-full overflow-hidden",
       historyCollapsed ? "grid-cols-[52px_1fr]" : "grid-cols-[280px_1fr]",
     )}>
-      <aside className="flex h-full flex-col border-r bg-muted/20 p-2">
+      {/* min-h-0 overrides CSS Grid's default min-height:min-content for
+          grid items. Without it the aside refuses to shrink below its full
+          content size — the conversation list pushes the aside taller than
+          the grid row, so the inner list never has a constrained parent
+          and overflow-y-auto can't engage. Combined with the min-h-0 on
+          the list itself, this lets the list scroll inside the aside
+          regardless of how many conversations you have. */}
+      <aside className="flex h-full min-h-0 flex-col border-r bg-muted/20 p-2">
         <Button
           variant="outline"
           className={cn("h-9 gap-2", historyCollapsed ? "justify-center px-0" : "justify-start")}
@@ -809,7 +816,12 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
           {historyCollapsed ? null : t("dashboard.ask.newChat", "New chat")}
         </Button>
 
-        <div className={cn("mt-3 flex-1 space-y-1 overflow-y-auto pr-1", historyCollapsed && "hidden")}>
+        {/* min-h-0 is required: flex children default to min-height:auto,
+            which means `flex-1` won't shrink below the list's content size.
+            Without it, the conversation list keeps growing as you add chats
+            and pushes the surrounding aside past the viewport instead of
+            engaging the overflow-y-auto scrollbar. */}
+        <div className={cn("mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1", historyCollapsed && "hidden")}>
           {orderedConversationHistory.length === 0 ? (
             <p className="px-2 py-3 text-xs text-muted-foreground">No saved conversations yet.</p>
           ) : (
