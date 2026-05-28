@@ -29,7 +29,6 @@ import {
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
-import { useScope } from "@/hooks/use-scope"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -174,7 +173,6 @@ export default function NyckeltalDetailPage() {
   const params = useParams<{ customerId: string }>()
   const customerId = params.customerId
   const { isAdmin } = useUser()
-  const hasCustomersScope = useScope("customers")
   const { t } = useTranslation()
 
   const [customer, setCustomer] = React.useState<CustomerInfo | null>(null)
@@ -184,7 +182,8 @@ export default function NyckeltalDetailPage() {
 
   const currentYear = new Date().getFullYear()
   const yearFrom = `${currentYear}-01-01`
-  const hasAccess = isAdmin || hasCustomersScope
+  // Admin-only for now; RLS on sie_kpis enforces this server-side.
+  const hasAccess = isAdmin
 
   React.useEffect(() => {
     if (!hasAccess || !customerId) {

@@ -5,6 +5,7 @@ import { getCostCenterDetails } from "./get-cost-center-details";
 import { getCustomerOverview } from "./get-customer-overview";
 import { getKpiByConsultant } from "./get-kpi-by-consultant";
 import { getKpiSummary } from "./get-kpi-summary";
+import { getTopCustomers } from "./get-top-customers";
 import { listCostCenters } from "./list-cost-centers";
 import { resolveConsultant } from "./resolve-consultant";
 import { resolveCustomer } from "./resolve-customer";
@@ -198,6 +199,85 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "get_top_customers",
+    description:
+      "Return the top-N customers ranked by a chosen metric for a given " +
+      "period, pre-sorted at the database level. ALWAYS use this for " +
+      "ranking-shaped customer questions — 'top 10 most profitable', " +
+      "'top 5 by turnover', 'highest-revenue customers this year', 'mest " +
+      "lönsamma kunder', 'kunder med högst omsättning', etc. Never fetch a " +
+      "full customer list and rank in your head — that overflows the " +
+      "context window on real customer counts.\n\n" +
+      "Metrics:\n" +
+      "  - 'turnover' (default) → total invoiced amount. Maps to both " +
+      "'omsättning' and 'lönsamma' (colloquial Swedish business usage). " +
+      "Pick this unless the user explicitly asks about margin/profitability " +
+      "PER HOUR.\n" +
+      "  - 'turnover_per_hour' → effective hourly rate (turnover ÷ hours). " +
+      "Use only for explicit margin/profitability-per-engagement questions.\n" +
+      "  - 'contract_value' → recurring contract value (årsavtal).\n" +
+      "  - 'hours' → total billed hours.\n" +
+      "  - 'invoice_count' → number of invoices.\n\n" +
+      "Scope:\n" +
+      "  - `year` is required. Optional `month` for monthly ranking.\n" +
+      "  - Optional `consultant_id` to scope to one consultant's portfolio " +
+      "(call resolve_consultant first).\n" +
+      "  - `n` defaults to 10, max 50. Use 5 or 10 unless the user asks " +
+      "for a larger ranking.\n\n" +
+      "Same data source as the reports dashboard (customer_kpis rollup), " +
+      "so numbers match the UI.",
+    input_schema: {
+      type: "object",
+      properties: {
+        year: {
+          type: "integer",
+          description: "Period year (e.g. 2026).",
+          minimum: 2000,
+          maximum: 3000,
+        },
+        month: {
+          type: "integer",
+          description:
+            "Optional period month (1-12). Omit for full-year ranking.",
+          minimum: 1,
+          maximum: 12,
+        },
+        metric: {
+          type: "string",
+          description:
+            "Which metric to rank by. Default 'turnover'. See tool " +
+            "description for when to use each.",
+          enum: [
+            "turnover",
+            "turnover_per_hour",
+            "contract_value",
+            "hours",
+            "invoice_count",
+          ],
+        },
+        n: {
+          type: "integer",
+          description: "Number of customers to return (1-50). Default 10.",
+          minimum: 1,
+          maximum: 50,
+        },
+        consultant_id: {
+          type: "string",
+          description:
+            "Optional consultant profile UUID (from resolve_consultant). " +
+            "Restricts the ranking to that consultant's customer portfolio.",
+        },
+        active_only: {
+          type: "boolean",
+          description:
+            "If true (default), only customers with status='active' are " +
+            "ranked. Matches dashboard behaviour.",
+        },
+      },
+      required: ["year"],
+    },
+  },
+  {
     name: "search_invoices",
     description:
       "Return RAW invoice rows filtered by customer and/or date range, " +
@@ -225,12 +305,12 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
         limit: {
           type: "integer",
           description:
-            "Max rows to return (1-1000, capped by Supabase's per-query " +
-            "ceiling). Default 25. For aggregate questions ('total turnover " +
-            "for the year') prefer a future aggregation tool over fetching " +
-            "all rows.",
+            "Max rows to return (1-200). Default 25. For aggregate " +
+            "questions ('total turnover for the year') always prefer " +
+            "get_kpi_summary over fetching all rows — that's pre-aggregated " +
+            "and matches the dashboard.",
           minimum: 1,
-          maximum: 1000,
+          maximum: 200,
         },
       },
     },
@@ -242,7 +322,9 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       "of customers and consultants assigned to each. Use this for questions " +
       "like 'which cost centers do we have?' or 'how many customers in each " +
       "cost center?'. By default only active centers are returned — pass " +
-      "active_only=false to include retired ones.",
+      "active_only=false to include retired ones. Results capped at `limit` " +
+      "(default 50, max 200); response includes `total_count` so you know " +
+      "when the list is a truncated slice.",
     input_schema: {
       type: "object",
       properties: {
@@ -251,6 +333,14 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
           description:
             "If true (default), only active cost centers are returned. Set " +
             "false to include inactive ones.",
+        },
+        limit: {
+          type: "integer",
+          description:
+            "Max cost centers to return (1-200). Default 50. Raise only if " +
+            "the user explicitly asks for the full list.",
+          minimum: 1,
+          maximum: 200,
         },
       },
     },
@@ -387,6 +477,7 @@ const HANDLERS: Record<string, AnyToolHandler> = {
   get_customer_overview: getCustomerOverview as AnyToolHandler,
   get_kpi_summary: getKpiSummary as AnyToolHandler,
   get_kpi_by_consultant: getKpiByConsultant as AnyToolHandler,
+  get_top_customers: getTopCustomers as AnyToolHandler,
   search_invoices: searchInvoices as AnyToolHandler,
   list_cost_centers: listCostCenters as AnyToolHandler,
   get_cost_center_details: getCostCenterDetails as AnyToolHandler,

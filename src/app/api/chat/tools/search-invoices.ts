@@ -19,13 +19,20 @@ export const searchInvoices: ToolHandler<SearchInvoicesInput> = async (
   input,
   { supabase },
 ) => {
-  const limit = Math.min(Math.max(input.limit ?? 25, 1), 1000);
+  // Hard cap dropped from 1000 → 200. A thousand-row JSON payload regularly
+  // pushed past the model's context window — the original 25 default is
+  // fine for "show me recent invoices" style queries, and aggregates should
+  // go through get_kpi_summary anyway.
+  const limit = Math.min(Math.max(input.limit ?? 25, 1), 200);
 
   let query = supabase
     .from("invoices")
     .select(
       "id, document_number, customer_id, customer_name, invoice_date, " +
         "final_pay_date, total_ex_vat, total, currency_code",
+      // total_count surfaces the unfiltered-by-pagination row count so the
+      // model knows when its slice is a partial view.
+      { count: "exact" },
     )
     .order("invoice_date", { ascending: false })
     .limit(limit);
@@ -40,7 +47,7 @@ export const searchInvoices: ToolHandler<SearchInvoicesInput> = async (
     query = query.lte("invoice_date", input.date_to);
   }
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
 
   if (error) {
     return { error: error.message, invoices: [] };
@@ -71,6 +78,12 @@ export const searchInvoices: ToolHandler<SearchInvoicesInput> = async (
     includeDueDate: true,
   });
 
+  // `count` is the total matching the filters (ignoring LIMIT). `shown_count`
+  // is what we returned. When shown_count < total_count, the model knows it
+  // received a truncated slice and can narrow filters or ask for more.
+  const totalCount = count ?? normalised.length;
+  const shownCount = normalised.length;
+
   return {
     filters: {
       customer_id: input.customer_id ?? null,
@@ -78,7 +91,20 @@ export const searchInvoices: ToolHandler<SearchInvoicesInput> = async (
       date_to: input.date_to ?? null,
       limit,
     },
-    count: normalised.length,
+    shown_count: shownCount,
+    total_count: totalCount,
     invoices: normalised,
+    ...(totalCount > shownCount
+      ? {
+          _compacted: [
+            {
+              field: "invoices",
+              total_count: totalCount,
+              shown_count: shownCount,
+              note: "Returned the most recent `limit` rows. Narrow date_from / date_to / customer_id to see specific older invoices, or call get_kpi_summary for aggregate totals.",
+            },
+          ],
+        }
+      : {}),
   };
 };

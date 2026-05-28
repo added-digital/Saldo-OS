@@ -32,9 +32,11 @@ export const resolveCustomer: ToolHandler<ResolveCustomerInput> = async (
   const escaped = query.replace(/[%_]/g, (match) => `\\${match}`);
   const pattern = `%${escaped}%`;
 
-  const { data, error } = await supabase
+  const { data, error, count } = await supabase
     .from("customers")
-    .select("id, name, org_number, fortnox_customer_number, status")
+    .select("id, name, org_number, fortnox_customer_number, status", {
+      count: "exact",
+    })
     .or(
       [
         `name.ilike.${pattern}`,
@@ -58,9 +60,27 @@ export const resolveCustomer: ToolHandler<ResolveCustomerInput> = async (
     status: row.status,
   }));
 
+  // total_count is the full match count ignoring `limit`. Lets the model
+  // tell the user "found 47 matches, showing 5" and ask whether to narrow
+  // the query, rather than silently presenting a slice as the whole truth.
+  const totalCount = count ?? matches.length;
+
   return {
     query,
     match_count: matches.length,
+    total_count: totalCount,
     matches,
+    ...(totalCount > matches.length
+      ? {
+          _compacted: [
+            {
+              field: "matches",
+              total_count: totalCount,
+              shown_count: matches.length,
+              note: "More matches exist — narrow the query or raise `limit` (max 20).",
+            },
+          ],
+        }
+      : {}),
   };
 };

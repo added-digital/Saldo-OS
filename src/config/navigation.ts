@@ -50,9 +50,9 @@ export const navigation: NavSection[] = [
     items: [
       { label: "Reports", href: "/reports", icon: BarChart3, minRole: "user" },
       // Financial KPIs derived from synced SIE files (revenue, gross margin,
-      // EBIT, kassalikviditet, soliditet). Scoped to `customers` because
-      // consultants should only see KPIs for their own portfolio.
-      { label: "Key Metrics", href: "/key-metrics", icon: Calculator, scope: "customers" },
+      // EBIT, kassalikviditet, soliditet). Admin-only for now — opens up to
+      // wider roles once the page handles per-portfolio filtering cleanly.
+      { label: "Key Metrics", href: "/key-metrics", icon: Calculator, minRole: "admin" },
     ],
   },
   {

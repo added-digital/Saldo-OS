@@ -2,6 +2,7 @@ import type { ToolHandler } from "./types";
 
 export type ListCostCentersInput = {
   active_only?: boolean;
+  limit?: number;
 };
 
 type CostCenterRow = {
@@ -24,11 +25,17 @@ export const listCostCenters: ToolHandler<ListCostCentersInput> = async (
   { supabase },
 ) => {
   const activeOnly = input.active_only ?? true;
+  // Default 50, hard cap 200. The customer/consultant count maps still
+  // count from ALL customers and profiles in scope (small payload — just
+  // the fortnox_cost_center column), so the result remains accurate even
+  // when the cost-center list itself is truncated.
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
 
   let centerQuery = supabase
     .from("cost_centers")
-    .select("id, code, name, active")
-    .order("code", { ascending: true });
+    .select("id, code, name, active", { count: "exact" })
+    .order("code", { ascending: true })
+    .limit(limit);
 
   if (activeOnly) {
     centerQuery = centerQuery.eq("active", true);
@@ -45,6 +52,7 @@ export const listCostCenters: ToolHandler<ListCostCentersInput> = async (
   }
 
   const centers = (centersRes.data ?? []) as unknown as CostCenterRow[];
+  const totalCount = centersRes.count ?? centers.length;
   const customers = (customersRes.data ?? []) as unknown as CodeOnlyRow[];
   const profiles = (profilesRes.data ?? []) as unknown as CodeOnlyRow[];
 
@@ -62,6 +70,8 @@ export const listCostCenters: ToolHandler<ListCostCentersInput> = async (
     consultantCounts.set(code, (consultantCounts.get(code) ?? 0) + 1);
   }
 
+  const shownCount = centers.length;
+
   return {
     cost_centers: centers.map((center) => ({
       id: center.id,
@@ -71,6 +81,19 @@ export const listCostCenters: ToolHandler<ListCostCentersInput> = async (
       customer_count: customerCounts.get(center.code) ?? 0,
       consultant_count: consultantCounts.get(center.code) ?? 0,
     })),
-    count: centers.length,
+    shown_count: shownCount,
+    total_count: totalCount,
+    ...(totalCount > shownCount
+      ? {
+          _compacted: [
+            {
+              field: "cost_centers",
+              total_count: totalCount,
+              shown_count: shownCount,
+              note: "Result reached the requested limit; raise `limit` (max 200) for a full list.",
+            },
+          ],
+        }
+      : {}),
   };
 };

@@ -8,7 +8,6 @@ import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
-import { useScope } from "@/hooks/use-scope"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -85,10 +84,6 @@ function formatKpiValue(
 
 export default function NyckeltalOverviewPage() {
   const { isAdmin } = useUser()
-  // useScope returns true for admins automatically, plus anyone with the
-  // 'customers' scope explicitly assigned. Same gate as the rest of the
-  // customer-data pages (mail, reports).
-  const hasCustomersScope = useScope("customers")
   const { t } = useTranslation()
   const [rows, setRows] = React.useState<KpiRow[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -100,10 +95,10 @@ export default function NyckeltalOverviewPage() {
   const currentYear = new Date().getFullYear()
   const yearFrom = `${currentYear}-01-01`
 
-  // Visible to admins and to anyone with the `customers` scope. The
-  // RLS policy on sie_kpis enforces the scope server-side; this check is
-  // just to render an informative empty state on the client.
-  const hasAccess = isAdmin || hasCustomersScope
+  // Admin-only for now. RLS policy on sie_kpis enforces this server-side;
+  // this client check is just to render a clean "no access" state instead
+  // of an empty table when a non-admin lands on the URL directly.
+  const hasAccess = isAdmin
 
   React.useEffect(() => {
     if (!hasAccess) {

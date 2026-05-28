@@ -42,6 +42,42 @@ type DocumentSource = {
 
 const MAX_TOOL_ITERATIONS = 12;
 const MAX_OUTPUT_TOKENS = 4096;
+
+/**
+ * Detect Anthropic's context-window-exceeded error. The SDK exposes status
+ * codes via APIError; context overflow is a 400 with one of a handful of
+ * message fragments. We match defensively because Anthropic's wording has
+ * drifted over time ("prompt is too long" vs "context_length_exceeded" vs
+ * "context window"). When in doubt, we'd rather show the friendly message
+ * than the raw error.
+ */
+function isContextOverflowError(err: unknown): boolean {
+  if (!(err instanceof Anthropic.APIError)) return false;
+  if (err.status !== 400) return false;
+  const message =
+    err.message?.toLowerCase() ?? String(err).toLowerCase();
+  return (
+    message.includes("prompt is too long") ||
+    message.includes("context length") ||
+    message.includes("context window") ||
+    message.includes("context_length_exceeded") ||
+    message.includes("token limit") ||
+    message.includes("maximum context")
+  );
+}
+
+/**
+ * Friendly Swedish-first fallback for context-overflow situations. The UI
+ * locale is Swedish; English appears as a graceful fallback for non-Swedish
+ * users. Worded as a suggestion (narrow by time/consultant/count) rather
+ * than an apology so the user knows exactly what to try next.
+ */
+const CONTEXT_OVERFLOW_FALLBACK =
+  "Den här frågan rör för mycket data åt gången — försök smala av med " +
+  "tidsperiod (t.ex. en specifik månad eller år), en enskild konsult, " +
+  "eller be om ett specifikt antal som \"top 5\" eller \"top 10\".\n\n" +
+  "_(This query covers too much data at once — try narrowing by time " +
+  "period, consultant, or ask for a specific number like \"top 5\".)_";
 // Per-call ceiling for the Anthropic round-trip. If the API hangs we want a
 // concrete error within ~30s rather than letting the loop sit until the
 // function-level maxDuration kills the whole request.
@@ -252,18 +288,42 @@ async function handleChat(request: Request) {
       .join("\n")
       .trim();
 
+  // contextOverflowed signals the catch-block hit a context-window error.
+  // We surface a friendly message rather than the raw APIError JSON — same
+  // shape as the iteration-cap fallback below so the UI's rendering path
+  // doesn't have to differentiate.
+  let contextOverflowed = false;
+
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
-    const response = await withTimeout(
-      anthropic.messages.create({
-        model,
-        max_tokens: MAX_OUTPUT_TOKENS,
-        system: systemBlocks,
-        tools: cachedTools,
-        messages,
-      }),
-      ANTHROPIC_CALL_TIMEOUT_MS,
-      `anthropic.messages.create (iter ${iteration + 1})`,
-    );
+    let response: Anthropic.Message;
+    try {
+      response = await withTimeout(
+        anthropic.messages.create({
+          model,
+          max_tokens: MAX_OUTPUT_TOKENS,
+          system: systemBlocks,
+          tools: cachedTools,
+          messages,
+        }),
+        ANTHROPIC_CALL_TIMEOUT_MS,
+        `anthropic.messages.create (iter ${iteration + 1})`,
+      );
+    } catch (err) {
+      if (isContextOverflowError(err)) {
+        // Don't bubble — convert into a graceful answer. The user's question
+        // was legitimate; it just hit a data-volume limit that the pre-
+        // aggregated tools (get_top_customers, get_kpi_summary,
+        // get_kpi_by_consultant) are designed to avoid. The fallback nudges
+        // toward those rather than reporting "internal error".
+        console.warn(
+          `[/api/chat] context overflow on iter ${iteration + 1}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+        contextOverflowed = true;
+        break;
+      }
+      throw err;
+    }
     lastResponse = response;
 
     // Surface prompt-cache usage so we can verify caching is actually firing.
@@ -375,16 +435,24 @@ async function handleChat(request: Request) {
     break;
   }
 
-  // Iteration cap or empty final text — return whatever we've buffered with a
-  // clear truncation note rather than a generic 500. The UI can still render
-  // useful narration about what Claude managed to do before stopping.
+  // Iteration cap, context overflow, or empty final text — return whatever
+  // we've buffered with a clear note rather than a generic 500. The UI can
+  // still render useful narration about what Claude managed to do before
+  // stopping.
   if (finalText == null || finalText.length === 0) {
-    const buffered = narrationBuffer.join("\n\n").trim();
-    const fallback =
-      buffered.length > 0
-        ? `${buffered}\n\n_(Stoppade här efter ${MAX_TOOL_ITERATIONS} verktygsanrop — fråga gärna mer specifikt så går det fortare.)_`
-        : `Hann inte fram till ett färdigt svar inom ${MAX_TOOL_ITERATIONS} verktygsanrop. Försök gärna ställa frågan mer specifikt.`;
-    finalText = fallback;
+    if (contextOverflowed) {
+      const buffered = narrationBuffer.join("\n\n").trim();
+      finalText =
+        buffered.length > 0
+          ? `${buffered}\n\n${CONTEXT_OVERFLOW_FALLBACK}`
+          : CONTEXT_OVERFLOW_FALLBACK;
+    } else {
+      const buffered = narrationBuffer.join("\n\n").trim();
+      finalText =
+        buffered.length > 0
+          ? `${buffered}\n\n_(Stoppade här efter ${MAX_TOOL_ITERATIONS} verktygsanrop — fråga gärna mer specifikt så går det fortare.)_`
+          : `Hann inte fram till ett färdigt svar inom ${MAX_TOOL_ITERATIONS} verktygsanrop. Försök gärna ställa frågan mer specifikt.`;
+    }
   }
 
   // Persistence is owned by the client (DashboardAskQuestion stores its own
