@@ -697,26 +697,35 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
       }
 
       const successPayload = data as AskQuestionResponse
-      const resolvedMessages = optimisticMessages.map((item) =>
-          item.id === assistantMessageId
-            ? {
-                ...item,
-                content: successPayload.answer,
-                sources: successPayload.sources,
-                isLoading: false,
-              }
-            : item,
-        )
-      if (isMountedRef.current) {
-        setMessages(resolvedMessages)
-      }
+      const applyAnswer = (item: ChatMessage): ChatMessage =>
+        item.id === assistantMessageId
+          ? {
+              ...item,
+              content: successPayload.answer,
+              sources: successPayload.sources,
+              isLoading: false,
+            }
+          : item
+      // Local UI: read current state via the functional setter form. If the
+      // user switched conversations or added another message while the
+      // request was in-flight this either lands on the matching id or
+      // no-ops — no clobbering. setState on an unmounted component is
+      // silently a no-op in React 18+ — no need to gate on isMountedRef.
+      // The previous gate caused "stuck on Thinking..." when the component
+      // unmounted between request and response: the UI never updated but
+      // the DB write below still ran, so reloading appeared to fix it.
+      setMessages((prev) => prev.map(applyAnswer))
       if (activeConversationId) {
+        // DB write uses optimisticMessages so the answer is saved against
+        // the conversation it was asked in, even if the user has switched
+        // to a different conversation locally.
+        const persistedMessages = optimisticMessages.map(applyAnswer)
         const supabase = createClient()
         await supabase
           .from("conversations")
           .update({
-            title: getConversationTitle(resolvedMessages),
-            messages: resolvedMessages as unknown as Record<string, unknown>[],
+            title: getConversationTitle(persistedMessages),
+            messages: persistedMessages as unknown as Record<string, unknown>[],
           } as never)
           .eq("id", activeConversationId)
       }
@@ -729,19 +738,19 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
             "The request took too long and was cancelled. Try a more specific question.",
           )
         : t("dashboard.ask.failed", "Failed to ask question")
-      const failedMessages = optimisticMessages.map((item) =>
-          item.id === assistantMessageId
-            ? {
-                ...item,
-                content: message,
-                isLoading: false,
-              }
-            : item,
-        )
-      if (isMountedRef.current) {
-        setMessages(failedMessages)
-      }
+      const applyError = (item: ChatMessage): ChatMessage =>
+        item.id === assistantMessageId
+          ? {
+              ...item,
+              content: message,
+              isLoading: false,
+            }
+          : item
+      // Same shape as the success path — functional setter for the local
+      // UI, optimisticMessages-derived list for the DB write.
+      setMessages((prev) => prev.map(applyError))
       if (activeConversationId) {
+        const failedMessages = optimisticMessages.map(applyError)
         const supabase = createClient()
         await supabase
           .from("conversations")
@@ -752,9 +761,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
           .eq("id", activeConversationId)
       }
     } finally {
-      if (isMountedRef.current) {
-        setLoading(false)
-      }
+      setLoading(false)
     }
   }
 

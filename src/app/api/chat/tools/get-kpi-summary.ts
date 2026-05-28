@@ -1,5 +1,6 @@
 import { annualizeContractTotal, chunkArray } from "@/lib/reports";
 
+import { drainPages } from "./contract-values";
 import type { ToolHandler } from "./types";
 
 export type GetKpiSummaryInput = {
@@ -113,16 +114,16 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
   if (explicitIds.size > 0) {
     scopedCustomerIds = Array.from(explicitIds);
   } else if (!includeInactive) {
-    const { data, error } = await supabase
-      .from("customers")
-      .select("id")
-      .eq("status", "active");
+    // Paginated: real tenants have >1000 active customers and PostgREST
+    // would silently cap. Truncating the scope here cascades into every
+    // downstream KPI aggregate.
+    const { rows, error } = await drainPages<{ id: string }>(() =>
+      supabase.from("customers").select("id").eq("status", "active"),
+    );
     if (error) {
-      return { error: error.message };
+      return { error };
     }
-    scopedCustomerIds = (
-      (data ?? []) as unknown as Array<{ id: string }>
-    ).map((row) => row.id);
+    scopedCustomerIds = rows.map((row) => row.id);
 
     // Access-restricted detection: the active-customer query returned zero
     // rows even though we asked for a global rollup. In a real Saldo Redo
@@ -367,24 +368,25 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
       idsNeedingFortnoxLookup = scopedCustomerIds;
     } else if (scopedCustomerIds == null) {
       // Caller asked for a global rollup including inactive customers — we
-      // need every customer's fortnox number. Fetch the full list, scoped
-      // by status to match what the KPI rows reflect.
-      const customerListRes = await supabase
-        .from("customers")
-        .select("id, fortnox_customer_number");
-      if (customerListRes.error) {
+      // need every customer's fortnox number. Paginated because a tenant
+      // with >1000 customers would otherwise be silently truncated, which
+      // cascades into a wrong contract_value override.
+      const { rows, error } = await drainPages<{
+        id: string;
+        fortnox_customer_number: string | null;
+      }>(() =>
+        supabase.from("customers").select("id, fortnox_customer_number"),
+      );
+      if (error) {
         // Best-effort: leave contract_value as-is (rollup value) and move
         // on rather than fail the whole call.
         console.error(
           "getKpiSummary: failed to load customers for contract_value override",
-          customerListRes.error,
+          error,
         );
         idsNeedingFortnoxLookup = [];
       } else {
-        for (const row of (customerListRes.data ?? []) as unknown as Array<{
-          id: string;
-          fortnox_customer_number: string | null;
-        }>) {
+        for (const row of rows) {
           customersInScope.set(row.id, {
             id: row.id,
             fortnox_customer_number: row.fortnox_customer_number,
@@ -433,18 +435,25 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
     const annualizedByFortnox = new Map<string, number>();
     if (fortnoxNumbers.length > 0) {
       try {
-        for (const chunk of chunkArray(fortnoxNumbers, CUSTOMER_ID_CHUNK)) {
-          const { data, error } = await supabase
-            .from("contract_accruals")
-            .select("fortnox_customer_number, total_ex_vat, period")
-            .in("fortnox_customer_number", chunk)
-            .eq("is_active", true);
-          if (error) throw new Error(error.message);
-          for (const row of (data ?? []) as unknown as Array<{
+        // Chunked AND paginated. With 5-10 contracts per customer typical,
+        // a chunk of 100 customers can produce >1000 contract rows, and
+        // PostgREST's default cap would silently lose contracts —
+        // undercounting some customers and corrupting the contract_value
+        // override for the whole response.
+        for (const chunk of chunkArray(fortnoxNumbers, 100)) {
+          const { rows, error } = await drainPages<{
             fortnox_customer_number: string | null;
             total_ex_vat: number | null;
             period: string | null;
-          }>) {
+          }>(() =>
+            supabase
+              .from("contract_accruals")
+              .select("fortnox_customer_number, total_ex_vat, period")
+              .in("fortnox_customer_number", chunk)
+              .eq("is_active", true),
+          );
+          if (error) throw new Error(error);
+          for (const row of rows) {
             if (!row.fortnox_customer_number) continue;
             const annualized = annualizeContractTotal(
               row.total_ex_vat,

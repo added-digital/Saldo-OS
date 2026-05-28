@@ -50,9 +50,18 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     description:
       "Return a compact dossier for a single customer: profile fields, the " +
       "latest monthly KPI snapshot (turnover, hours, contract value), the " +
-      "count of active contracts, and recent activities. Use this as the " +
-      "first call for any customer-scoped question — it usually answers " +
-      "'how's customer X doing?' without further tool calls.",
+      "count of active contracts, recent activities, AND the customer's " +
+      "contacts (primary first). Use this as the first call for any " +
+      "customer-scoped question — it usually answers 'how's customer X " +
+      "doing?' and 'vem ska jag kontakta på X?' / 'who do I contact at X?' " +
+      "without further tool calls.\n\n" +
+      "Contact fields:\n" +
+      "  - `primary_contact` → the single flagged primary, or null if none " +
+      "is flagged.\n" +
+      "  - `contacts` → up to 10 contacts (name, first_name, last_name, " +
+      "role, email, phone, linkedin, is_primary, relationship_label), " +
+      "ordered with the primary first. NEVER tell the user to check " +
+      "Fortnox for contact info when these fields are populated.",
     input_schema: {
       type: "object",
       properties: {

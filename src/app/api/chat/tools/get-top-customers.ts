@@ -1,6 +1,9 @@
 import { annualizeContractTotal, chunkArray } from "@/lib/reports";
 
-import { fetchAnnualizedContractValuesByCustomerId } from "./contract-values";
+import {
+  drainPages,
+  fetchAnnualizedContractValuesByCustomerId,
+} from "./contract-values";
 import type { ToolHandler } from "./types";
 
 /**
@@ -706,20 +709,28 @@ async function runContractValuePath(opts: ContractValuePathInput) {
 
   // ---------------------------------------------------------------------------
   // Step 1 — resolve the customer scope (active filter + consultant scope).
+  //
+  // Paginated: real installations have >1000 active customers, which
+  // PostgREST silently caps. Without drainPages the rest of the function
+  // would only see the first 1000, hiding large-contract customers and
+  // making the top-N ranking nonsensical.
   // ---------------------------------------------------------------------------
-  let custQuery = supabase
-    .from("customers")
-    .select("id, name, fortnox_customer_number, fortnox_cost_center, status");
+  const customersResult = await drainPages<CustomerScopeRow>(() => {
+    let q = supabase
+      .from("customers")
+      .select("id, name, fortnox_customer_number, fortnox_cost_center, status");
+    if (activeOnly) q = q.eq("status", "active");
+    if (consultantCustomerIds && consultantCustomerIds.length > 0) {
+      q = q.in("id", consultantCustomerIds);
+    }
+    return q;
+  });
 
-  if (activeOnly) custQuery = custQuery.eq("status", "active");
-  if (consultantCustomerIds && consultantCustomerIds.length > 0) {
-    custQuery = custQuery.in("id", consultantCustomerIds);
+  if (customersResult.error) {
+    return { error: customersResult.error };
   }
 
-  const custRes = await custQuery;
-  if (custRes.error) return { error: custRes.error.message };
-
-  const customers = (custRes.data ?? []) as unknown as CustomerScopeRow[];
+  const customers = customersResult.rows;
   const fortnoxNumbers = customers
     .map((c) => c.fortnox_customer_number)
     .filter((v): v is string => Boolean(v));
@@ -757,18 +768,26 @@ async function runContractValuePath(opts: ContractValuePathInput) {
   // ---------------------------------------------------------------------------
   // Step 2 — fetch active contract accruals for the scoped customers and sum
   // the annualized value per customer.
+  //
+  // Paginated AND chunked. The chunk size is small (100 customers per IN
+  // list) AND each chunk is drained for all pages, because a chunk that
+  // looks small can easily produce >1000 contract rows (5-10 contracts per
+  // customer is common). Without pagination, multi-contract customers had
+  // their totals silently truncated, sending them to the bottom of the
+  // ranking and letting single-contract customers bubble into the top-N.
   // ---------------------------------------------------------------------------
   const sumsByFortnox = new Map<string, number>();
-  for (const chunk of chunkArray(fortnoxNumbers, CUSTOMER_ID_CHUNK)) {
-    const { data, error } = await supabase
-      .from("contract_accruals")
-      .select("fortnox_customer_number, total_ex_vat, period")
-      .in("fortnox_customer_number", chunk)
-      .eq("is_active", true);
+  for (const chunk of chunkArray(fortnoxNumbers, 100)) {
+    const { rows, error } = await drainPages<ContractAccrualRow>(() =>
+      supabase
+        .from("contract_accruals")
+        .select("fortnox_customer_number, total_ex_vat, period")
+        .in("fortnox_customer_number", chunk)
+        .eq("is_active", true),
+    );
+    if (error) return { error };
 
-    if (error) return { error: error.message };
-
-    for (const row of (data ?? []) as unknown as ContractAccrualRow[]) {
+    for (const row of rows) {
       if (!row.fortnox_customer_number) continue;
       const annualized = annualizeContractTotal(row.total_ex_vat, row.period);
       const prev = sumsByFortnox.get(row.fortnox_customer_number) ?? 0;

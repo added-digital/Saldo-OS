@@ -55,36 +55,51 @@ export const getCustomerOverview: ToolHandler<GetCustomerOverviewInput> = async 
   };
   const fortnoxCustomerNumber = customer.fortnox_customer_number;
 
-  const [kpiRes, activitiesRes, contractsRes] = await Promise.all([
-    supabase
-      .from("customer_kpis")
-      .select(
-        "period_type, period_year, period_month, total_turnover, invoice_count, " +
-          "total_hours, customer_hours, absence_hours, internal_hours, " +
-          "other_hours, contract_value",
-      )
-      .eq("customer_id", customerId)
-      .eq("period_type", "month")
-      .order("period_year", { ascending: false })
-      .order("period_month", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from("customer_activities")
-      .select("id, activity_type, date, description, created_at")
-      .eq("customer_id", customerId)
-      .order("date", { ascending: false })
-      .limit(5),
-    fortnoxCustomerNumber
-      ? supabase
-          .from("contract_accruals")
-          .select("id, contract_number, total_ex_vat, period, end_date", {
-            count: "exact",
-          })
-          .eq("is_active", true)
-          .eq("fortnox_customer_number", fortnoxCustomerNumber)
-      : Promise.resolve({ data: [], count: 0, error: null }),
-  ]);
+  const [kpiRes, activitiesRes, contractsRes, contactLinksRes] =
+    await Promise.all([
+      supabase
+        .from("customer_kpis")
+        .select(
+          "period_type, period_year, period_month, total_turnover, invoice_count, " +
+            "total_hours, customer_hours, absence_hours, internal_hours, " +
+            "other_hours, contract_value",
+        )
+        .eq("customer_id", customerId)
+        .eq("period_type", "month")
+        .order("period_year", { ascending: false })
+        .order("period_month", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("customer_activities")
+        .select("id, activity_type, date, description, created_at")
+        .eq("customer_id", customerId)
+        .order("date", { ascending: false })
+        .limit(5),
+      fortnoxCustomerNumber
+        ? supabase
+            .from("contract_accruals")
+            .select("id, contract_number, total_ex_vat, period, end_date", {
+              count: "exact",
+            })
+            .eq("is_active", true)
+            .eq("fortnox_customer_number", fortnoxCustomerNumber)
+        : Promise.resolve({ data: [], count: 0, error: null }),
+      // Contacts via the link table. Order primary first so the model can
+      // grab `primary_contact` from index 0 (with an explicit primary_contact
+      // field also surfaced below for clarity).
+      supabase
+        .from("customer_contact_links")
+        .select(
+          "is_primary, relationship_label, " +
+            "contact:customer_contacts ( " +
+            "id, name, first_name, last_name, role, email, phone, linkedin " +
+            ")",
+        )
+        .eq("customer_id", customerId)
+        .order("is_primary", { ascending: false })
+        .limit(10),
+    ]);
 
   // Replace the rollup-sourced contract_value on `customer` (denormalized
   // column populated by the broken sync) with the annualized truth from
@@ -130,11 +145,51 @@ export const getCustomerOverview: ToolHandler<GetCustomerOverviewInput> = async 
     annualized_value_unit: "SEK/år",
   }));
 
+  // Contacts: flatten the link rows to plain contact records, carry the
+  // is_primary flag and relationship_label through, and surface the first
+  // primary as a dedicated field so the model can answer "vem ska jag
+  // kontakta på [kund]" without re-scanning the array.
+  type ContactRecord = {
+    id: string;
+    name: string;
+    first_name: string | null;
+    last_name: string | null;
+    role: string | null;
+    email: string | null;
+    phone: string | null;
+    linkedin: string | null;
+  };
+  type ContactLinkRow = {
+    is_primary: boolean | null;
+    relationship_label: string | null;
+    contact: ContactRecord | ContactRecord[] | null;
+  };
+
+  const contacts = ((contactLinksRes.data ?? []) as unknown as ContactLinkRow[])
+    .map((link) => {
+      // PostgREST returns embedded resources as a single object for many-
+      // to-one joins and as an array otherwise. Normalize to one record.
+      const contactRecord = Array.isArray(link.contact)
+        ? link.contact[0] ?? null
+        : link.contact;
+      if (!contactRecord) return null;
+      return {
+        ...contactRecord,
+        is_primary: Boolean(link.is_primary),
+        relationship_label: link.relationship_label,
+      };
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+
+  const primaryContact = contacts.find((c) => c.is_primary) ?? null;
+
   return {
     customer: customerWithTruth,
     latest_monthly_kpi: latestMonthlyKpi,
     active_contract_count: contractsRes.count ?? (contractsRes.data?.length ?? 0),
     active_contracts_sample: contractsSample,
     recent_activities: activitiesRes.data ?? [],
+    primary_contact: primaryContact,
+    contacts,
   };
 };
