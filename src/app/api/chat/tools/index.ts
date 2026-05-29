@@ -3,6 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { getConsultantCustomers } from "./get-consultant-customers";
 import { getCostCenterDetails } from "./get-cost-center-details";
 import { getCustomerOverview } from "./get-customer-overview";
+import { getConsultantPersonalHours } from "./get-consultant-personal-hours";
 import { getKpiByConsultant } from "./get-kpi-by-consultant";
 import { getKpiSummary } from "./get-kpi-summary";
 import { getTopCustomers } from "./get-top-customers";
@@ -141,13 +142,24 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: "get_kpi_by_consultant",
     description:
-      "Aggregates KPI numbers (turnover, invoice count, hours, contract " +
-      "value) PER CONSULTANT for a given period. Reads from the same " +
-      "customer_kpis rollup as get_kpi_summary, but groups results by the " +
-      "consultant who owns each customer (via fortnox_cost_center match). " +
-      "Use this for ranking-type questions: 'which consultant invoiced " +
-      "most last month', 'top 5 consultants by hours this year', 'rank " +
-      "the team by turnover'. Do NOT chain resolve_consultant + " +
+      "PORTFOLIO-scoped KPIs per consultant — turnover, invoice count, hours " +
+      "and contract value summed across every customer assigned to the " +
+      "consultant's Fortnox cost center.\n\n" +
+      "Important field-level interpretation:\n" +
+      "  • REVENUE (total_turnover, invoice_count, contract_value) IS the " +
+      "    consultant's production. In a customer-manager model the " +
+      "    consultant owns the customer relationship — their portfolio's " +
+      "    invoiced revenue IS their personal output. There is no separate " +
+      "    per-consultant revenue source. Label as 'omsättning' / " +
+      "    'avtalsvärde'. DO NOT caveat as 'not personal production'.\n" +
+      "  • HOURS (total_hours, customer_hours) here are time LOGGED ON THE " +
+      "    CONSULTANT'S CUSTOMERS by anyone in the firm — NOT the " +
+      "    consultant's own time reports. If the user wants the " +
+      "    consultant's personally-reported hours, use " +
+      "    get_consultant_personal_hours instead.\n\n" +
+      "Use for portfolio-ranking questions: 'which consultant's portfolio " +
+      "invoiced most', 'top 5 consultants by avtalsvärde', 'rank the team " +
+      "by turnover'. Do NOT chain resolve_consultant + " +
       "get_consultant_customers + get_kpi_summary in a loop — this tool " +
       "does the whole thing in one call.\n\n" +
       "Note on shared cost centers: if multiple consultants share a Fortnox " +
@@ -201,6 +213,75 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
             "customer_hours",
             "contract_value",
             "customer_count",
+          ],
+        },
+      },
+      required: ["year"],
+    },
+  },
+  {
+    name: "get_consultant_personal_hours",
+    description:
+      "PERSONAL hours per consultant — the actually-reported time from " +
+      "manager_time_kpis. This is what each consultant logged in Fortnox " +
+      "during the period (customer/absence/internal/other), NOT a sum of " +
+      "their portfolio's activity.\n\n" +
+      "Use for personal-time questions: 'Hur många timmar har Klara " +
+      "jobbat i år?', 'top 10 by personal hours', 'compare Klara's logged " +
+      "hours to Derya's', 'hours X reported this month'.\n\n" +
+      "Revenue is NOT here — per-consultant revenue does not exist as a " +
+      "separate source. For revenue use get_kpi_by_consultant; that figure " +
+      "IS the consultant's production via customer-manager ownership.\n\n" +
+      "Label results as 'rapporterade timmar' / 'personliga timmar' / " +
+      "'egen tid'. If the user's question is ambiguous between portfolio " +
+      "hours and personal hours, ASK before picking.",
+    input_schema: {
+      type: "object",
+      properties: {
+        year: {
+          type: "integer",
+          description: "Period year (e.g. 2026).",
+          minimum: 2000,
+          maximum: 3000,
+        },
+        month: {
+          type: "integer",
+          description:
+            "Optional period month (1-12). Omit for full-year aggregation.",
+          minimum: 1,
+          maximum: 12,
+        },
+        active_consultants_only: {
+          type: "boolean",
+          description:
+            "If true (default), only consultants with profiles.is_active=true " +
+            "are included.",
+        },
+        consultant_ids: {
+          type: "array",
+          description:
+            "Optional list of consultant profile UUIDs (from " +
+            "resolve_consultant). Omit to return all consultants the caller " +
+            "can see.",
+          items: { type: "string" },
+        },
+        limit: {
+          type: "integer",
+          description:
+            "Cap on consultants returned (top-N after sorting). Default 30, " +
+            "max 200.",
+          minimum: 1,
+          maximum: 200,
+        },
+        sort_by: {
+          type: "string",
+          description: "Field to sort by, descending. Default total_hours.",
+          enum: [
+            "total_hours",
+            "customer_hours",
+            "absence_hours",
+            "internal_hours",
+            "other_hours",
           ],
         },
       },
@@ -508,6 +589,7 @@ const HANDLERS: Record<string, AnyToolHandler> = {
   get_customer_overview: getCustomerOverview as AnyToolHandler,
   get_kpi_summary: getKpiSummary as AnyToolHandler,
   get_kpi_by_consultant: getKpiByConsultant as AnyToolHandler,
+  get_consultant_personal_hours: getConsultantPersonalHours as AnyToolHandler,
   get_top_customers: getTopCustomers as AnyToolHandler,
   search_invoices: searchInvoices as AnyToolHandler,
   list_cost_centers: listCostCenters as AnyToolHandler,

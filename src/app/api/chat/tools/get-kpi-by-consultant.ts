@@ -537,6 +537,28 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
       : undefined;
 
   return {
+    data_scope: "portfolio" as const,
+    data_scope_note:
+      "PORTFOLIO-scoped via Fortnox cost center. Each consultant's row sums " +
+      "every customer assigned to their cost center.\n\n" +
+      "Field-by-field interpretation — read carefully, this is where the AI " +
+      "tends to over-caveat:\n" +
+      "  • total_turnover, invoice_count, contract_value → These ARE the " +
+      "    consultant's production. In a customer-manager model, the " +
+      "    consultant owns the customer relationship, so the customers' " +
+      "    invoiced revenue IS the consultant's revenue. There is no " +
+      "    separate per-consultant revenue source in the data model. " +
+      "    Label simply as 'omsättning' / 'avtalsvärde' (you can add " +
+      "    'portfolio' for context). DO NOT say things like 'this is not " +
+      "    their personal production' — that's misleading. Their portfolio " +
+      "    revenue IS their production.\n" +
+      "  • total_hours, customer_hours → These are hours LOGGED ON THE " +
+      "    CONSULTANT'S CUSTOMERS by anyone in the firm, NOT the " +
+      "    consultant's own time reports. Hours is the ONE field where " +
+      "    portfolio and personal genuinely differ. If the user asks how " +
+      "    many hours the consultant has worked, call " +
+      "    get_consultant_personal_hours instead — that reads " +
+      "    manager_time_kpis (their actual Fortnox time reports).",
     period: {
       year,
       month: month ?? null,
@@ -561,6 +583,12 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
     ...(compactedNotes ? { _compacted: compactedNotes } : {}),
     totals: grandTotals,
     notes: [
+      "Revenue fields (total_turnover, invoice_count, contract_value) ARE " +
+        "the consultant's production via customer-manager ownership. Don't " +
+        "caveat them as 'not personal' — there is no other revenue source.",
+      "Hours fields are portfolio hours (time logged on the consultant's " +
+        "customers, by anyone). For the consultant's own logged time, use " +
+        "get_consultant_personal_hours.",
       "When `shared_cost_center` is true on a consultant, multiple " +
         "consultants share that Fortnox cost center; their totals overlap " +
         "(the same KPI rows are attributed to each). Be explicit about this " +
