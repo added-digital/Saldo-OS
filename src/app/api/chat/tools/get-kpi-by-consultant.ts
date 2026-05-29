@@ -537,6 +537,15 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
       : undefined;
 
   return {
+    data_scope: "portfolio" as const,
+    data_scope_note:
+      "PORTFOLIO numbers, NOT personal. Each consultant's row is the sum of " +
+      "every customer assigned to their Fortnox cost center — i.e. how their " +
+      "portfolio performed, not how many hours they personally logged or " +
+      "how much they personally invoiced. When answering, always label the " +
+      "figures as portfolio (sv: 'portfölj-omsättning', 'portfölj-timmar'). " +
+      "If the user wants the consultant's PERSONAL hours, use " +
+      "get_consultant_personal_hours instead.",
     period: {
       year,
       month: month ?? null,
@@ -561,11 +570,15 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
     ...(compactedNotes ? { _compacted: compactedNotes } : {}),
     totals: grandTotals,
     notes: [
+      "data_scope=portfolio — totals reflect the customers under each " +
+        "consultant's cost center, NOT the consultant's personal time " +
+        "reports or personal billable output. Always tell the user which " +
+        "scope you're reporting on.",
       "When `shared_cost_center` is true on a consultant, multiple " +
         "consultants share that Fortnox cost center; their totals overlap " +
         "(the same KPI rows are attributed to each). Be explicit about this " +
         "in answers when summing across consultants.",
     ],
-    source: "customer_kpis rollup for turnover/hours/invoice_count (matches reports dashboard); contract_value overlaid from contract_accruals (annualized, SEK/år).",
+    source: "customer_kpis rollup for turnover/hours/invoice_count (matches reports dashboard); contract_value overlaid from contract_accruals (annualized, SEK/år). Numbers are portfolio-scoped via fortnox_cost_center.",
   };
 };
