@@ -69,7 +69,7 @@ export function SieSyncCard() {
         | { ok: false; error: string; message?: string }
 
       if (data.ok) {
-        const { total, success, failure } = data.summary
+        const { total, success, failure, duration_ms } = data.summary
         // Dynamic count messages are admin-only operational feedback —
         // they stay in English regardless of UI language. Keeping i18n
         // for static labels only avoids the awkward "translate this
@@ -83,6 +83,32 @@ export function SieSyncCard() {
             `${stem} ${success}/${total} — ${failure} ${failedLabel}`,
           )
         }
+
+        // Log the manual run into sync_jobs so it shows up alongside the
+        // dispatcher-triggered rows on the Recent Sync Jobs list. We mark
+        // it 'completed' immediately because the work has already happened
+        // in the direct API call above — no edge function involved.
+        const supabase = createClient()
+        await supabase.from("sync_jobs").insert({
+          status: "completed",
+          progress: 100,
+          current_step:
+            failure === 0
+              ? `Synced ${success}/${total} customers`
+              : `Synced ${success}/${total} customers (${failure} failed)`,
+          total_items: total,
+          processed_items: success,
+          step_name: "sie",
+          batch_phase: null,
+          batch_offset: 0,
+          dispatch_lock: false,
+          payload: {
+            step_name: "sie",
+            step_label: "SIE Bookkeeping",
+            triggered_by: "manual",
+            summary: { total, success, failure, duration_ms },
+          },
+        } as never)
       } else {
         toast.error(
           data.message ??
@@ -114,10 +140,8 @@ export function SieSyncCard() {
         )
 
   const syncButtonLabel = (() => {
-    if (syncing) return t("settings.sync.sie.syncing", "Syncing…")
-    const label = t("settings.sync.sie.syncAll", "Sync all connected")
-    if (activeCount && activeCount > 0) return `${label} (${activeCount})`
-    return label
+    if (syncing) return t("common.running", "Running")
+    return t("common.run", "Run")
   })()
 
   return (
@@ -208,7 +232,7 @@ export function SieKpisCard() {
         | { ok: false; error: string; message?: string }
 
       if (data.ok) {
-        const { total, success, failure } = data.summary
+        const { total, success, failure, duration_ms } = data.summary
         const stem = t("settings.sync.sieKpis.generatedStem", "Generated")
         if (failure === 0) {
           toast.success(`${stem} ${success}/${total}`)
@@ -218,6 +242,30 @@ export function SieKpisCard() {
             `${stem} ${success}/${total} — ${failure} ${failedLabel}`,
           )
         }
+
+        // Mirror the manual run into sync_jobs so the Recent Sync Jobs list
+        // shows it like every other completed step.
+        const supabase = createClient()
+        await supabase.from("sync_jobs").insert({
+          status: "completed",
+          progress: 100,
+          current_step:
+            failure === 0
+              ? `Computed KPIs for ${success}/${total} customer-years`
+              : `Computed KPIs for ${success}/${total} customer-years (${failure} failed)`,
+          total_items: total,
+          processed_items: success,
+          step_name: "sie-kpis",
+          batch_phase: null,
+          batch_offset: 0,
+          dispatch_lock: false,
+          payload: {
+            step_name: "sie-kpis",
+            step_label: "SIE Nyckeltal",
+            triggered_by: "manual",
+            summary: { total, success, failure, duration_ms },
+          },
+        } as never)
       } else {
         toast.error(
           data.message ??
@@ -247,10 +295,8 @@ export function SieKpisCard() {
         )
 
   const generateButtonLabel = (() => {
-    if (generating) return t("settings.sync.sieKpis.generating", "Generating…")
-    const label = t("settings.sync.sieKpis.generateAll", "Generate KPIs")
-    if (importCount && importCount > 0) return `${label} (${importCount})`
-    return label
+    if (generating) return t("common.running", "Running")
+    return t("common.run", "Run")
   })()
 
   return (
