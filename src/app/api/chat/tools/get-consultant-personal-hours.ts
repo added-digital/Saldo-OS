@@ -10,13 +10,17 @@ import type { ToolHandler } from "./types";
  *   get_kpi_by_consultant         → PORTFOLIO data (customers under the
  *                                   consultant's cost center). Revenue +
  *                                   contracts + the hours that customers
- *                                   accrued, regardless of who logged them.
+ *                                   accrued (= time logged on their
+ *                                   customers, by anyone in the firm).
  *
  *   get_consultant_personal_hours → PERSONAL data (the hours each
  *                                   consultant has actually reported in
  *                                   Fortnox during the period). Revenue is
- *                                   intentionally NOT here — we don't have
- *                                   per-consultant revenue attribution.
+ *                                   intentionally NOT here — per-consultant
+ *                                   revenue does not exist as a separate
+ *                                   data source; for revenue the portfolio
+ *                                   figure IS the consultant's production
+ *                                   via customer-manager ownership.
  *
  * Storage: `manager_time_kpis` is keyed by
  * (manager_profile_id, customer_manager_profile_id, period_year, period_month)
@@ -28,9 +32,6 @@ import type { ToolHandler } from "./types";
  *   - "Hur många timmar har Klara jobbat hittills?"
  *   - "Top 10 by personal hours this year"
  *   - "Compare Klara's logged hours to Derya's"
- *
- * Do NOT use for revenue rankings — fall back to get_kpi_by_consultant for
- * those, but call out that the figure is portfolio, not personal output.
  */
 
 export type GetConsultantPersonalHoursInput = {
@@ -170,18 +171,12 @@ export const getConsultantPersonalHours: ToolHandler<
 
   // -------------------------------------------------------------------------
   // 2. Load manager_time_kpis rows for the period.
-  //
-  // RLS already scopes by `has_scope('customers')`; the per-row filter just
-  // narrows to in-scope consultants so the in-memory aggregation stays tight.
   // -------------------------------------------------------------------------
   let kpiQuery = supabase
     .from("manager_time_kpis")
     .select(HOUR_COLUMNS)
     .eq("period_year", year)
-    .in(
-      "manager_profile_id",
-      Array.from(profileById.keys()),
-    );
+    .in("manager_profile_id", Array.from(profileById.keys()));
   if (month != null) kpiQuery = kpiQuery.eq("period_month", month);
 
   const kpiRes = await kpiQuery;
@@ -191,9 +186,7 @@ export const getConsultantPersonalHours: ToolHandler<
   const rows = (kpiRes.data ?? []) as unknown as ManagerKpiRow[];
 
   // -------------------------------------------------------------------------
-  // 3. Aggregate per consultant. Sum every customer-manager bucket so the
-  // result is "Klara's total hours in March" regardless of which customer-
-  // manager's customers she logged against.
+  // 3. Aggregate per consultant.
   // -------------------------------------------------------------------------
   type Bucket = {
     consultant_id: string;
@@ -266,9 +259,9 @@ export const getConsultantPersonalHours: ToolHandler<
     data_scope_note:
       "PERSONAL hours — what each consultant actually reported in Fortnox " +
       "during the period. NOT a sum of their portfolio. Revenue is not " +
-      "available here (no per-consultant revenue attribution exists). For " +
-      "portfolio numbers (turnover, contract value, etc.) use " +
-      "get_kpi_by_consultant.",
+      "available here (no separate per-consultant revenue source exists — " +
+      "for revenue, get_kpi_by_consultant IS the consultant's production " +
+      "via customer-manager ownership).",
     period: {
       year,
       month: month ?? null,
@@ -292,8 +285,8 @@ export const getConsultantPersonalHours: ToolHandler<
     totals: grandTotals,
     notes: [
       "data_scope=personal — hours come from manager_time_kpis (per-" +
-        "consultant time reports). When answering, label these as 'personal' " +
-        "/ 'rapporterade timmar', not portfolio hours.",
+        "consultant time reports). Label as 'personal' / 'rapporterade " +
+        "timmar'.",
       "Hour buckets: customer_hours = billable customer time, " +
         "absence_hours = vacation/sick/parental, internal_hours = time " +
         "logged against the firm's own internal customer, other_hours = " +

@@ -539,13 +539,26 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
   return {
     data_scope: "portfolio" as const,
     data_scope_note:
-      "PORTFOLIO numbers, NOT personal. Each consultant's row is the sum of " +
-      "every customer assigned to their Fortnox cost center — i.e. how their " +
-      "portfolio performed, not how many hours they personally logged or " +
-      "how much they personally invoiced. When answering, always label the " +
-      "figures as portfolio (sv: 'portfölj-omsättning', 'portfölj-timmar'). " +
-      "If the user wants the consultant's PERSONAL hours, use " +
-      "get_consultant_personal_hours instead.",
+      "PORTFOLIO-scoped via Fortnox cost center. Each consultant's row sums " +
+      "every customer assigned to their cost center.\n\n" +
+      "Field-by-field interpretation — read carefully, this is where the AI " +
+      "tends to over-caveat:\n" +
+      "  • total_turnover, invoice_count, contract_value → These ARE the " +
+      "    consultant's production. In a customer-manager model, the " +
+      "    consultant owns the customer relationship, so the customers' " +
+      "    invoiced revenue IS the consultant's revenue. There is no " +
+      "    separate per-consultant revenue source in the data model. " +
+      "    Label simply as 'omsättning' / 'avtalsvärde' (you can add " +
+      "    'portfolio' for context). DO NOT say things like 'this is not " +
+      "    their personal production' — that's misleading. Their portfolio " +
+      "    revenue IS their production.\n" +
+      "  • total_hours, customer_hours → These are hours LOGGED ON THE " +
+      "    CONSULTANT'S CUSTOMERS by anyone in the firm, NOT the " +
+      "    consultant's own time reports. Hours is the ONE field where " +
+      "    portfolio and personal genuinely differ. If the user asks how " +
+      "    many hours the consultant has worked, call " +
+      "    get_consultant_personal_hours instead — that reads " +
+      "    manager_time_kpis (their actual Fortnox time reports).",
     period: {
       year,
       month: month ?? null,
@@ -570,15 +583,17 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
     ...(compactedNotes ? { _compacted: compactedNotes } : {}),
     totals: grandTotals,
     notes: [
-      "data_scope=portfolio — totals reflect the customers under each " +
-        "consultant's cost center, NOT the consultant's personal time " +
-        "reports or personal billable output. Always tell the user which " +
-        "scope you're reporting on.",
+      "Revenue fields (total_turnover, invoice_count, contract_value) ARE " +
+        "the consultant's production via customer-manager ownership. Don't " +
+        "caveat them as 'not personal' — there is no other revenue source.",
+      "Hours fields are portfolio hours (time logged on the consultant's " +
+        "customers, by anyone). For the consultant's own logged time, use " +
+        "get_consultant_personal_hours.",
       "When `shared_cost_center` is true on a consultant, multiple " +
         "consultants share that Fortnox cost center; their totals overlap " +
         "(the same KPI rows are attributed to each). Be explicit about this " +
         "in answers when summing across consultants.",
     ],
-    source: "customer_kpis rollup for turnover/hours/invoice_count (matches reports dashboard); contract_value overlaid from contract_accruals (annualized, SEK/år). Numbers are portfolio-scoped via fortnox_cost_center.",
+    source: "customer_kpis rollup for turnover/hours/invoice_count (matches reports dashboard); contract_value overlaid from contract_accruals (annualized, SEK/år).",
   };
 };
