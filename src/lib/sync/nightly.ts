@@ -7,7 +7,17 @@ type NightlySyncStep =
   | "contracts"
   | "articles"
   | "generate-kpis"
+  | "sie"
+  | "sie-kpis"
 
+// Keep in sync with enqueue_nightly_sync_chain() in
+// supabase/migrations/00060_nightly_chain_with_sie.sql. The SQL function is
+// what actually runs in production (pg_cron); this array exists for the
+// alternate /api/sync/nightly fallback path and for any UI code that wants
+// to know the canonical chain order.
+//
+// SIE steps run last so a per-customer SIE failure never blocks the
+// firm-wide steps that the rest of the app depends on.
 const NIGHTLY_SYNC_STEPS: NightlySyncStep[] = [
   "customers",
   "invoices",
@@ -15,6 +25,8 @@ const NIGHTLY_SYNC_STEPS: NightlySyncStep[] = [
   "contracts",
   "articles",
   "generate-kpis",
+  "sie",
+  "sie-kpis",
 ]
 
 const STEP_LABELS: Record<NightlySyncStep, string> = {
@@ -24,6 +36,8 @@ const STEP_LABELS: Record<NightlySyncStep, string> = {
   contracts: "Contracts",
   articles: "Articles",
   "generate-kpis": "Generate KPIs",
+  sie: "SIE Bookkeeping",
+  "sie-kpis": "SIE Nyckeltal",
 }
 
 function getStockholmClock(now: Date) {

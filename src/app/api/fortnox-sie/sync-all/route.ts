@@ -36,31 +36,50 @@ interface PerCustomerResult {
  * Returns a per-customer breakdown and a top-line summary so the UI can show
  * "Synced N/M customers (K failed)" in a toast.
  */
+/**
+ * Returns true if the request carries a valid CRON_SECRET bearer token.
+ *
+ * The nightly chain calls this endpoint via the sync-sie Edge Function, which
+ * authenticates with the same CRON_SECRET used by `/api/sync/nightly`. Admin
+ * cookies aren't available in that context, so this is the only safe escape
+ * hatch from the admin gate below. If CRON_SECRET is unset we treat all such
+ * calls as unauthorized to avoid accidentally opening the endpoint in prod.
+ */
+function isCronCall(request: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret) return false;
+  return request.headers.get("authorization") === `Bearer ${secret}`;
+}
+
 export async function POST(request: NextRequest) {
   // -------------------------------------------------------------------------
-  // 1. Admin gate.
+  // 1. Admin gate. Cron callers (nightly chain → sync-sie Edge Function)
+  //    bypass cookie auth via CRON_SECRET; everyone else needs an admin
+  //    profile in Supabase.
   // -------------------------------------------------------------------------
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json(
-      { ok: false, error: "unauthorized" },
-      { status: 401 },
-    );
-  }
-  const { data: profileData } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  const profile = profileData as { role?: string | null } | null;
-  if (profile?.role !== "admin") {
-    return NextResponse.json(
-      { ok: false, error: "forbidden" },
-      { status: 403 },
-    );
+  if (!isCronCall(request)) {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, error: "unauthorized" },
+        { status: 401 },
+      );
+    }
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const profile = profileData as { role?: string | null } | null;
+    if (profile?.role !== "admin") {
+      return NextResponse.json(
+        { ok: false, error: "forbidden" },
+        { status: 403 },
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
