@@ -47,17 +47,8 @@ interface PerCustomerResult {
  */
 function isCronCall(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET?.trim();
-  const authHeader = request.headers.get("authorization");
-  // TEMPORARY DEBUG — remove once cron auth is confirmed working.
-  // Logs only lengths and a 4-char prefix so the secret itself never appears
-  // in logs. If you see CRON_SECRET length 0, the env var isn't reaching the
-  // runtime. If both prefixes match but lengths differ, there's a whitespace
-  // or quoting issue.
-  console.log(
-    `[sync-all cron check] CRON_SECRET length=${secret?.length ?? 0} prefix=${(secret ?? "").slice(0, 4)} | auth header present=${Boolean(authHeader)} prefix=${(authHeader ?? "").slice(0, 11)}`,
-  );
   if (!secret) return false;
-  return authHeader === `Bearer ${secret}`;
+  return request.headers.get("authorization") === `Bearer ${secret}`;
 }
 
 export async function POST(request: NextRequest) {
