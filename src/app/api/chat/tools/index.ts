@@ -547,15 +547,29 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: "search_documents",
     description:
-      "Vector search over the firm's uploaded documents (service " +
-      "descriptions, contracts, notes, internal policies, attachments). " +
-      "Returns the top matching chunks with file_name, document_type, " +
-      "similarity score and an excerpt. Use this for questions about " +
-      "services, offerings, packages, internal processes, or anything " +
-      "where the answer lives in a document rather than in the structured " +
-      "CRM tables. Combine with CRM tools when the answer needs both " +
-      "(e.g. 'what does our standard accounting service include for " +
-      "[customer]?').",
+      "Vector search over the firm's uploaded documents — INCLUDING the " +
+      "personnel policy / handbook, service descriptions, contracts, " +
+      "internal notes, processes and any other PDF/DOCX uploaded by " +
+      "admins.\n\n" +
+      "CALL THIS for any question about:\n" +
+      "  • Workplace / HR / office-life topics — food, snacks, allergies, " +
+      "    alcohol, dress code, conduct, remote work, leave, vacation, " +
+      "    parental leave, holidays, perks, expenses, travel, working " +
+      "    hours, social events. Even casual phrasings ('Får jag äta nötter " +
+      "    på kontoret', 'vad ska jag ha på mig', 'hur funkar semester') " +
+      "    map to this tool — Saldo's handbook covers them.\n" +
+      "  • Services, offerings, packages, internal processes, company " +
+      "    info.\n" +
+      "  • Anything where the answer might live in an uploaded document " +
+      "    rather than the structured CRM tables.\n\n" +
+      "Returns top matching chunks with file_name, document_type, " +
+      "similarity score and an excerpt. If the top chunks have low " +
+      "similarity or unrelated content, the handbook genuinely doesn't " +
+      "cover the topic — say so and suggest asking a manager or HR. Do NOT " +
+      "skip calling this tool just because you suspect the topic isn't in " +
+      "the docs; you don't know until you search.\n\n" +
+      "Combine with CRM tools when the answer needs both (e.g. 'what does " +
+      "our standard accounting service include for [customer]?').",
     input_schema: {
       type: "object",
       properties: {
