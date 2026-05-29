@@ -46,32 +46,46 @@ interface PerCustomerResult {
   error_message: string | null;
 }
 
+/**
+ * Returns true if the request carries a valid CRON_SECRET bearer token. The
+ * sync-sie-kpis Edge Function (invoked by the nightly chain dispatcher) uses
+ * this to skip the admin-cookie check below.
+ */
+function isCronCall(request: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret) return false;
+  return request.headers.get("authorization") === `Bearer ${secret}`;
+}
+
 export async function POST(request: NextRequest) {
   // -------------------------------------------------------------------------
-  // 1. Admin gate. Match the rest of the SIE pipeline — only admins can
-  //    trigger a recompute, since the underlying data is restricted.
+  // 1. Admin gate. Cron callers (nightly chain → sync-sie-kpis Edge Function)
+  //    bypass cookie auth via CRON_SECRET; everyone else needs an admin
+  //    profile.
   // -------------------------------------------------------------------------
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json(
-      { ok: false, error: "unauthorized" },
-      { status: 401 },
-    );
-  }
-  const { data: profileData } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  const profile = profileData as { role?: string | null } | null;
-  if (profile?.role !== "admin") {
-    return NextResponse.json(
-      { ok: false, error: "forbidden" },
-      { status: 403 },
-    );
+  if (!isCronCall(request)) {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, error: "unauthorized" },
+        { status: 401 },
+      );
+    }
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const profile = profileData as { role?: string | null } | null;
+    if (profile?.role !== "admin") {
+      return NextResponse.json(
+        { ok: false, error: "forbidden" },
+        { status: 403 },
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
