@@ -497,7 +497,24 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
 
   // -------------------------------------------------------------------------
   // 5. Build, sort, slice
+  //
+  // Hour fields are renamed in the OUTPUT (total_hours → portfolio_total_hours,
+  // customer_hours → portfolio_customer_hours) so the AI cannot accidentally
+  // emit a bare "Timmar" column header — the only natural translation is
+  // "Portfölj-timmar". Sort still operates on internal field names; we map
+  // the AI-facing enum to internal names before sorting.
   // -------------------------------------------------------------------------
+  const renamePortfolioTotals = (t: ReturnType<typeof ZERO_TOTALS>) => ({
+    total_turnover: t.total_turnover,
+    invoice_count: t.invoice_count,
+    portfolio_total_hours: t.total_hours,
+    portfolio_customer_hours: t.customer_hours,
+    portfolio_absence_hours: t.absence_hours,
+    portfolio_internal_hours: t.internal_hours,
+    portfolio_other_hours: t.other_hours,
+    contract_value: t.contract_value,
+  });
+
   let consultantList = Array.from(buckets.values()).map((bucket) => ({
     consultant_id: bucket.consultant_id,
     name: bucket.name,
@@ -507,15 +524,21 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
     fortnox_cost_center: bucket.fortnox_cost_center,
     shared_cost_center: bucket.shared_cost_center,
     customer_count: bucket.customer_ids.size,
-    totals: bucket.totals,
+    totals: renamePortfolioTotals(bucket.totals),
+    // Keep raw internal totals on a non-output key so the sort comparator
+    // can still reach them after the rename. Stripped before final response.
+    _internal_totals: bucket.totals,
   }));
 
   consultantList.sort((a, b) => {
     if (sortBy === "customer_count") {
       return b.customer_count - a.customer_count;
     }
-    return b.totals[sortBy] - a.totals[sortBy];
+    return b._internal_totals[sortBy] - a._internal_totals[sortBy];
   });
+
+  // Drop the internal-only sort helper now that ordering is fixed.
+  consultantList = consultantList.map(({ _internal_totals: _, ...rest }) => rest) as typeof consultantList;
 
   const totalConsultants = consultantList.length;
   if (consultantList.length > limit) {
@@ -581,13 +604,17 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
     },
     consultants: consultantList,
     ...(compactedNotes ? { _compacted: compactedNotes } : {}),
-    totals: grandTotals,
+    totals: renamePortfolioTotals(grandTotals),
     notes: [
       "Revenue fields (total_turnover, invoice_count, contract_value) ARE " +
         "the consultant's production via customer-manager ownership. Don't " +
         "caveat them as 'not personal' — there is no other revenue source.",
-      "Hours fields are portfolio hours (time logged on the consultant's " +
-        "customers, by anyone). For the consultant's own logged time, use " +
+      "Hour fields are PREFIXED 'portfolio_' (portfolio_total_hours, " +
+        "portfolio_customer_hours, …) because they represent time logged on " +
+        "the consultant's customers BY ANYONE, not the consultant's own " +
+        "Fortnox time reports. In tables/columns these MUST be labelled " +
+        "'Portfölj-timmar' / 'Portfolio hours' / 'Kundtid' — never a bare " +
+        "'Timmar' or 'Hours'. For the consultant's own logged time, call " +
         "get_consultant_personal_hours.",
       "When `shared_cost_center` is true on a consultant, multiple " +
         "consultants share that Fortnox cost center; their totals overlap " +
