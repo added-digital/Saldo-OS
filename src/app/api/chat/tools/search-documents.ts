@@ -174,8 +174,14 @@ export const searchDocuments: ToolHandler<SearchDocumentsInput> = async (
   // Tier 1 — search_chunks RPC
   // ---------------------------------------------------------------------------
   try {
+    // Pass the vector literal as-is. The previous `${vectorString}::vector`
+    // wrapped the cast INSIDE the RPC parameter value, so Postgres received
+    // a string like `[0.019,...,0.020]::vector` and tried to parse the whole
+    // thing as a vector literal — choking on the `::vector` text after the
+    // closing brace ("22P02 invalid input syntax for type vector"). The cast
+    // belongs in the SQL function signature, not the parameter.
     const { data, error } = await adminClient.rpc("search_chunks" as never, {
-      query_embedding: `${vectorString}::vector`,
+      query_embedding: vectorString,
       match_count: matchCount,
     } as never);
 

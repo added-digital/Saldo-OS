@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
+import { getChurnAnalysis } from "./get-churn-analysis";
 import { getConsultantCustomers } from "./get-consultant-customers";
 import { getCostCenterDetails } from "./get-cost-center-details";
 import { getCustomerOverview } from "./get-customer-overview";
@@ -545,6 +546,65 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "get_churn_analysis",
+    description:
+      "Customer churn / retention / new-customer analysis between two date " +
+      "windows, computed entirely in the database. ALWAYS use this for any " +
+      "churn, retention, or new-customer question ('what's our churn rate?', " +
+      "'kundtapp senaste året', 'how many customers did we lose/gain?', " +
+      "'retention rate', 'churn vs last year').\n\n" +
+      "Pass FOUR dates defining two windows:\n" +
+      "  • period1 = the EARLIER / baseline window (period1_start, " +
+      "period1_end).\n" +
+      "  • period2 = the LATER / comparison window (period2_start, " +
+      "period2_end).\n" +
+      "Churn is measured moving period1 → period2.\n\n" +
+      "DEFAULT (use unless the user specifies other dates): rolling 12 months " +
+      "vs the previous 12 months. With today = T, set period2 = [T minus 12 " +
+      "months, T] and period1 = [T minus 24 months, T minus 12 months].\n\n" +
+      "Returns aggregate numbers only — never customer lists:\n" +
+      "  - churned       → had revenue in period1 but not period2.\n" +
+      "  - new_customers → had revenue in period2 but not period1.\n" +
+      "  - retained      → had revenue in both.\n" +
+      "  - churn_rate    → churned ÷ period1 customer base, as a percent.\n" +
+      "  - total_period1 / total_period2 → ex-VAT revenue per window (SEK).\n\n" +
+      "A customer counts as active in a window when their summed invoiced " +
+      "amount in it is > 0. This is the ONLY correct path for churn — do NOT " +
+      "fetch customer lists and diff them yourself.",
+    input_schema: {
+      type: "object",
+      properties: {
+        period1_start: {
+          type: "string",
+          description:
+            "Earlier/baseline window start, YYYY-MM-DD (e.g. the start of " +
+            "the previous 12 months).",
+        },
+        period1_end: {
+          type: "string",
+          description: "Earlier/baseline window end, YYYY-MM-DD.",
+        },
+        period2_start: {
+          type: "string",
+          description:
+            "Later/comparison window start, YYYY-MM-DD (e.g. the start of " +
+            "the most recent 12 months).",
+        },
+        period2_end: {
+          type: "string",
+          description:
+            "Later/comparison window end, YYYY-MM-DD (usually today).",
+        },
+      },
+      required: [
+        "period1_start",
+        "period1_end",
+        "period2_start",
+        "period2_end",
+      ],
+    },
+  },
+  {
     name: "search_documents",
     description:
       "Vector search over the firm's uploaded documents — INCLUDING the " +
@@ -600,6 +660,7 @@ type AnyToolHandler = (
 
 const HANDLERS: Record<string, AnyToolHandler> = {
   resolve_customer: resolveCustomer as AnyToolHandler,
+  get_churn_analysis: getChurnAnalysis as AnyToolHandler,
   get_customer_overview: getCustomerOverview as AnyToolHandler,
   get_kpi_summary: getKpiSummary as AnyToolHandler,
   get_kpi_by_consultant: getKpiByConsultant as AnyToolHandler,
