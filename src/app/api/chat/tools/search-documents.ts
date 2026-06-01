@@ -243,22 +243,54 @@ export const searchDocuments: ToolHandler<SearchDocumentsInput> = async (
 
   // ---------------------------------------------------------------------------
   // Tier 3 — direct fetch + JS cosine
+  //
+  // Last resort only — reached when both RPC paths fail. This used to fetch an
+  // UNORDERED .limit(500) slice, which is a silent correctness landmine: once
+  // the corpus exceeds 500 chunks it scores an arbitrary subset and can miss
+  // the chunk that actually answers the question (the exact failure that made
+  // handbook questions return "found nothing"). We now page through every
+  // chunk in batches so the JS cosine ranks the full set, and we flag it when
+  // the corpus is large enough that this degraded path is doing real work.
   // ---------------------------------------------------------------------------
   if (rows.length === 0) {
     try {
-      const { data, error } = await adminClient
-        .from("document_chunks")
-        .select(
-          "id, document_id, chunk_text, embedding, " +
-            "documents!inner(id, file_name, document_type, storage_path)",
-        )
-        .limit(500);
+      const FETCH_BATCH = 1000;
+      const MAX_TIER3_CHUNKS = 20000; // hard ceiling to bound memory/time
+      const directRows: DirectChunkRow[] = [];
+      let from = 0;
+      let fetchError: { message: string } | null = null;
 
-      if (error) {
-        failures.push(`direct fetch: ${error.message}`);
-        console.error("[search_documents] direct fetch failed:", error);
+      for (;;) {
+        const { data, error } = await adminClient
+          .from("document_chunks")
+          .select(
+            "id, document_id, chunk_text, embedding, " +
+              "documents!inner(id, file_name, document_type, storage_path)",
+          )
+          .range(from, from + FETCH_BATCH - 1);
+
+        if (error) {
+          fetchError = error;
+          break;
+        }
+
+        const batch = (data ?? []) as unknown as DirectChunkRow[];
+        directRows.push(...batch);
+
+        if (batch.length < FETCH_BATCH) break; // last page
+        from += FETCH_BATCH;
+        if (directRows.length >= MAX_TIER3_CHUNKS) {
+          failures.push(
+            `direct fetch hit the ${MAX_TIER3_CHUNKS}-chunk ceiling — ranking may be incomplete. Fix the search_chunks RPC path (vector dim/recall) so this fallback isn't used.`,
+          );
+          break;
+        }
+      }
+
+      if (fetchError) {
+        failures.push(`direct fetch: ${fetchError.message}`);
+        console.error("[search_documents] direct fetch failed:", fetchError);
       } else {
-        const directRows = (data ?? []) as unknown as DirectChunkRow[];
         rows = directRows
           .map((row) => {
             const parsed = parseVectorEmbedding(row.embedding);
