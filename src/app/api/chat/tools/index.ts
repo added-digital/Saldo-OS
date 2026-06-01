@@ -560,8 +560,13 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       "period2_end).\n" +
       "Churn is measured moving period1 → period2.\n\n" +
       "DEFAULT (use unless the user specifies other dates): rolling 12 months " +
-      "vs the previous 12 months. With today = T, set period2 = [T minus 12 " +
-      "months, T] and period1 = [T minus 24 months, T minus 12 months].\n\n" +
+      "vs the previous 12 months, counted in FULLY COMPLETED calendar months " +
+      "so neither window includes the current partial month. Let M = the most " +
+      "recently completed month (the month before today's). Then period2 runs " +
+      "from the first day of the month 11 months before M to the last day of M; " +
+      "period1 is the 12 completed months immediately before period2. Example: " +
+      "today 2026-06-01 → period2 = 2025-06-01..2026-05-31, period1 = " +
+      "2024-06-01..2025-05-31.\n\n" +
       "Returns aggregate numbers only — never customer lists:\n" +
       "  - churned       → had revenue in period1 but not period2.\n" +
       "  - new_customers → had revenue in period2 but not period1.\n" +
