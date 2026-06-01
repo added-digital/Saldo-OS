@@ -50,8 +50,14 @@ const EXPECTED_EMBEDDING_DIM = 1024;
 // Defaults tuned for token cost: chunk_text is unbounded in length, so even
 // a small `match_count` can produce a fat tool result. The route compactor
 // additionally truncates each excerpt to ~800 chars as a backstop.
-const DEFAULT_MATCH_COUNT = 4;
-const MAX_MATCH_COUNT = 6;
+// Bumped from 4→6 default (and 6→8 max): with only 4 chunks, the specific
+// handbook section that answers a question (dress code, pets, etc.) often
+// wasn't in the top hits, so the model fell back to "found nothing" even
+// though the handbook covered it. Fetching more excerpts gives it the
+// relevant passage to answer from. The route compactor still truncates each
+// excerpt to ~800 chars, so the token cost stays bounded.
+const DEFAULT_MATCH_COUNT = 6;
+const MAX_MATCH_COUNT = 8;
 
 function toVectorString(embedding: number[]): string {
   return `[${embedding.join(",")}]`;

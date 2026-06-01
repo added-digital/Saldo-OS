@@ -387,7 +387,12 @@ export interface MailTemplate {
   updated_at: string
 }
 
-export type FeedbackCategory = "bug" | "feature" | "question" | "other"
+export type FeedbackCategory =
+  | "bug"
+  | "feature"
+  | "question"
+  | "other"
+  | "missing_tool"
 export type FeedbackStatus = "new" | "triaged" | "resolved"
 
 export interface FeedbackSubmission {
@@ -395,6 +400,10 @@ export interface FeedbackSubmission {
   user_id: string
   category: FeedbackCategory
   message: string
+  // Populated only for category='missing_tool': the user's verbatim chat
+  // question and a one-line description of the tool/access that was missing.
+  query: string | null
+  capability: string | null
   page_url: string | null
   user_agent: string | null
   status: FeedbackStatus

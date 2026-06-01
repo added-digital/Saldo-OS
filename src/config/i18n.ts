@@ -811,6 +811,12 @@ const dictionaries = {
     "feedback.toast.sent": "Thanks — feedback sent.",
     "feedback.toast.empty": "Please add a short description first",
     "feedback.toast.failed": "Couldn't send feedback",
+    "dashboard.ask.missingTool.title": "💡 Something missing?",
+    "dashboard.ask.missingTool.submit": "Submit as feature request",
+    "dashboard.ask.missingTool.dismiss": "Dismiss",
+    "dashboard.ask.missingTool.submitting": "Submitting…",
+    "dashboard.ask.missingTool.submitted": "Thanks — we've noted your request.",
+    "dashboard.ask.missingTool.failed": "Couldn't submit request",
   },
   sv: {
     "common.home": "Hem",
@@ -1636,6 +1642,12 @@ const dictionaries = {
     "feedback.toast.sent": "Tack — feedback skickad.",
     "feedback.toast.empty": "Lägg till en kort beskrivning först",
     "feedback.toast.failed": "Kunde inte skicka feedback",
+    "dashboard.ask.missingTool.title": "💡 Verkar något saknas?",
+    "dashboard.ask.missingTool.submit": "Skicka in som funktionsönskemål",
+    "dashboard.ask.missingTool.dismiss": "Avfärda",
+    "dashboard.ask.missingTool.submitting": "Skickar…",
+    "dashboard.ask.missingTool.submitted": "Tack — vi har noterat önskemålet.",
+    "dashboard.ask.missingTool.failed": "Kunde inte skicka önskemålet",
   },
 } as const;
 

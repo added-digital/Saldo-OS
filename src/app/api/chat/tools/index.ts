@@ -692,10 +692,12 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
         match_count: {
           type: "integer",
           description:
-            "Max chunks to return. Default 4, max 6. Each chunk excerpt " +
-            "is independently truncated to ~800 chars for token safety.",
+            "Max chunks to return. Default 6, max 8. Each chunk excerpt " +
+            "is independently truncated to ~800 chars for token safety. " +
+            "Raise toward 8 for broad handbook/policy questions where the " +
+            "relevant passage might not be in the very top hits.",
           minimum: 1,
-          maximum: 6,
+          maximum: 8,
         },
       },
       required: ["query"],

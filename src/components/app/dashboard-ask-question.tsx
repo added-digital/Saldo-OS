@@ -4,6 +4,7 @@ import * as React from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { ArrowUp, GripVertical, Info, Loader2, MoreHorizontal, Paperclip, PanelLeftClose, PanelLeftOpen, Pin, Plus, Trash2, X } from "lucide-react"
+import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
@@ -94,6 +95,45 @@ function dedupeSourcesForDisplay(
   }
 
   return Array.from(deduped.values())
+}
+
+type MissingToolRequest = { query: string; capability: string }
+
+// The assistant appends a hidden <missing_tool>{...}</missing_tool> block when
+// it can't fulfil a request for lack of a tool/capability (see the system
+// prompt). We strip that block from what the user sees and surface a "request
+// this capability" CTA instead.
+const MISSING_TOOL_REGEX = /<missing_tool>\s*(\{[\s\S]*?\})\s*<\/missing_tool>/i
+
+function parseMissingTool(content: string): {
+  cleanedContent: string
+  request: MissingToolRequest | null
+} {
+  const match = content.match(MISSING_TOOL_REGEX)
+  if (!match) {
+    return { cleanedContent: content, request: null }
+  }
+
+  // Always strip the block so the raw JSON never reaches the user — even if
+  // the JSON inside turns out to be malformed.
+  const cleanedContent = content.replace(MISSING_TOOL_REGEX, "").trim()
+
+  let request: MissingToolRequest | null = null
+  try {
+    const parsed = JSON.parse(match[1]) as Partial<MissingToolRequest>
+    const query = typeof parsed.query === "string" ? parsed.query.trim() : ""
+    const capability =
+      typeof parsed.capability === "string" ? parsed.capability.trim() : ""
+    // A CTA without the original question is useless; only show it when we
+    // have a query to display and submit.
+    if (query) {
+      request = { query, capability }
+    }
+  } catch {
+    request = null
+  }
+
+  return { cleanedContent, request }
 }
 
 function getConversationOrderStorageKey(userId: string): string {
@@ -801,6 +841,73 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
     )
   }
 
+  // Per-message CTA state for the "missing tool" feature-request prompt.
+  // Absent key = CTA shown in its default state. Dismissal is local to the
+  // session (it resets on reload), which is fine — the block is re-detected
+  // from message content on load.
+  const [missingToolStatus, setMissingToolStatus] = React.useState<
+    Record<string, "submitting" | "submitted" | "dismissed">
+  >({})
+
+  async function handleSubmitMissingTool(
+    messageId: string,
+    request: MissingToolRequest,
+  ) {
+    if (!userId) return
+
+    setMissingToolStatus((current) => ({
+      ...current,
+      [messageId]: "submitting",
+    }))
+
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from("feedback_submissions").insert({
+        user_id: userId,
+        category: "missing_tool",
+        // `message` is NOT NULL on the table; mirror the query so the admin
+        // triage views keep showing readable content for these rows.
+        message: request.query,
+        query: request.query,
+        capability: request.capability || null,
+      } as never)
+
+      if (error) {
+        toast.error(
+          `${t("dashboard.ask.missingTool.failed", "Couldn't submit request")}: ${error.message}`,
+        )
+        // Roll back to the default state so the user can retry.
+        setMissingToolStatus((current) => {
+          const next = { ...current }
+          delete next[messageId]
+          return next
+        })
+        return
+      }
+
+      setMissingToolStatus((current) => ({
+        ...current,
+        [messageId]: "submitted",
+      }))
+    } catch {
+      toast.error(
+        t("dashboard.ask.missingTool.failed", "Couldn't submit request"),
+      )
+      setMissingToolStatus((current) => {
+        const next = { ...current }
+        delete next[messageId]
+        return next
+      })
+    }
+  }
+
+  function handleDismissMissingTool(messageId: string) {
+    setMissingToolStatus((current) => ({
+      ...current,
+      [messageId]: "dismissed",
+    }))
+  }
+
   return (
     <div className={cn(
       "grid h-full overflow-hidden",
@@ -981,7 +1088,14 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
           )}
         >
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 pb-36 pt-6">
-            {messages.map((message) => (
+            {messages.map((message) => {
+              const missing =
+                message.role === "assistant" && !message.isLoading
+                  ? parseMissingTool(message.content)
+                  : null
+              const ctaRequest = missing?.request ?? null
+              const ctaStatus = missingToolStatus[message.id]
+              return (
               <div key={message.id} className={cn("flex w-full", message.role === "user" ? "justify-end" : "justify-start")}>
                 {message.role === "user" ? (
                   <div className="max-w-[85%] rounded-2xl bg-foreground px-4 py-3 text-sm text-background md:max-w-[70%]">
@@ -1022,7 +1136,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
                           "animate-pulse text-muted-foreground [&_p]:text-muted-foreground",
                       )}
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{missing ? missing.cleanedContent : message.content}</ReactMarkdown>
                     </div>
                     {message.sources && message.sources.length > 0 && (
                       <div className="mt-2 space-y-1 text-xs text-muted-foreground">
@@ -1033,10 +1147,50 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
                         ))}
                       </div>
                     )}
+                    {ctaRequest && ctaStatus !== "dismissed" ? (
+                      <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3">
+                        {ctaStatus === "submitted" ? (
+                          <p className="text-sm text-muted-foreground">
+                            {t("dashboard.ask.missingTool.submitted", "Thanks — we've noted your request.")}
+                          </p>
+                        ) : (
+                          <>
+                            <p className="text-sm font-medium text-foreground">
+                              {t("dashboard.ask.missingTool.title", "💡 Something missing?")}
+                            </p>
+                            <p className="mt-1 text-sm italic text-muted-foreground">
+                              {`"${ctaRequest.query}"`}
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                className="gap-1.5"
+                                disabled={ctaStatus === "submitting"}
+                                onClick={() => void handleSubmitMissingTool(message.id, ctaRequest)}
+                              >
+                                {ctaStatus === "submitting" ? <Loader2 className="size-4 animate-spin" /> : null}
+                                {ctaStatus === "submitting"
+                                  ? t("dashboard.ask.missingTool.submitting", "Submitting…")
+                                  : t("dashboard.ask.missingTool.submit", "Submit as feature request")}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={ctaStatus === "submitting"}
+                                onClick={() => handleDismissMissingTool(message.id)}
+                              >
+                                {t("dashboard.ask.missingTool.dismiss", "Dismiss")}
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>
-            ))}
+              )
+            })}
           </div>
         </div>
 
