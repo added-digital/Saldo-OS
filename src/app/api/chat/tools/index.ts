@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
 import { getChurnAnalysis } from "./get-churn-analysis";
+import { getChurnedCustomers } from "./get-churned-customers";
 import { getConsultantCustomers } from "./get-consultant-customers";
 import { getCostCenterDetails } from "./get-cost-center-details";
 import { getCustomerOverview } from "./get-customer-overview";
@@ -610,6 +611,50 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "get_churned_customers",
+    description:
+      "Drill-down companion to get_churn_analysis. Returns the ACTUAL LIST of " +
+      "churned customers — those with revenue in period1 (earlier baseline) " +
+      "but NOT period2 (later comparison) — instead of just the count. Use " +
+      "this when the user asks WHICH customers churned, wants to SEE / LIST " +
+      "the churned customers, or 'who did we lose?'.\n\n" +
+      "Pass the SAME four dates as the get_churn_analysis call that produced " +
+      "the count, so the list reconciles with the headline number (see " +
+      "get_churn_analysis for how to derive the default rolling-12-vs-" +
+      "previous-12 windows from completed months).\n\n" +
+      "Each row has: customer_name, total_revenue_period1 (ex-VAT SEK), and " +
+      "last_invoice_date (their most recent invoice within period1). Ordered " +
+      "by period1 revenue descending, capped at 200 rows — if capped, the " +
+      "response flags it; use get_churn_analysis for the exact total count.",
+    input_schema: {
+      type: "object",
+      properties: {
+        period1_start: {
+          type: "string",
+          description: "Earlier/baseline window start, YYYY-MM-DD.",
+        },
+        period1_end: {
+          type: "string",
+          description: "Earlier/baseline window end, YYYY-MM-DD.",
+        },
+        period2_start: {
+          type: "string",
+          description: "Later/comparison window start, YYYY-MM-DD.",
+        },
+        period2_end: {
+          type: "string",
+          description: "Later/comparison window end, YYYY-MM-DD.",
+        },
+      },
+      required: [
+        "period1_start",
+        "period1_end",
+        "period2_start",
+        "period2_end",
+      ],
+    },
+  },
+  {
     name: "search_documents",
     description:
       "Vector search over the firm's uploaded documents — INCLUDING the " +
@@ -666,6 +711,7 @@ type AnyToolHandler = (
 const HANDLERS: Record<string, AnyToolHandler> = {
   resolve_customer: resolveCustomer as AnyToolHandler,
   get_churn_analysis: getChurnAnalysis as AnyToolHandler,
+  get_churned_customers: getChurnedCustomers as AnyToolHandler,
   get_customer_overview: getCustomerOverview as AnyToolHandler,
   get_kpi_summary: getKpiSummary as AnyToolHandler,
   get_kpi_by_consultant: getKpiByConsultant as AnyToolHandler,
