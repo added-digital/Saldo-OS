@@ -98,6 +98,7 @@ function SidebarNav({ className }: SidebarNavProps) {
       "Mail tracking": "navigation.items.mailTracking",
       Reports: "navigation.items.reports",
       "Key Metrics": "navigation.items.keyMetrics",
+      "Hit list": "navigation.items.hitList",
       Settings: "navigation.items.settings",
     };
 

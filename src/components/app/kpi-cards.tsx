@@ -35,6 +35,12 @@ interface KpiCardsProps {
   turnoverPerHour?: number;
   previousTurnoverPerHour?: number;
   onOpenInvoices?: () => void;
+  /**
+   * Number of overdue invoices (unpaid + past due date) in the current scope.
+   * When provided (and > 0), a small "(N overdue)" label is rendered next to
+   * the Invoices title.
+   */
+  overdueInvoices?: number;
 }
 
 type ComparisonPillProps = {
@@ -122,6 +128,7 @@ function KpiCards({
   turnoverPerHour = 0,
   previousTurnoverPerHour,
   onOpenInvoices,
+  overdueInvoices,
 }: KpiCardsProps) {
   const { t } = useTranslation();
   const valueClassName = compact
@@ -175,8 +182,13 @@ function KpiCards({
 
       <Card className={compact ? "gap-2" : ""}>
         <CardHeader className={cardHeaderClassName}>
-          <CardTitle className="text-sm font-medium text-muted-foreground">
+          <CardTitle className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
             {t("kpi.labels.invoices", "Invoices (pcs)")}
+            {overdueInvoices && overdueInvoices > 0 ? (
+              <span className="text-xs font-normal text-semantic-error">
+                ({overdueInvoices.toLocaleString("sv-SE")} {t("kpi.labels.overdue", "overdue")})
+              </span>
+            ) : null}
           </CardTitle>
           {onOpenInvoices ? (
             <CardAction>

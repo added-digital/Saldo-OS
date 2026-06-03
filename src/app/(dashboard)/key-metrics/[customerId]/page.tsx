@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Calculator,
+  Info,
   TrendingUp,
 } from "lucide-react"
 import {
@@ -46,6 +47,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import {
   KPI_DEFINITIONS,
   KPI_DEFINITIONS_BY_KEY,
@@ -125,21 +132,6 @@ function formatValue(
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   })
-}
-
-function formatTarget(target: KpiTarget | null): string | null {
-  if (!target) return null
-  const opSymbol =
-    target.op === "gte"
-      ? "≥"
-      : target.op === "gt"
-        ? ">"
-        : target.op === "lte"
-          ? "≤"
-          : "<"
-  const unitSuffix =
-    target.unit === "kr" ? " kr" : target.unit === "%" ? " %" : ""
-  return `${opSymbol} ${target.value}${unitSuffix}`
 }
 
 // Pretty-print 'YYYYMM' → 'jan 26', 'feb 26', ...
@@ -326,7 +318,8 @@ export default function NyckeltalDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <TooltipProvider delayDuration={150}>
+      <div className="space-y-6">
       {/* Header strip */}
       <div className="space-y-3">
         <Link
@@ -498,7 +491,8 @@ export default function NyckeltalDetailPage() {
 
       {/* P&L summary table — built from the KPI engine's "inputs" payload */}
       <PlSummaryCard yearByKpi={yearByKpi} loading={loading} />
-    </div>
+      </div>
+    </TooltipProvider>
   )
 }
 
@@ -513,10 +507,9 @@ function KpiCard({
   definition: KpiDefinition
   row: KpiRow | undefined
 }) {
-  const { t } = useTranslation()
+  const { t, language } = useTranslation()
   const value = row?.value ?? null
   const flagged = row?.flagged ?? false
-  const targetLabel = formatTarget(definition.target ?? null)
 
   return (
     <Card
@@ -528,19 +521,37 @@ function KpiCard({
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">
-            {/* Swedish names live with the definition; locale switching is
-                handled at the i18n layer for surrounding UI chrome. */}
-            {definition.names.sv}
+            {/* Localized KPI name lives with the definition (sv/en). */}
+            {definition.names[language]}
           </CardTitle>
-          {flagged ? (
-            <Badge
-              variant="outline"
-              className="gap-1 border-semantic-warning text-semantic-warning"
-            >
-              <AlertTriangle className="size-3" />
-              {t("keyMetrics.detail.flag", "Off target")}
-            </Badge>
-          ) : null}
+          <div className="flex items-center gap-1.5">
+            {flagged ? (
+              <Badge
+                variant="outline"
+                className="gap-1 border-semantic-warning text-semantic-warning"
+              >
+                <AlertTriangle className="size-3" />
+                {t("keyMetrics.detail.flag", "Off target")}
+              </Badge>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t(
+                    "keyMetrics.detail.infoLabel",
+                    "KPI explanation",
+                  )}
+                  className="flex size-5 shrink-0 cursor-help items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Info className="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-xs">
+                {definition.descriptions[language]}
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-1">
@@ -552,18 +563,6 @@ function KpiCard({
         >
           {formatValue(value, definition.unit, definition.decimals)}
         </div>
-        {targetLabel ? (
-          <div className="text-xs text-muted-foreground">
-            {t("keyMetrics.detail.target", "Target")}: {targetLabel}
-          </div>
-        ) : (
-          <div className="text-xs text-muted-foreground">
-            {t("keyMetrics.detail.informational", "Informational")}
-          </div>
-        )}
-        <p className="pt-2 text-xs leading-relaxed text-muted-foreground">
-          {definition.descriptions.sv}
-        </p>
       </CardContent>
     </Card>
   )

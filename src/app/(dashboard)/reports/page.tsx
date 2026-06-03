@@ -422,6 +422,12 @@ export default function ReportsPage() {
     hours: 0,
     contractValue: 0,
   });
+  // Count of overdue invoices (balance > 0 AND past due date) in the current
+  // scope/window — surfaced as a small label next to the Invoices KPI title.
+  // Derived from the raw invoices table (balance + due_date), which the
+  // customer_kpis aggregate does not break down, so it's fetched alongside
+  // the main KPIs.
+  const [overdueInvoices, setOverdueInvoices] = React.useState(0);
   const [previousKpis, setPreviousKpis] = React.useState<{
     turnover: number;
     invoices: number;
@@ -511,7 +517,7 @@ export default function ReportsPage() {
     InvoiceDetailRow[]
   >([]);
   const [invoiceDetailsStatusFilter, setInvoiceDetailsStatusFilter] = React.useState<
-    "all" | "paid" | "pending"
+    "all" | "paid" | "pending" | "overdue"
   >("all");
   const [invoiceDetailsMode, setInvoiceDetailsMode] = React.useState<
     "default" | "status-list"
@@ -2490,6 +2496,7 @@ function renderWorkloadShareCell(percentage: number) {
     async function fetchDateScopedKpis() {
       if (filteredCustomers.length === 0) {
         setKpis({ turnover: 0, invoices: 0, hours: 0, contractValue: 0 });
+        setOverdueInvoices(0);
         setPreviousKpis(null);
         setCurrentContractValueSnapshot(null);
         setTurnoverByMonthRows(createEmptyTurnoverRows(rollingWindow.months));
@@ -2654,6 +2661,55 @@ function renderWorkloadShareCell(percentage: number) {
 
       if (cancelled) return;
 
+      // Overdue invoice count — unpaid invoices (balance > 0) whose due date
+      // has already passed, in the same window/scope used by the invoices
+      // drill-down dialog. Uses head-only exact-count queries so no rows are
+      // transferred. Customer scoping mirrors openInvoicesStatusDialog: single
+      // customer uses an or() on id/number; the multi-customer case counts per
+      // fortnox_customer_number chunk (chunks are disjoint, so counts sum
+      // cleanly).
+      const todayKey = new Date().toISOString().slice(0, 10);
+      let overdueCount = 0;
+      if (selectedCustomerId) {
+        let overdueQuery = supabase
+          .from("invoices")
+          .select("id", { count: "exact", head: true })
+          .gte("invoice_date", rollingWindow.from)
+          .lte("invoice_date", rollingWindow.to)
+          .gt("balance", 0)
+          .lt("due_date", todayKey);
+        overdueQuery = selectedCustomer?.fortnox_customer_number
+          ? overdueQuery.or(
+              `customer_id.eq.${selectedCustomerId},fortnox_customer_number.eq.${selectedCustomer.fortnox_customer_number}`,
+            )
+          : overdueQuery.eq("customer_id", selectedCustomerId);
+        const { count } = await overdueQuery;
+        overdueCount = count ?? 0;
+      } else {
+        const overdueCustomerNumbers = Array.from(
+          new Set(
+            filteredCustomers
+              .map((customer) => customer.fortnox_customer_number)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        );
+        for (const chunk of chunkArray(overdueCustomerNumbers, 200)) {
+          if (cancelled) return;
+          const { count } = await supabase
+            .from("invoices")
+            .select("id", { count: "exact", head: true })
+            .gte("invoice_date", rollingWindow.from)
+            .lte("invoice_date", rollingWindow.to)
+            .gt("balance", 0)
+            .lt("due_date", todayKey)
+            .in("fortnox_customer_number", chunk);
+          overdueCount += count ?? 0;
+        }
+      }
+
+      if (cancelled) return;
+
+      setOverdueInvoices(overdueCount);
       setKpis({
         turnover,
         invoices: invoiceCount,
@@ -4709,11 +4765,26 @@ function renderWorkloadShareCell(percentage: number) {
       cell: ({ row }) => {
         const status = row.original.status;
         if (!status) return "-";
+        if (status === "paid") {
+          return (
+            <Badge variant="secondary">
+              {t("reports.invoiceStatus.paid", "Paid")}
+            </Badge>
+          );
+        }
+        if (status === "overdue") {
+          return (
+            <Badge
+              variant="outline"
+              className="border-semantic-error text-semantic-error"
+            >
+              {t("reports.invoiceStatus.overdue", "Overdue")}
+            </Badge>
+          );
+        }
         return (
-          <Badge variant={status === "paid" ? "secondary" : "outline"}>
-            {status === "paid"
-              ? t("reports.invoiceStatus.paid", "Paid")
-              : t("reports.invoiceStatus.pending", "Pending")}
+          <Badge variant="outline">
+            {t("reports.invoiceStatus.pending", "Pending")}
           </Badge>
         );
       },
@@ -5013,6 +5084,7 @@ function renderWorkloadShareCell(percentage: number) {
                 values={kpis}
                 previousValues={previousKpis}
                 comparisonContractValue={currentContractValueSnapshot}
+                overdueInvoices={overdueInvoices}
                 onOpenInvoices={() => {
                   void openInvoicesStatusDialog();
                 }}
@@ -5623,7 +5695,7 @@ function renderWorkloadShareCell(percentage: number) {
                       value={invoiceDetailsStatusFilter}
                       onValueChange={(value) =>
                         setInvoiceDetailsStatusFilter(
-                          value as "all" | "paid" | "pending",
+                          value as "all" | "paid" | "pending" | "overdue",
                         )
                       }
                     >
@@ -5632,13 +5704,16 @@ function renderWorkloadShareCell(percentage: number) {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">
-                          {t("reports.invoiceStatusFilter.all", "Both")}
+                          {t("reports.invoiceStatusFilter.all", "All")}
                         </SelectItem>
                         <SelectItem value="paid">
                           {t("reports.invoiceStatus.paid", "Paid")}
                         </SelectItem>
                         <SelectItem value="pending">
                           {t("reports.invoiceStatus.pending", "Pending")}
+                        </SelectItem>
+                        <SelectItem value="overdue">
+                          {t("reports.invoiceStatus.overdue", "Overdue")}
                         </SelectItem>
                       </SelectContent>
                     </Select>

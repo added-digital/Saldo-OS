@@ -176,7 +176,7 @@ export type InvoiceDetailRow = {
   turnover: number | null;
   turnoverFromTotal: boolean;
   currencyCode: string;
-  status?: "paid" | "pending";
+  status?: "paid" | "pending" | "overdue";
 };
 
 export type InvoiceDetailSource = {

@@ -90,6 +90,7 @@ function Breadcrumbs({ className }: BreadcrumbsProps) {
       contacts: "navigation.items.contacts",
       reports: "navigation.items.reports",
       "key-metrics": "navigation.items.keyMetrics",
+      "hit-list": "navigation.items.hitList",
       settings: "navigation.items.settings",
     }
 

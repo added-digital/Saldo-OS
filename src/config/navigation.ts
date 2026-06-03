@@ -7,6 +7,7 @@ import {
   Settings,
   BarChart3,
   Calculator,
+  Target,
   type LucideIcon,
 } from "lucide-react"
 
@@ -53,6 +54,10 @@ export const navigation: NavSection[] = [
       // EBIT, kassalikviditet, soliditet). Admin-only for now — opens up to
       // wider roles once the page handles per-portfolio filtering cleanly.
       { label: "Key Metrics", href: "/key-metrics", icon: Calculator, minRole: "admin" },
+      // Träfflista — financial warnings/opportunities scoped from synced SIE
+      // files (e.g. share capital reduction candidates). Admin-only like Key
+      // Metrics; both read the SIE tables guarded by RLS.
+      { label: "Hit list", href: "/hit-list", icon: Target, minRole: "admin" },
     ],
   },
   {
