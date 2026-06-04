@@ -1,5 +1,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
+import { KPI_DEFINITIONS } from "@/lib/fortnox-sie/kpi-definitions";
+import { HIT_LIST_RULES } from "@/lib/fortnox-sie/hit-list-definitions";
+
 import { getChurnAnalysis } from "./get-churn-analysis";
 import { getChurnedCustomers } from "./get-churned-customers";
 import { getConsultantCustomers } from "./get-consultant-customers";
@@ -10,11 +13,29 @@ import { getKpiByConsultant } from "./get-kpi-by-consultant";
 import { getKpiSummary } from "./get-kpi-summary";
 import { getTopCustomers } from "./get-top-customers";
 import { listCostCenters } from "./list-cost-centers";
+import { getHitListMatches } from "./get-hit-list-matches";
+import { getSieAccountBalance } from "./get-sie-account-balance";
+import { getSieKpis } from "./get-sie-kpis";
+import { rankSieKpis } from "./rank-sie-kpis";
 import { resolveConsultant } from "./resolve-consultant";
 import { resolveCustomer } from "./resolve-customer";
 import { searchDocuments } from "./search-documents";
 import { searchInvoices } from "./search-invoices";
 import type { ToolContext, ToolResult } from "./types";
+
+// Allowed SIE KPI keys for the schema enums, derived from the canonical
+// registry so the tool schema can never drift from the definitions/engine.
+const SIE_KPI_KEYS = KPI_DEFINITIONS.map((d) => d.key);
+const SIE_KPI_KEY_HINT = KPI_DEFINITIONS.map(
+  (d) => `${d.key} (${d.names.sv})`,
+).join(", ");
+
+// Hit-list rule keys, derived from the canonical rule registry so the schema
+// enum and the hint can't drift from the rules the engine actually evaluates.
+const HIT_LIST_RULE_KEYS = HIT_LIST_RULES.map((r) => r.key);
+const HIT_LIST_RULE_HINT = HIT_LIST_RULES.map(
+  (r) => `${r.key} (${r.names.sv})`,
+).join(", ");
 
 /**
  * Tool definitions sent to Claude. Names are snake_case to match Anthropic's
@@ -655,6 +676,205 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "get_sie_kpis",
+    description:
+      "Return a single customer's SIE-derived FINANCIAL KPIs for a year — the " +
+      "Nyckeltal numbers computed from their synced general ledger (SIE file). " +
+      "Reads the SAME `sie_kpis` source the /key-metrics page shows, so figures " +
+      "reconcile with the UI.\n\n" +
+      `KPIs returned: ${SIE_KPI_KEY_HINT}.\n\n` +
+      "Use for ledger/accounting questions about ONE customer: 'what's X's " +
+      "soliditet / kassalikviditet / rörelseresultat / bruttomarginal', 'is X " +
+      "profitable on the books', 'X:s nyckeltal'. Call resolve_customer first " +
+      "to get the customer_id.\n\n" +
+      "IMPORTANT: these are LEDGER-derived and DISTINCT from invoice turnover. " +
+      "'Omsättning/revenue' here is the income-statement figure from the SIE " +
+      "file, NOT the invoiced turnover from get_kpi_summary/get_top_customers — " +
+      "do not mix them. If has_data is false, the customer has no synced SIE " +
+      "file/KPIs for that year; say so (it does NOT mean zero).",
+    input_schema: {
+      type: "object",
+      properties: {
+        customer_id: {
+          type: "string",
+          description: "Customer UUID (from resolve_customer.matches[].id).",
+        },
+        year: {
+          type: "integer",
+          description: "Financial year (e.g. 2026). Defaults to current year.",
+          minimum: 2000,
+          maximum: 3000,
+        },
+        include_monthly: {
+          type: "boolean",
+          description:
+            "Include the month-by-month trend for flow KPIs (revenue, gross " +
+            "margin, EBIT). Default false. Use for 'how did X's revenue trend " +
+            "over the year' questions.",
+        },
+      },
+      required: ["customer_id"],
+    },
+  },
+  {
+    name: "rank_sie_kpis",
+    description:
+      "Rank / threshold / flag-filter customers by ONE SIE financial KPI for a " +
+      "year. The SIE counterpart to get_top_customers, but for ledger-derived " +
+      "KPIs rather than invoice turnover. Reads `sie_kpis` (matches " +
+      "/key-metrics and the hit-list rules).\n\n" +
+      `Allowed kpi_key: ${SIE_KPI_KEY_HINT}.\n\n` +
+      "Examples:\n" +
+      "  - 'which customers have negative EBIT' → kpi_key=ebit, flagged_only=true\n" +
+      "  - 'lowest soliditet' → kpi_key=soliditet, order=asc\n" +
+      "  - 'kassalikviditet under 100%' → kpi_key=kassalikviditet, max_value=100\n" +
+      "  - 'highest ledger revenue' → kpi_key=revenue, order=desc\n\n" +
+      "`flagged_only` selects customers breaching the KPI's healthy target " +
+      "(e.g. EBIT < 0, kassalikviditet < 100%, soliditet < 30%). Always cite " +
+      "`customers_with_kpi` as the coverage denominator — the ranking only " +
+      "spans customers with a synced SIE file, not the whole customer base.",
+    input_schema: {
+      type: "object",
+      properties: {
+        kpi_key: {
+          type: "string",
+          description: "Which SIE KPI to rank by.",
+          enum: SIE_KPI_KEYS,
+        },
+        year: {
+          type: "integer",
+          description: "Financial year (e.g. 2026). Defaults to current year.",
+          minimum: 2000,
+          maximum: 3000,
+        },
+        order: {
+          type: "string",
+          description:
+            "Sort direction by value. 'desc' (default) = highest first; " +
+            "'asc' = lowest first (use for 'worst'/'lowest' questions like " +
+            "lowest soliditet or weakest liquidity).",
+          enum: ["asc", "desc"],
+        },
+        flagged_only: {
+          type: "boolean",
+          description:
+            "If true, only customers whose value breaches the KPI's target " +
+            "(flagged=true) are returned. Use for 'which customers are at " +
+            "risk / unprofitable / under the threshold'.",
+        },
+        min_value: {
+          type: "number",
+          description: "Only include customers whose value is >= this.",
+        },
+        max_value: {
+          type: "number",
+          description:
+            "Only include customers whose value is <= this (e.g. " +
+            "kassalikviditet <= 100).",
+        },
+        n: {
+          type: "integer",
+          description: "Number of customers to return (1-50). Default 10.",
+          minimum: 1,
+          maximum: 50,
+        },
+      },
+      required: ["kpi_key"],
+    },
+  },
+  {
+    name: "get_sie_account_balance",
+    description:
+      "Look up specific account balances for ONE customer from their synced " +
+      "SIE general ledger. Use for precise bookkeeping questions the KPIs " +
+      "don't cover: 'what's X's cash at year end' (1910), 'balance of account " +
+      "2081 / 3010', 'X:s kassa', 'saldo på konto 1510'. Call resolve_customer " +
+      "first.\n\n" +
+      "Pass explicit BAS account numbers in `accounts` (max 50). `kind`: 'ub' " +
+      "= year-end (default), 'ib' = year-start, 'res' = result-account close.\n\n" +
+      "SIGN WARNING: amounts are RAW SIE values. Credit-balanced BAS classes " +
+      "(2 equity/liabilities, 3 income, 8 financial) are stored NEGATIVE — " +
+      "negate them when stating revenue, equity, share capital or debt. Each " +
+      "row includes account_class; read the sign_note in the response. For " +
+      "ratio/whole-company health use get_sie_kpis instead.",
+    input_schema: {
+      type: "object",
+      properties: {
+        customer_id: {
+          type: "string",
+          description: "Customer UUID (from resolve_customer.matches[].id).",
+        },
+        accounts: {
+          type: "array",
+          description:
+            "BAS account numbers to look up, e.g. ['1910','2081']. Max 50.",
+          items: { type: "string" },
+        },
+        year: {
+          type: "integer",
+          description: "Financial year (e.g. 2026). Defaults to current year.",
+          minimum: 2000,
+          maximum: 3000,
+        },
+        kind: {
+          type: "string",
+          description:
+            "'ub' = closing/year-end balance (default), 'ib' = opening/" +
+            "year-start, 'res' = result-account closing.",
+          enum: ["ib", "ub", "res"],
+        },
+      },
+      required: ["customer_id", "accounts"],
+    },
+  },
+  {
+    name: "get_hit_list_matches",
+    description:
+      "Run the Träfflista / hit-list rules engine — the same financial " +
+      "warning/opportunity rules shown on the /hit-list page. Three modes:\n" +
+      "  - customer_id → which rules a single company triggers (+ advisory " +
+      "services + handling status).\n" +
+      "  - rule_key → which companies match one rule, ranked.\n" +
+      "  - neither → the whole hit list: every rule with its matching " +
+      "companies.\n\n" +
+      `Rules: ${HIT_LIST_RULE_HINT}.\n\n` +
+      "Use for: 'vilka kunder är en akut likviditetsrisk', 'which companies " +
+      "should we offer aktiekapital-minskning', 'is [customer] on the hit " +
+      "list / why', 'visa träfflistan'. Each company carries its handling " +
+      "`status` (under_hantering / hanterad / null). Cite " +
+      "coverage.customers_with_sie_data as the denominator — the list only " +
+      "spans customers with a synced SIE file.",
+    input_schema: {
+      type: "object",
+      properties: {
+        rule_key: {
+          type: "string",
+          description:
+            "Restrict to one hit-list rule. Omit to evaluate all rules.",
+          enum: HIT_LIST_RULE_KEYS,
+        },
+        customer_id: {
+          type: "string",
+          description:
+            "Restrict to one customer — returns which rules that company " +
+            "triggers. From resolve_customer.matches[].id.",
+        },
+        year: {
+          type: "integer",
+          description: "Financial year (e.g. 2026). Defaults to current year.",
+          minimum: 2000,
+          maximum: 3000,
+        },
+        limit: {
+          type: "integer",
+          description: "Max companies per rule (1-100). Default 25.",
+          minimum: 1,
+          maximum: 100,
+        },
+      },
+    },
+  },
+  {
     name: "search_documents",
     description:
       "Vector search over the firm's uploaded documents — INCLUDING the " +
@@ -724,6 +944,10 @@ const HANDLERS: Record<string, AnyToolHandler> = {
   get_cost_center_details: getCostCenterDetails as AnyToolHandler,
   resolve_consultant: resolveConsultant as AnyToolHandler,
   get_consultant_customers: getConsultantCustomers as AnyToolHandler,
+  get_sie_kpis: getSieKpis as AnyToolHandler,
+  rank_sie_kpis: rankSieKpis as AnyToolHandler,
+  get_sie_account_balance: getSieAccountBalance as AnyToolHandler,
+  get_hit_list_matches: getHitListMatches as AnyToolHandler,
   search_documents: searchDocuments as AnyToolHandler,
 };
 
