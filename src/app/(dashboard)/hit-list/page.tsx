@@ -2,14 +2,30 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { AlertTriangle, ArrowRight, ChevronRight, Target } from "lucide-react"
+import { AlertTriangle, ChevronRight, Target } from "lucide-react"
+import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
 import { Badge } from "@/components/ui/badge"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import {
   HIT_LIST_RULES,
   accountsForRules,
@@ -38,6 +54,18 @@ interface MatchRow {
   value: number | null
 }
 
+// Stored handling status for a company under a given rule. "none" is the
+// default and is represented by the absence of a hit_list_statuses row.
+type HitStatus = "under_hantering" | "hanterad"
+// Sentinel used as the Select value for the "no status" option — Radix Select
+// can't use an empty string as an item value.
+const STATUS_NONE = "none"
+
+// State key: one status per (rule, customer) pair.
+function statusKey(ruleKey: string, customerId: string): string {
+  return `${ruleKey}|${customerId}`
+}
+
 const KR_FORMATTER = new Intl.NumberFormat("sv-SE", {
   maximumFractionDigits: 0,
 })
@@ -50,12 +78,13 @@ function formatValue(value: number | null, unit: HitListUnit): string {
 }
 
 export default function HitListPage() {
-  const { isAdmin } = useUser()
+  const { isAdmin, user } = useUser()
   const { t, language } = useTranslation()
 
   const [matchesByRule, setMatchesByRule] = React.useState<
     Record<string, MatchRow[]>
   >({})
+  const [statuses, setStatuses] = React.useState<Record<string, HitStatus>>({})
   const [loading, setLoading] = React.useState(true)
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({})
 
@@ -205,6 +234,33 @@ export default function HitListPage() {
           .sort((a, b) => ((a.value ?? 0) - (b.value ?? 0)) * dir)
       }
 
+      // Load any saved handling statuses for the matched companies. Scoped by
+      // customer; we key the resulting map per (rule, customer). Absence of a
+      // row means "no status".
+      const statusMap: Record<string, HitStatus> = {}
+      if (matchedCustomerIds.size > 0) {
+        const { data: statusData, error: statusError } = await supabase
+          .from("hit_list_statuses")
+          .select("customer_id, rule_key, status")
+          .in("customer_id", Array.from(matchedCustomerIds))
+
+        if (cancelled) return
+
+        if (statusError) {
+          // Non-fatal: the list still works, statuses just start blank.
+          console.error("[hit-list] failed to load statuses:", statusError)
+        } else {
+          for (const row of (statusData ?? []) as Array<{
+            customer_id: string
+            rule_key: string
+            status: HitStatus
+          }>) {
+            statusMap[statusKey(row.rule_key, row.customer_id)] = row.status
+          }
+        }
+      }
+
+      setStatuses(statusMap)
       setMatchesByRule(resolved)
       setLoading(false)
     })()
@@ -213,6 +269,61 @@ export default function HitListPage() {
       cancelled = true
     }
   }, [hasAccess, yearFrom])
+
+  // Persist a status change for one company under one rule. Optimistic: we
+  // update local state immediately, then upsert (or delete, for "none") and
+  // roll back on failure. Writes go straight through the browser client —
+  // admin-only RLS on hit_list_statuses authorizes them.
+  const updateStatus = React.useCallback(
+    async (ruleKey: string, customerId: string, next: HitStatus | "none") => {
+      const key = statusKey(ruleKey, customerId)
+      const previous = statuses[key]
+
+      setStatuses((prev) => {
+        const copy = { ...prev }
+        if (next === STATUS_NONE) delete copy[key]
+        else copy[key] = next
+        return copy
+      })
+
+      const supabase = createClient()
+      try {
+        if (next === STATUS_NONE) {
+          const { error } = await supabase
+            .from("hit_list_statuses")
+            .delete()
+            .eq("customer_id", customerId)
+            .eq("rule_key", ruleKey)
+          if (error) throw error
+        } else {
+          const { error } = await supabase.from("hit_list_statuses").upsert(
+            {
+              customer_id: customerId,
+              rule_key: ruleKey,
+              status: next,
+              updated_by: user.id,
+            } as never,
+            { onConflict: "customer_id,rule_key" } as never,
+          )
+          if (error) throw error
+        }
+      } catch (err) {
+        // Roll back to the previous value on failure.
+        setStatuses((prev) => {
+          const copy = { ...prev }
+          if (previous) copy[key] = previous
+          else delete copy[key]
+          return copy
+        })
+        toast.error(
+          `${t("hitList.status.saveFailed", "Failed to save status")}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      }
+    },
+    [statuses, user.id, t],
+  )
 
   if (!hasAccess) {
     return (
@@ -255,6 +366,8 @@ export default function HitListPage() {
               key={rule.key}
               rule={rule}
               matches={matchesByRule[rule.key] ?? []}
+              statuses={statuses}
+              onStatusChange={updateStatus}
               open={expanded[rule.key] ?? false}
               onToggle={() =>
                 setExpanded((prev) => ({ ...prev, [rule.key]: !prev[rule.key] }))
@@ -272,6 +385,8 @@ export default function HitListPage() {
 function HitListRow({
   rule,
   matches,
+  statuses,
+  onStatusChange,
   open,
   onToggle,
   language,
@@ -279,6 +394,12 @@ function HitListRow({
 }: {
   rule: HitListRule
   matches: MatchRow[]
+  statuses: Record<string, HitStatus>
+  onStatusChange: (
+    ruleKey: string,
+    customerId: string,
+    next: HitStatus | "none",
+  ) => void
   open: boolean
   onToggle: () => void
   language: "sv" | "en"
@@ -352,49 +473,117 @@ function HitListRow({
               )}
             </p>
           ) : (
-            <div className="border-t">
-              {/* Column header */}
-              <div className="flex items-center gap-3 border-b bg-muted/40 py-2 pl-11 pr-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <span className="flex-1">
-                  {t("hitList.columns.company", "Company")}
-                </span>
-                <span className="w-40 text-right">{rule.valueLabel[language]}</span>
-                <span className="w-6" />
-              </div>
-              <div className="divide-y">
-                {matches.map((m) => (
-                  <div
-                    key={m.customerId}
-                    className="flex items-center gap-3 py-2 pl-11 pr-4"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">
-                        {m.customerName}
-                      </div>
-                      {m.fortnoxCustomerNumber ? (
-                        <div className="text-xs text-muted-foreground">
-                          Fortnox #{m.fortnoxCustomerNumber}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="w-40 text-right text-sm tabular-nums">
-                      {formatValue(m.value, rule.valueUnit)}
-                    </div>
-                    <Link
-                      href={`/key-metrics/${m.customerId}`}
-                      className="flex w-6 shrink-0 justify-end text-muted-foreground hover:text-foreground"
-                      aria-label={t("hitList.openKeyMetrics", "Open key metrics")}
-                      title={t("hitList.openKeyMetrics", "Open key metrics")}
-                    >
-                      <ArrowRight className="size-4" />
-                    </Link>
-                  </div>
-                ))}
+            <div className="px-4 pb-4 pl-11">
+              <div className="overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="min-w-[200px]">
+                        {t("hitList.columns.company", "Company")}
+                      </TableHead>
+                      <TableHead className="text-right whitespace-nowrap">
+                        {rule.valueLabel[language]}
+                      </TableHead>
+                      <TableHead className="w-48">
+                        {t("hitList.columns.status", "Status")}
+                      </TableHead>
+                      <TableHead className="w-[44px]" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {matches.map((m) => (
+                      <TableRow key={m.customerId}>
+                        <TableCell>
+                          <Link
+                            href={`/key-metrics/${m.customerId}`}
+                            className="font-medium hover:underline"
+                          >
+                            {m.customerName}
+                          </Link>
+                          {m.fortnoxCustomerNumber ? (
+                            <div className="text-xs text-muted-foreground">
+                              #{m.fortnoxCustomerNumber}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap tabular-nums">
+                          {formatValue(m.value, rule.valueUnit)}
+                        </TableCell>
+                        <TableCell>
+                          <StatusPicker
+                            value={statuses[statusKey(rule.key, m.customerId)]}
+                            onChange={(next) =>
+                              onStatusChange(rule.key, m.customerId, next)
+                            }
+                            t={t}
+                          />
+                        </TableCell>
+                        <TableCell className="w-[44px] text-right">
+                          <Link
+                            href={`/key-metrics/${m.customerId}`}
+                            aria-label={t(
+                              "hitList.openKeyMetrics",
+                              "Open key metrics",
+                            )}
+                            className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                          >
+                            <ChevronRight className="size-4" />
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
             </div>
           )}
         </div>
       ) : null}
     </div>
+  )
+}
+
+function StatusPicker({
+  value,
+  onChange,
+  t,
+}: {
+  value: HitStatus | undefined
+  onChange: (next: HitStatus | "none") => void
+  t: (key: string, fallback?: string) => string
+}) {
+  return (
+    <Select
+      value={value ?? STATUS_NONE}
+      onValueChange={(next) => onChange(next as HitStatus | "none")}
+    >
+      <SelectTrigger
+        size="sm"
+        className={cn(
+          "h-8 w-full",
+          value === "hanterad" &&
+            "border-semantic-success/40 text-semantic-success",
+          value === "under_hantering" &&
+            "border-semantic-warning/40 text-semantic-warning",
+        )}
+        // Sits inside an expandable rule row — stop the toggle from firing.
+        onClick={(event) => event.stopPropagation()}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={STATUS_NONE}>
+          <span className="text-muted-foreground">
+            {t("hitList.status.none", "No status")}
+          </span>
+        </SelectItem>
+        <SelectItem value="under_hantering">
+          {t("hitList.status.underHantering", "Under hantering")}
+        </SelectItem>
+        <SelectItem value="hanterad">
+          {t("hitList.status.hanterad", "Hanterad")}
+        </SelectItem>
+      </SelectContent>
+    </Select>
   )
 }
