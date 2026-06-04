@@ -83,6 +83,29 @@ deploy; each has a deterministic source of truth on screen.
     "vilka är redan hanterade på träfflistan?"
     - Expect: that company shows `status: "hanterad"` from `hit_list_statuses`.
 
+## get_sie_account_trend (Phase 3 — trends + aggregates)
+
+16. **"Hur trendar [Customer X]:s omsättning månad för månad i år?"**
+    - Tool: `account_class=3, granularity=month`.
+    - Expect: 12-point monthly series; assistant negates (class 3 stored
+      negative) to present positive revenue. The summed series should reconcile
+      with `get_sie_kpis(revenue, include_monthly)` for the same customer/year.
+
+17. **"Vad är [Customer X]:s totala personalkostnader i år?"**
+    - Tool: `account_class=7, granularity=year`.
+    - Expect: a single year_total (positive — class 7 is debit-balanced).
+
+18. **"Klass 5-kostnader per konto för [Customer X] i år."**
+    - Tool: `account_class=5, granularity=year, per_account=true`.
+    - Expect: accounts sorted by magnitude, `year_total` matching their sum,
+      `_compacted` note if more than `limit` accounts have activity.
+
+19. **Balance-sheet caveat: "Visa månadstrend för konto 1910."**
+    - Tool: `accounts=['1910']`.
+    - Expect: the assistant treats the series as monthly CHANGE (movement), not
+      a running balance, per sign_note — and points to get_sie_account_balance
+      for the actual cash balance if the user wants the level.
+
 ## Invariants (no DB needed)
 
 - `rank_sie_kpis` `kpi_key` and `get_hit_list_matches` `rule_key` enums are

@@ -15,6 +15,7 @@ import { getTopCustomers } from "./get-top-customers";
 import { listCostCenters } from "./list-cost-centers";
 import { getHitListMatches } from "./get-hit-list-matches";
 import { getSieAccountBalance } from "./get-sie-account-balance";
+import { getSieAccountTrend } from "./get-sie-account-trend";
 import { getSieKpis } from "./get-sie-kpis";
 import { rankSieKpis } from "./rank-sie-kpis";
 import { resolveConsultant } from "./resolve-consultant";
@@ -828,6 +829,86 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "get_sie_account_trend",
+    description:
+      "Structured monthly or yearly ledger aggregates for ONE customer, " +
+      "computed server-side from the SIE period balances (NOT raw " +
+      "transactions). Use for trends and totals the year-end KPIs and " +
+      "point-in-time balances don't cover:\n" +
+      "  - 'how did X's revenue trend month by month' → account_class=3, " +
+      "granularity=month (negate — class 3 is stored negative)\n" +
+      "  - 'X:s totala personalkostnader i år' → account_class=7, granularity=year\n" +
+      "  - 'monthly movement on account 1910' → accounts=['1910']\n" +
+      "  - 'class 5 costs per account this year' → account_class=5, " +
+      "granularity=year, per_account=true\n\n" +
+      "Pick EXACTLY ONE selection: `accounts` (explicit numbers), " +
+      "`account_class` (1-8), or `account_from`+`account_to` (range). Call " +
+      "resolve_customer first.\n\n" +
+      "SEMANTICS: values are monthly MOVEMENTS (psaldo), not running balances. " +
+      "For income/cost accounts (3-8) the movement is the month's revenue/cost " +
+      "(negate class 3 & 8). For balance-sheet accounts (1-2) it's the monthly " +
+      "CHANGE — use get_sie_account_balance for actual balances. See sign_note.",
+    input_schema: {
+      type: "object",
+      properties: {
+        customer_id: {
+          type: "string",
+          description: "Customer UUID (from resolve_customer.matches[].id).",
+        },
+        accounts: {
+          type: "array",
+          description:
+            "Explicit BAS account numbers (max 50; per-account monthly series " +
+            "max 20). Mutually exclusive with account_class and the range.",
+          items: { type: "string" },
+        },
+        account_class: {
+          type: "integer",
+          description:
+            "Single BAS class 1-8 (1 assets, 2 equity/liabilities, 3 income, " +
+            "4-7 costs, 8 financial). Mutually exclusive with accounts/range.",
+          minimum: 1,
+          maximum: 8,
+        },
+        account_from: {
+          type: "string",
+          description:
+            "Inclusive range start, e.g. '3000'. Use WITH account_to. " +
+            "Mutually exclusive with accounts/account_class.",
+        },
+        account_to: {
+          type: "string",
+          description: "Inclusive range end, e.g. '3999'. Use WITH account_from.",
+        },
+        year: {
+          type: "integer",
+          description: "Financial year (e.g. 2026). Defaults to current year.",
+          minimum: 2000,
+          maximum: 3000,
+        },
+        granularity: {
+          type: "string",
+          description:
+            "'month' (default) → per-month series; 'year' → full-year sum.",
+          enum: ["month", "year"],
+        },
+        per_account: {
+          type: "boolean",
+          description:
+            "Break the result down per account instead of summing. With " +
+            "granularity='month' requires an explicit `accounts` list (≤20).",
+        },
+        limit: {
+          type: "integer",
+          description: "Cap for per-account lists in year mode (1-200). Default 50.",
+          minimum: 1,
+          maximum: 200,
+        },
+      },
+      required: ["customer_id"],
+    },
+  },
+  {
     name: "get_hit_list_matches",
     description:
       "Run the Träfflista / hit-list rules engine — the same financial " +
@@ -947,6 +1028,7 @@ const HANDLERS: Record<string, AnyToolHandler> = {
   get_sie_kpis: getSieKpis as AnyToolHandler,
   rank_sie_kpis: rankSieKpis as AnyToolHandler,
   get_sie_account_balance: getSieAccountBalance as AnyToolHandler,
+  get_sie_account_trend: getSieAccountTrend as AnyToolHandler,
   get_hit_list_matches: getHitListMatches as AnyToolHandler,
   search_documents: searchDocuments as AnyToolHandler,
 };
