@@ -342,6 +342,42 @@ export default function MailPage() {
   const [reauthNeeded, setReauthNeeded] = React.useState(false)
   const hasAutoSelectedMyCustomersRef = React.useRef(false)
 
+  // Optional campaign grouping for this send. `selectedCampaign` is either an
+  // existing campaign ({ id, name }) or a pending new one ({ id: null, name })
+  // that the API creates at send time. null = unfiled.
+  const [campaigns, setCampaigns] = React.useState<Array<{ id: string; name: string }>>([])
+  const [selectedCampaign, setSelectedCampaign] = React.useState<{
+    id: string | null
+    name: string
+  } | null>(null)
+  const [campaignPickerOpen, setCampaignPickerOpen] = React.useState(false)
+  const [campaignQuery, setCampaignQuery] = React.useState("")
+
+  const loadCampaigns = React.useCallback(async () => {
+    const supabase = createClient()
+    const { data } = await supabase
+      .from("mail_campaigns")
+      .select("id, name")
+      .order("created_at", { ascending: false })
+    setCampaigns((data ?? []) as Array<{ id: string; name: string }>)
+  }, [])
+
+  React.useEffect(() => {
+    void loadCampaigns()
+  }, [loadCampaigns])
+
+  const filteredCampaigns = React.useMemo(() => {
+    const q = campaignQuery.trim().toLowerCase()
+    if (!q) return campaigns
+    return campaigns.filter((c) => c.name.toLowerCase().includes(q))
+  }, [campaigns, campaignQuery])
+
+  const canCreateCampaign = React.useMemo(() => {
+    const q = campaignQuery.trim()
+    if (!q) return false
+    return !campaigns.some((c) => c.name.toLowerCase() === q.toLowerCase())
+  }, [campaigns, campaignQuery])
+
   const buildComposeSnapshot = React.useCallback((): ComposeSnapshot => ({
     selectedCustomerIds,
     selectedContactIds,
@@ -1157,6 +1193,9 @@ export default function MailPage() {
           deliveryMode: "separate",
           data: activePayload,
           recipients: apiRecipients,
+          campaign_id: selectedCampaign?.id ?? null,
+          campaign_name:
+            selectedCampaign && !selectedCampaign.id ? selectedCampaign.name : null,
         }),
       })
 
@@ -1244,6 +1283,12 @@ export default function MailPage() {
             : t("settings.mail.toast.separateEmailPlural", "separate emails")
         }`,
       )
+
+      // A new campaign may have just been created server-side; refresh the
+      // list so it shows next time (and resolve the pending selection to its id).
+      if (selectedCampaign && !selectedCampaign.id) {
+        void loadCampaigns()
+      }
     } catch {
       toast.error(t("settings.mail.toast.sendFailed", "Failed to send email"))
     } finally {
@@ -1294,12 +1339,13 @@ export default function MailPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
+          <div className="flex flex-wrap items-end gap-4">
+          <div className="w-[200px] max-w-full space-y-2">
             <Label htmlFor="mail-template-select">
               {t("mail.send.templateSelect", "Template")}
             </Label>
             <Select value={selectedTemplateValue} onValueChange={setSelectedTemplateValue}>
-              <SelectTrigger id="mail-template-select">
+              <SelectTrigger id="mail-template-select" className="w-full">
                 <SelectValue placeholder={t("mail.send.templateSelect", "Template")} />
               </SelectTrigger>
               <SelectContent>
@@ -1314,6 +1360,100 @@ export default function MailPage() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="w-[200px] max-w-full space-y-2">
+            <Label>{t("mail.send.campaign.label", "Campaign group (optional)")}</Label>
+            <Popover open={campaignPickerOpen} onOpenChange={setCampaignPickerOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full justify-between font-normal">
+                  <span className="truncate">
+                    {selectedCampaign
+                      ? selectedCampaign.name
+                      : t("mail.send.campaign.none", "No campaign")}
+                  </span>
+                  <ChevronDown className="size-4 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-(--radix-popover-trigger-width) space-y-2 p-2" align="start">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={campaignQuery}
+                    onChange={(event) => setCampaignQuery(event.target.value)}
+                    placeholder={t(
+                      "mail.send.campaign.searchPlaceholder",
+                      "Search or name a new campaign...",
+                    )}
+                    className="pl-9"
+                  />
+                </div>
+                <div className="max-h-56 space-y-1 overflow-y-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCampaign(null)
+                      setCampaignQuery("")
+                      setCampaignPickerOpen(false)
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60",
+                      !selectedCampaign && "bg-muted/40",
+                    )}
+                  >
+                    <span className="text-muted-foreground">
+                      {t("mail.send.campaign.none", "No campaign")}
+                    </span>
+                    {!selectedCampaign ? <Check className="ml-auto size-3.5" /> : null}
+                  </button>
+                  {filteredCampaigns.map((campaign) => {
+                    const active = selectedCampaign?.id === campaign.id
+                    return (
+                      <button
+                        key={campaign.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCampaign({ id: campaign.id, name: campaign.name })
+                          setCampaignQuery("")
+                          setCampaignPickerOpen(false)
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60",
+                          active && "bg-muted/40",
+                        )}
+                      >
+                        <span className="truncate">{campaign.name}</span>
+                        {active ? <Check className="ml-auto size-3.5 shrink-0" /> : null}
+                      </button>
+                    )
+                  })}
+                  {canCreateCampaign ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCampaign({ id: null, name: campaignQuery.trim() })
+                        setCampaignQuery("")
+                        setCampaignPickerOpen(false)
+                      }}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60"
+                    >
+                      <span className="text-muted-foreground">
+                        {t("mail.send.campaign.create", "Create")}
+                      </span>
+                      <span className="truncate font-medium">
+                        &ldquo;{campaignQuery.trim()}&rdquo;
+                      </span>
+                    </button>
+                  ) : null}
+                  {filteredCampaigns.length === 0 && !canCreateCampaign ? (
+                    <p className="px-2 py-2 text-xs text-muted-foreground">
+                      {t("mail.send.campaign.empty", "No campaigns yet — type a name to create one.")}
+                    </p>
+                  ) : null}
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
           </div>
 
           <div className="space-y-3">

@@ -186,7 +186,7 @@ async function handleChat(request: Request) {
   // Conversation history
   // ---------------------------------------------------------------------------
 
-  let conversationId = body.conversation_id ?? null;
+  const conversationId = body.conversation_id ?? null;
   let storedHistory: StoredMessage[] = [];
 
   if (conversationId) {
@@ -252,8 +252,9 @@ async function handleChat(request: Request) {
   // -------------------------------------------------------------------------
   // Prompt caching.
   //
-  // The system prompt (~1.3K tokens) and the tool definitions (~3K tokens)
-  // are identical across every iteration of the tool-calling loop, and
+  // The system prompt (~3K tokens) and the tool definitions (~10K tokens —
+  // grows with the tool catalog; ~19 tools as of the SIE additions) are
+  // identical across every iteration of the tool-calling loop, and
   // largely identical across different users within a 5-minute window.
   // Marking them as cacheable tells Anthropic to remember the rendered
   // preamble and serve it from cache on subsequent calls at ~10% of the

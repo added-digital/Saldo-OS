@@ -6,9 +6,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  Ellipsis,
   Mail,
   RefreshCw,
+  Search,
+  Tag,
+  Trash2,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -19,7 +21,19 @@ import { useCachedData } from "@/hooks/use-cached-data"
 import { SearchInput } from "@/components/app/search-input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ActionBar } from "@/components/app/action-bar"
 import { EmptyState } from "@/components/app/empty-state"
 import { MailTrackingOverview } from "@/components/app/mail-tracking-overview"
 import {
@@ -47,12 +61,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 
 const MAIL_HISTORY_PAGE_SIZE = 15
@@ -79,7 +87,11 @@ type BatchEntry = {
   sentCount: number
   failedCount: number
   recipients: RecipientEntry[]
+  campaignId: string | null
+  campaignName: string | null
 }
+
+type Campaign = { id: string; name: string }
 
 type BatchRow = {
   id: string
@@ -90,6 +102,7 @@ type BatchRow = {
   recipient_count: number
   sent_count: number
   failed_count: number
+  campaign_id: string | null
   sent_emails: Array<{
     id: string
     recipient_email: string
@@ -99,6 +112,10 @@ type BatchRow = {
     error_message: string | null
   }> | null
 }
+
+// Sentinels for the campaign filter dropdown.
+const CAMPAIGN_FILTER_ALL = "__all__"
+const CAMPAIGN_FILTER_NONE = "__none__"
 
 function formatSentAt(iso: string, locale: string = "sv-SE"): string {
   try {
@@ -164,21 +181,32 @@ export default function MailHistoryPage() {
 
   const fetchHistory = React.useCallback(async (): Promise<BatchEntry[]> => {
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("mail_send_batches")
-      .select(
-        "id, subject, body_preview, template_key, sent_at, recipient_count, " +
-          "sent_count, failed_count, " +
-          "sent_emails(id, recipient_email, recipient_name, recipient_type, status, error_message)",
-      )
-      .order("sent_at", { ascending: false })
-      .limit(HISTORY_FETCH_LIMIT)
+    // Resolve campaign names via a separate owner-scoped query rather than a
+    // PostgREST embed. The embed needs the FK relationship in the schema cache,
+    // which lags after a migration and fails outright until campaign_id's FK is
+    // applied — this only needs the campaign_id column to exist.
+    const [batchesRes, campaignsRes] = await Promise.all([
+      supabase
+        .from("mail_send_batches")
+        .select(
+          "id, subject, body_preview, template_key, sent_at, recipient_count, " +
+            "sent_count, failed_count, campaign_id, " +
+            "sent_emails(id, recipient_email, recipient_name, recipient_type, status, error_message)",
+        )
+        .order("sent_at", { ascending: false })
+        .limit(HISTORY_FETCH_LIMIT),
+      supabase.from("mail_campaigns").select("id, name"),
+    ])
 
-    if (error) {
-      throw new Error(error.message)
+    if (batchesRes.error) {
+      throw new Error(batchesRes.error.message)
     }
 
-    const rows = (data ?? []) as unknown as BatchRow[]
+    const campaignNameById = new Map(
+      ((campaignsRes.data ?? []) as Campaign[]).map((c) => [c.id, c.name]),
+    )
+
+    const rows = (batchesRes.data ?? []) as unknown as BatchRow[]
     return rows.map((row) => ({
       id: row.id,
       subject: row.subject,
@@ -188,6 +216,10 @@ export default function MailHistoryPage() {
       recipientCount: row.recipient_count ?? row.sent_emails?.length ?? 0,
       sentCount: row.sent_count ?? 0,
       failedCount: row.failed_count ?? 0,
+      campaignId: row.campaign_id ?? null,
+      campaignName: row.campaign_id
+        ? campaignNameById.get(row.campaign_id) ?? null
+        : null,
       recipients: (row.sent_emails ?? []).map((entry) => ({
         id: entry.id,
         email: entry.recipient_email,
@@ -207,7 +239,9 @@ export default function MailHistoryPage() {
     refresh,
     setData: setCachedHistory,
   } = useCachedData<BatchEntry[]>({
-    key: `mail.history.v2.${user.id}`,
+    // v3: added campaign fields to the fetched shape — bump so cached v2 rows
+    // (which lack campaignId/campaignName) are refetched rather than served stale.
+    key: `mail.history.v3.${user.id}`,
     fetcher: fetchHistory,
   })
 
@@ -221,23 +255,51 @@ export default function MailHistoryPage() {
   const [bodyCache, setBodyCache] = React.useState<
     Record<string, EmailBodyState>
   >({})
-  const [pendingDelete, setPendingDelete] = React.useState<BatchEntry | null>(
-    null,
-  )
   const [deleting, setDeleting] = React.useState(false)
-  const [openActionMenuBatchId, setOpenActionMenuBatchId] = React.useState<string | null>(null)
   const [selectedTrackingBatch, setSelectedTrackingBatch] = React.useState<{
     id: string
     subject: string
   } | null>(null)
 
+  // Multi-select: the set of selected batch ids drives the bottom action bar.
+  const [selectedBatchIds, setSelectedBatchIds] = React.useState<Set<string>>(
+    new Set(),
+  )
+  const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false)
+
+  // Campaigns: drive the filter dropdown and the bulk "assign" picker.
+  const [campaigns, setCampaigns] = React.useState<Campaign[]>([])
+  const [campaignFilter, setCampaignFilter] = React.useState<string>(CAMPAIGN_FILTER_ALL)
+  const [assignOpen, setAssignOpen] = React.useState(false)
+  const [assignQuery, setAssignQuery] = React.useState("")
+  const [assignBusy, setAssignBusy] = React.useState(false)
+
+  const loadCampaigns = React.useCallback(async () => {
+    const supabase = createClient()
+    const { data } = await supabase
+      .from("mail_campaigns")
+      .select("id, name")
+      .order("created_at", { ascending: false })
+    setCampaigns((data ?? []) as Campaign[])
+  }, [])
+
+  React.useEffect(() => {
+    void loadCampaigns()
+  }, [loadCampaigns])
+
   const filteredBatches = React.useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
-    if (!q) return batches
-    return batches.filter((batch) => {
+    const byCampaign = batches.filter((batch) => {
+      if (campaignFilter === CAMPAIGN_FILTER_ALL) return true
+      if (campaignFilter === CAMPAIGN_FILTER_NONE) return !batch.campaignId
+      return batch.campaignId === campaignFilter
+    })
+    if (!q) return byCampaign
+    return byCampaign.filter((batch) => {
       if (
         batch.subject.toLowerCase().includes(q) ||
-        batch.preview.toLowerCase().includes(q)
+        batch.preview.toLowerCase().includes(q) ||
+        (batch.campaignName?.toLowerCase().includes(q) ?? false)
       ) {
         return true
       }
@@ -247,7 +309,51 @@ export default function MailHistoryPage() {
           (recipient.name?.toLowerCase().includes(q) ?? false),
       )
     })
-  }, [batches, searchQuery])
+  }, [batches, searchQuery, campaignFilter])
+
+  // Batch ids in the currently-filtered campaign scope (null = all campaigns).
+  const campaignBatchIds = React.useMemo<string[] | null>(() => {
+    if (campaignFilter === CAMPAIGN_FILTER_ALL) return null
+    if (campaignFilter === CAMPAIGN_FILTER_NONE) {
+      return batches.filter((b) => !b.campaignId).map((b) => b.id)
+    }
+    return batches
+      .filter((b) => b.campaignId === campaignFilter)
+      .map((b) => b.id)
+  }, [batches, campaignFilter])
+
+  // Scope for the tracking KPI cards. A single-batch "Filter tracking" takes
+  // priority; otherwise the campaign filter drives the scope; otherwise all.
+  const trackingScope = React.useMemo<{
+    batchIds: string[] | null
+    scopeKey: string
+    scopeLabel: string | null
+  }>(() => {
+    if (selectedTrackingBatch) {
+      return {
+        batchIds: [selectedTrackingBatch.id],
+        scopeKey: `batch:${selectedTrackingBatch.id}`,
+        scopeLabel: `${t("mail.tracking.scope.batch", "Showing tracking for selected email batch")}: ${selectedTrackingBatch.subject}`,
+      }
+    }
+    if (campaignFilter !== CAMPAIGN_FILTER_ALL) {
+      const label =
+        campaignFilter === CAMPAIGN_FILTER_NONE
+          ? t(
+              "mail.tracking.scope.campaignNone",
+              "Showing tracking for emails with no campaign",
+            )
+          : `${t("mail.tracking.scope.campaign", "Showing tracking for campaign")}: ${
+              campaigns.find((c) => c.id === campaignFilter)?.name ?? ""
+            }`
+      return {
+        batchIds: campaignBatchIds,
+        scopeKey: `campaign:${campaignFilter}`,
+        scopeLabel: label,
+      }
+    }
+    return { batchIds: null, scopeKey: "all", scopeLabel: null }
+  }, [selectedTrackingBatch, campaignFilter, campaignBatchIds, campaigns, t])
 
   const pageCount = React.useMemo(
     () => Math.max(1, Math.ceil(filteredBatches.length / pageSize)),
@@ -306,9 +412,40 @@ export default function MailHistoryPage() {
       })
   }
 
-  async function handleConfirmDelete() {
-    if (!pendingDelete) return
-    const batchId = pendingDelete.id
+  // ---- Multi-select helpers --------------------------------------------------
+  const selectedCount = selectedBatchIds.size
+  const allOnPageSelected =
+    paginatedBatches.length > 0 &&
+    paginatedBatches.every((b) => selectedBatchIds.has(b.id))
+
+  function toggleSelect(batchId: string) {
+    setSelectedBatchIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(batchId)) next.delete(batchId)
+      else next.add(batchId)
+      return next
+    })
+  }
+
+  function toggleSelectAllOnPage() {
+    setSelectedBatchIds((prev) => {
+      const next = new Set(prev)
+      if (allOnPageSelected) {
+        for (const b of paginatedBatches) next.delete(b.id)
+      } else {
+        for (const b of paginatedBatches) next.add(b.id)
+      }
+      return next
+    })
+  }
+
+  function clearSelection() {
+    setSelectedBatchIds(new Set())
+  }
+
+  async function handleBulkDelete() {
+    const ids = Array.from(selectedBatchIds)
+    if (ids.length === 0) return
 
     setDeleting(true)
     try {
@@ -316,7 +453,7 @@ export default function MailHistoryPage() {
       const { error } = await supabase
         .from("mail_send_batches")
         .delete()
-        .eq("id", batchId)
+        .in("id", ids)
 
       if (error) {
         toast.error(
@@ -325,34 +462,114 @@ export default function MailHistoryPage() {
         return
       }
 
-      // Optimistically prune the deleted batch from the cached list so the UI
-      // updates immediately even before the background refetch returns. The
-      // ON DELETE CASCADE on sent_emails (and email_events) means the row is
-      // fully gone server-side too.
-      setCachedHistory((prev) => (prev ?? []).filter((b) => b.id !== batchId))
+      // Optimistically prune the deleted batches. ON DELETE CASCADE on
+      // sent_emails / email_events removes their children server-side too.
+      const idSet = new Set(ids)
+      setCachedHistory((prev) => (prev ?? []).filter((b) => !idSet.has(b.id)))
       setExpandedIds((prev) => {
-        if (!prev.has(batchId)) return prev
         const next = new Set(prev)
-        next.delete(batchId)
+        for (const id of ids) next.delete(id)
         return next
       })
       setBodyCache((prev) => {
-        if (!(batchId in prev)) return prev
         const next = { ...prev }
-        delete next[batchId]
+        for (const id of ids) delete next[id]
         return next
       })
       setSelectedTrackingBatch((current) =>
-        current?.id === batchId ? null : current,
+        current && idSet.has(current.id) ? null : current,
+      )
+      setSelectedBatchIds(new Set())
+      setBulkDeleteOpen(false)
+      toast.success(
+        ids.length === 1
+          ? t("mail.history.delete.success", "Email deleted")
+          : `${ids.length} ${t("mail.history.delete.successPlural", "emails deleted")}`,
       )
 
-      setPendingDelete(null)
-      toast.success(t("mail.history.delete.success", "Email deleted"))
-
-      // Reconcile in the background so any other client updates show up too.
       void refresh()
     } finally {
       setDeleting(false)
+    }
+  }
+
+  // Retroactively file (or unfile) the selected batches into a campaign.
+  async function assignSelectionToCampaign(
+    target:
+      | { type: "none" }
+      | { type: "existing"; id: string; name: string }
+      | { type: "new"; name: string },
+  ) {
+    const ids = Array.from(selectedBatchIds)
+    if (ids.length === 0) return
+
+    setAssignBusy(true)
+    try {
+      const supabase = createClient()
+      let campaignId: string | null = null
+      let campaignName: string | null = null
+
+      if (target.type === "existing") {
+        campaignId = target.id
+        campaignName = target.name
+      } else if (target.type === "new") {
+        const name = target.name.trim()
+        if (!name) return
+        const existing = await supabase
+          .from("mail_campaigns")
+          .select("id, name")
+          .ilike("name", name)
+          .maybeSingle()
+        if (existing.data) {
+          const row = existing.data as Campaign
+          campaignId = row.id
+          campaignName = row.name
+        } else {
+          const created = await supabase
+            .from("mail_campaigns")
+            .insert({ user_id: user.id, name } as never)
+            .select("id, name")
+            .single()
+          if (created.error) {
+            toast.error(
+              `${t("mail.history.campaign.createError", "Failed to create campaign")}: ${created.error.message}`,
+            )
+            return
+          }
+          const row = created.data as Campaign
+          campaignId = row.id
+          campaignName = row.name
+        }
+      }
+
+      const { error } = await supabase
+        .from("mail_send_batches")
+        .update({ campaign_id: campaignId } as never)
+        .in("id", ids)
+      if (error) {
+        toast.error(
+          `${t("mail.history.campaign.assignError", "Failed to assign campaign")}: ${error.message}`,
+        )
+        return
+      }
+
+      const idSet = new Set(ids)
+      setCachedHistory((prev) =>
+        (prev ?? []).map((b) =>
+          idSet.has(b.id) ? { ...b, campaignId, campaignName } : b,
+        ),
+      )
+      await loadCampaigns()
+      setAssignOpen(false)
+      setAssignQuery("")
+      setSelectedBatchIds(new Set())
+      toast.success(
+        campaignId
+          ? `${t("mail.history.campaign.assigned", "Filed under")} ${campaignName}`
+          : t("mail.history.campaign.unfiled", "Removed from campaign"),
+      )
+    } finally {
+      setAssignBusy(false)
     }
   }
 
@@ -367,19 +584,6 @@ export default function MailHistoryPage() {
         }`,
       )
     }
-  }
-
-  function recipientSummary(batch: BatchEntry): string {
-    if (batch.recipientCount === 0) return "—"
-    const first = batch.recipients[0]
-    const firstLabel =
-      first?.name?.trim() || first?.email || `${batch.recipientCount} recipients`
-    if (batch.recipientCount === 1) return firstLabel
-    return `${firstLabel} + ${batch.recipientCount - 1} ${
-      batch.recipientCount - 1 === 1
-        ? t("mail.history.summary.other", "other")
-        : t("mail.history.summary.others", "others")
-    }`
   }
 
   function handleExportCsv() {
@@ -468,12 +672,40 @@ export default function MailHistoryPage() {
 
   const toolbar = (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <SearchInput
-        value={searchQuery}
-        onChange={setSearchQuery}
-        placeholder={t("mail.history.searchPlaceholder", "Search sent emails...")}
-        className="w-full lg:max-w-sm"
-      />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:flex-1">
+        <SearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder={t("mail.history.searchPlaceholder", "Search sent emails...")}
+          className="w-full lg:max-w-sm"
+        />
+        <Select value={campaignFilter} onValueChange={setCampaignFilter}>
+          <SelectTrigger className="h-9 w-full sm:w-56">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Tag className="size-3.5 shrink-0 text-muted-foreground" />
+              <SelectValue />
+            </div>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectLabel>
+                {t("mail.history.campaign.filterTitle", "Filter results by campaign")}
+              </SelectLabel>
+              <SelectItem value={CAMPAIGN_FILTER_ALL}>
+                {t("mail.history.campaign.filterAll", "All campaigns")}
+              </SelectItem>
+              <SelectItem value={CAMPAIGN_FILTER_NONE}>
+                {t("mail.history.campaign.filterNone", "No campaign")}
+              </SelectItem>
+              {campaigns.map((campaign) => (
+                <SelectItem key={campaign.id} value={campaign.id}>
+                  {campaign.name}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
       <div className="flex flex-wrap items-center gap-2 lg:justify-end">
         {selectedTrackingBatch ? (
           <Button
@@ -517,8 +749,9 @@ export default function MailHistoryPage() {
   return (
     <div className="space-y-6">
       <MailTrackingOverview
-        batchId={selectedTrackingBatch?.id ?? null}
-        batchSubject={selectedTrackingBatch?.subject ?? null}
+        batchIds={trackingScope.batchIds}
+        scopeKey={trackingScope.scopeKey}
+        scopeLabel={trackingScope.scopeLabel}
       />
 
       {toolbar}
@@ -564,12 +797,23 @@ export default function MailHistoryPage() {
           <Table className="table-fixed">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-10" />
+                <TableHead className="w-10">
+                  <div className="flex items-center justify-center">
+                    <Checkbox
+                      checked={allOnPageSelected}
+                      onCheckedChange={toggleSelectAllOnPage}
+                      aria-label={t("mail.history.selectAll", "Select all on this page")}
+                    />
+                  </div>
+                </TableHead>
                 <TableHead className="w-[28%]">
                   {t("mail.history.columns.subject", "Subject")}
                 </TableHead>
                 <TableHead>
                   {t("mail.history.columns.preview", "Preview")}
+                </TableHead>
+                <TableHead className="w-[160px]">
+                  {t("mail.history.columns.campaign", "Campaign")}
                 </TableHead>
                 <TableHead className="w-[180px]">
                   {t("mail.history.columns.recipients", "Recipients")}
@@ -577,7 +821,6 @@ export default function MailHistoryPage() {
                 <TableHead className="w-[150px] text-right">
                   {t("mail.history.columns.sentAt", "Sent")}
                 </TableHead>
-                <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -589,21 +832,41 @@ export default function MailHistoryPage() {
                       className="cursor-pointer"
                       onClick={() => toggleExpanded(batch.id)}
                     >
-                      <TableCell className="w-10 text-muted-foreground">
+                      <TableCell
+                        className="w-10"
+                        onClick={(event) => event.stopPropagation()}
+                      >
                         <div className="flex items-center justify-center">
-                        <ChevronDown
-                          className={cn(
-                            "size-4 transition-transform",
-                            expanded && "rotate-180",
-                          )}
-                        />
+                          <Checkbox
+                            checked={selectedBatchIds.has(batch.id)}
+                            onCheckedChange={() => toggleSelect(batch.id)}
+                            aria-label={t("mail.history.selectRow", "Select email")}
+                          />
                         </div>
                       </TableCell>
                       <TableCell className="font-medium">
-                        {batch.subject}
+                        <div className="flex items-start gap-1.5">
+                          <ChevronDown
+                            className={cn(
+                              "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
+                              expanded && "rotate-180",
+                            )}
+                          />
+                          <span className="min-w-0 truncate">{batch.subject}</span>
+                        </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {batch.preview || "—"}
+                      </TableCell>
+                      <TableCell>
+                        {batch.campaignName ? (
+                          <span className="inline-flex max-w-full items-center gap-1 text-sm">
+                            <Tag className="size-3 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{batch.campaignName}</span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1">
@@ -626,52 +889,6 @@ export default function MailHistoryPage() {
                       </TableCell>
                       <TableCell className="text-right text-xs text-muted-foreground [text-overflow:clip]">
                         {formatSentAt(batch.sentAt)}
-                      </TableCell>
-                      <TableCell className="w-12 text-right">
-                        <DropdownMenu
-                          open={openActionMenuBatchId === batch.id}
-                          onOpenChange={(open) =>
-                            setOpenActionMenuBatchId(open ? batch.id : null)
-                          }
-                        >
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-muted-foreground"
-                              aria-label={t("mail.history.actions.label", "Email actions")}
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <Ellipsis className="size-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="end"
-                            className="w-52"
-                            onCloseAutoFocus={(event) => event.preventDefault()}
-                          >
-                            <DropdownMenuItem
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                setSelectedTrackingBatch({
-                                  id: batch.id,
-                                  subject: batch.subject,
-                                })
-                              }}
-                            >
-                              {t("mail.history.actions.filterTracking", "Filter tracking to this email")}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                setPendingDelete(batch)
-                              }}
-                            >
-                              {t("mail.history.delete.label", "Delete email")}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
 
@@ -767,39 +984,47 @@ export default function MailHistoryPage() {
         </div>
       )}
 
+      <ActionBar
+        selectedCount={selectedCount}
+        onClear={clearSelection}
+        actions={[
+          {
+            label: t("mail.history.actions.assignCampaign", "Assign to campaign"),
+            icon: Tag,
+            onClick: () => {
+              setAssignQuery("")
+              setAssignOpen(true)
+            },
+          },
+          {
+            label: t("mail.history.bulk.delete", "Delete"),
+            icon: Trash2,
+            onClick: () => setBulkDeleteOpen(true),
+            variant: "destructive" as const,
+          },
+        ]}
+      />
+
       <AlertDialog
-        open={pendingDelete !== null}
+        open={bulkDeleteOpen}
         onOpenChange={(open) => {
-          if (!open && !deleting) setPendingDelete(null)
+          if (!open && !deleting) setBulkDeleteOpen(false)
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {t("mail.history.delete.confirmTitle", "Delete this email?")}
+              {selectedCount === 1
+                ? t("mail.history.delete.confirmTitle", "Delete this email?")
+                : `${t("mail.history.bulk.deleteConfirmTitlePrefix", "Delete")} ${selectedCount} ${t("mail.history.bulk.deleteConfirmTitleSuffix", "emails?")}`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {pendingDelete
-                ? t(
-                    "mail.history.delete.confirmDescription",
-                    "This permanently removes the send record, all per-recipient rows, and any tracked opens or clicks. This cannot be undone.",
-                  )
-                : ""}
+              {t(
+                "mail.history.delete.confirmDescription",
+                "This permanently removes the send record, all per-recipient rows, and any tracked opens or clicks. This cannot be undone.",
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {pendingDelete ? (
-            <div className="rounded-md border bg-muted/30 p-3 text-sm">
-              <p className="truncate font-medium">{pendingDelete.subject}</p>
-              <p className="text-xs text-muted-foreground">
-                {pendingDelete.recipientCount}{" "}
-                {pendingDelete.recipientCount === 1
-                  ? t("mail.history.summary.recipient", "recipient")
-                  : t("mail.history.summary.recipients", "recipients")}
-                {" · "}
-                {formatSentAt(pendingDelete.sentAt)}
-              </p>
-            </div>
-          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>
               {t("mail.history.delete.cancel", "Cancel")}
@@ -808,7 +1033,7 @@ export default function MailHistoryPage() {
               variant="destructive"
               onClick={(event) => {
                 event.preventDefault()
-                void handleConfirmDelete()
+                void handleBulkDelete()
               }}
               disabled={deleting}
             >
@@ -883,6 +1108,106 @@ export default function MailHistoryPage() {
                 <Skeleton className="h-64 w-full" />
               </div>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={assignOpen}
+        onOpenChange={(open) => {
+          if (!open && !assignBusy) {
+            setAssignOpen(false)
+            setAssignQuery("")
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              {t("mail.history.campaign.assignTitle", "Assign to campaign")}
+            </DialogTitle>
+            <DialogDescription>
+              {`${selectedCount} ${
+                selectedCount === 1
+                  ? t("mail.history.summary.recipient", "email")
+                  : t("mail.history.bulk.emails", "emails")
+              } ${t("mail.history.bulk.willBeFiled", "will be filed")}`}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={assignQuery}
+                onChange={(event) => setAssignQuery(event.target.value)}
+                placeholder={t(
+                  "mail.history.campaign.searchPlaceholder",
+                  "Search or name a new campaign...",
+                )}
+                className="pl-9"
+                disabled={assignBusy}
+              />
+            </div>
+            <div className="max-h-64 space-y-1 overflow-y-auto">
+              <button
+                type="button"
+                disabled={assignBusy}
+                onClick={() => void assignSelectionToCampaign({ type: "none" })}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60 disabled:opacity-50"
+              >
+                <span className="text-muted-foreground">
+                  {t("mail.history.campaign.filterNone", "No campaign")}
+                </span>
+              </button>
+              {campaigns
+                .filter((c) =>
+                  c.name
+                    .toLowerCase()
+                    .includes(assignQuery.trim().toLowerCase()),
+                )
+                .map((campaign) => (
+                  <button
+                    key={campaign.id}
+                    type="button"
+                    disabled={assignBusy}
+                    onClick={() =>
+                      void assignSelectionToCampaign({
+                        type: "existing",
+                        id: campaign.id,
+                        name: campaign.name,
+                      })
+                    }
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60 disabled:opacity-50"
+                  >
+                    <span className="truncate">{campaign.name}</span>
+                  </button>
+                ))}
+              {assignQuery.trim() &&
+              !campaigns.some(
+                (c) =>
+                  c.name.toLowerCase() === assignQuery.trim().toLowerCase(),
+              ) ? (
+                <button
+                  type="button"
+                  disabled={assignBusy}
+                  onClick={() =>
+                    void assignSelectionToCampaign({
+                      type: "new",
+                      name: assignQuery.trim(),
+                    })
+                  }
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60 disabled:opacity-50"
+                >
+                  <span className="text-muted-foreground">
+                    {t("mail.history.campaign.create", "Create")}
+                  </span>
+                  <span className="truncate font-medium">
+                    &ldquo;{assignQuery.trim()}&rdquo;
+                  </span>
+                </button>
+              ) : null}
+            </div>
           </div>
         </DialogContent>
       </Dialog>

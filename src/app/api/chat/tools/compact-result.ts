@@ -81,6 +81,17 @@ const TOOL_RULES: Record<string, CompactionRule> = {
     arrayCaps: [{ field: "chunks", limit: 6 }],
     stringCaps: [{ path: "chunks[*].excerpt", limit: 800 }],
   },
+  // SIE tools cap their lists internally; these rules honor the tool's own
+  // (higher than the generic 50) maxima so an explicit request isn't silently
+  // trimmed to 50 by the generic net. They only bite as a backstop.
+  get_hit_list_matches: {
+    // `companies` is the top-level list in rule-mode (in-tool max 100).
+    arrayCaps: [{ field: "companies", limit: 100 }],
+  },
+  get_sie_account_trend: {
+    // `accounts` is the per-account year list (in-tool max 200).
+    arrayCaps: [{ field: "accounts", limit: 200 }],
+  },
   get_customer_overview: {
     arrayCaps: [
       { field: "active_contracts_sample", limit: 5 },

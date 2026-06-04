@@ -53,23 +53,35 @@ function formatPercent(value: number): string {
 }
 
 type MailTrackingOverviewProps = {
-  batchId?: string | null
-  batchSubject?: string | null
+  /**
+   * Scope tracking to these batch ids. `null` = all emails; an empty array =
+   * a scope (e.g. a campaign) that currently has no batches → no data.
+   */
+  batchIds?: string[] | null
+  /** Stable cache discriminator for the scope (e.g. "campaign:<id>"). */
+  scopeKey?: string | null
+  /** Human label for the "Showing tracking for …" line. */
+  scopeLabel?: string | null
 }
 
 export function MailTrackingOverview({
-  batchId = null,
-  batchSubject,
+  batchIds = null,
+  scopeKey = null,
+  scopeLabel = null,
 }: MailTrackingOverviewProps) {
   const { t } = useTranslation()
   const { user } = useUser()
+  const isScoped = batchIds != null
 
   const fetchStats = React.useCallback(async (): Promise<TrackingStats> => {
     const supabase = createClient()
 
+    // A scope with no batches (e.g. an empty campaign) has nothing to show.
+    if (batchIds && batchIds.length === 0) return EMPTY_STATS
+
     let sentQuery = supabase.from("sent_emails").select("id, status")
-    if (batchId) {
-      sentQuery = sentQuery.eq("batch_id", batchId)
+    if (batchIds && batchIds.length > 0) {
+      sentQuery = sentQuery.in("batch_id", batchIds)
     }
 
     const { data: sentData, error: sentError } = await sentQuery
@@ -102,10 +114,10 @@ export function MailTrackingOverview({
       totalOpens: opens.length,
       totalClicks: clicks.length,
     }
-  }, [batchId])
+  }, [batchIds])
 
   const { data, loading, error: fetchError } = useCachedData<TrackingStats>({
-    key: `mail.tracking.v2.${user.id}.${batchId ?? "all"}`,
+    key: `mail.tracking.v3.${user.id}.${scopeKey ?? "all"}`,
     fetcher: fetchStats,
   })
 
@@ -114,15 +126,13 @@ export function MailTrackingOverview({
   const clickRate = stats.totalSent > 0 ? (stats.uniqueClicks / stats.totalSent) * 100 : 0
   const ctr = stats.uniqueOpens > 0 ? (stats.uniqueClicks / stats.uniqueOpens) * 100 : 0
 
-  const scopeLabel = batchId
-    ? t("mail.tracking.scope.batch", "Showing tracking for selected email batch")
-    : t("mail.tracking.scope.all", "Showing tracking for all emails")
-  const scopeDetail = batchId && batchSubject ? `: ${batchSubject}` : ""
+  const resolvedScopeLabel =
+    scopeLabel ?? t("mail.tracking.scope.all", "Showing tracking for all emails")
 
   if (loading && !data) {
     return (
       <div className="space-y-3">
-        <p className="text-xs text-muted-foreground">{scopeLabel}{scopeDetail}</p>
+        <p className="text-xs text-muted-foreground">{resolvedScopeLabel}</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Skeleton className="h-32" />
           <Skeleton className="h-32" />
@@ -149,7 +159,7 @@ export function MailTrackingOverview({
         icon={LineChart}
         title={t("mail.tracking.empty.title", "No sent emails to track yet")}
         description={
-          batchId
+          isScoped
             ? t(
                 "mail.tracking.empty.batchDescription",
                 "No delivered recipients were found for this selected email batch.",
@@ -173,7 +183,7 @@ export function MailTrackingOverview({
   return (
     <TooltipProvider delayDuration={150}>
       <div className="space-y-4">
-        <p className="text-xs text-muted-foreground">{scopeLabel}{scopeDetail}</p>
+        <p className="text-xs text-muted-foreground">{resolvedScopeLabel}</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Card className="gap-2">
             <CardHeader className={cardHeaderClassName}>

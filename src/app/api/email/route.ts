@@ -35,6 +35,10 @@ interface EmailRequest {
   data: Record<string, unknown>
   mode?: "send" | "preview"
   deliveryMode?: "grouped" | "separate"
+  // Optional campaign grouping. Either an existing campaign's id, or a name to
+  // pick-or-create one for the sending user. Ignored in preview mode.
+  campaign_id?: string | null
+  campaign_name?: string | null
 }
 
 function htmlToPreview(html: string, maxLength = 240): string {
@@ -234,7 +238,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const body: EmailRequest = await request.json()
+    // Parse defensively: an empty or non-JSON body (aborted/duplicate request,
+    // a beacon, a malformed client call) otherwise throws "Unexpected end of
+    // JSON input" and surfaces as a server error instead of a clean 400.
+    let body: EmailRequest
+    try {
+      const raw = await request.text()
+      if (!raw.trim()) {
+        return NextResponse.json(
+          { error: "Empty request body — expected JSON." },
+          { status: 400 },
+        )
+      }
+      body = JSON.parse(raw) as EmailRequest
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid request body — expected JSON." },
+        { status: 400 },
+      )
+    }
     const { template, data, mode = "send" } = body
     const deliveryMode = "separate"
 
@@ -328,6 +350,52 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Resolve the optional campaign grouping. Either an existing campaign id
+    // we can confirm the user owns (the select is RLS-scoped, so a foreign id
+    // returns nothing and is ignored), or a name to pick-or-create for them.
+    let resolvedCampaignId: string | null = null
+    {
+      const rawId =
+        typeof body.campaign_id === "string" ? body.campaign_id.trim() : ""
+      const rawName =
+        typeof body.campaign_name === "string" ? body.campaign_name.trim() : ""
+      if (rawId) {
+        const { data: owned } = await supabase
+          .from("mail_campaigns")
+          .select("id")
+          .eq("id", rawId)
+          .maybeSingle()
+        resolvedCampaignId = (owned as { id: string } | null)?.id ?? null
+      } else if (rawName) {
+        const existing = await supabase
+          .from("mail_campaigns")
+          .select("id")
+          .ilike("name", rawName)
+          .maybeSingle()
+        let id = (existing.data as { id: string } | null)?.id ?? null
+        if (!id) {
+          const created = await supabase
+            .from("mail_campaigns")
+            .insert({ user_id: user.id, name: rawName } as never)
+            .select("id")
+            .single()
+          if (created.error) {
+            // Likely a race on the unique(user_id, lower(name)) index — the
+            // campaign was created by a concurrent send; re-select it.
+            const reselect = await supabase
+              .from("mail_campaigns")
+              .select("id")
+              .ilike("name", rawName)
+              .maybeSingle()
+            id = (reselect.data as { id: string } | null)?.id ?? null
+          } else {
+            id = (created.data as { id: string }).id
+          }
+        }
+        resolvedCampaignId = id
+      }
+    }
+
     // Insert the batch row first so we have a batch_id to link the per-
     // recipient sent_emails rows to.
     const { data: batchData, error: batchError } = await supabase
@@ -340,6 +408,7 @@ export async function POST(request: NextRequest) {
         template_key: template,
         delivery_mode: deliveryMode,
         recipient_count: recipientPayloads.length,
+        campaign_id: resolvedCampaignId,
       } as never)
       .select("id")
       .single()
