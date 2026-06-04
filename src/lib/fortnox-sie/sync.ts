@@ -6,6 +6,7 @@ import {
   fetchSieFile,
   type SieType,
 } from "./client";
+import { orgNumbersMatch, normalizeOrgNumber } from "./org-number";
 import { parseSieFile, type ParsedSieFile } from "./parser";
 
 /**
@@ -46,7 +47,7 @@ import { parseSieFile, type ParsedSieFile } from "./parser";
 
 export interface SyncSieResult {
   importId: string | null;
-  status: "success" | "parse_error" | "fetch_error";
+  status: "success" | "parse_error" | "fetch_error" | "org_mismatch";
   financialYearFrom: string | null;
   counts: {
     accounts: number;
@@ -165,6 +166,64 @@ export async function syncSieForCustomer(
   }
   const financialYearFrom = currentYear.fromDate;
   const financialYearTo = currentYear.toDate;
+
+  // ---------------------------------------------------------------------
+  // Stage 2b — identity backstop
+  //
+  // Confirm the org number inside the SIE file matches the Saldo customer
+  // we're syncing for. This catches a connection that was bound to the
+  // wrong Fortnox company (e.g. the connect-time guard was bypassed, the
+  // customer had no org_number on file then, or the company was later
+  // re-pointed). We only block on a DEFINITE mismatch — both numbers
+  // present and different — so a customer with no org_number on file still
+  // syncs. On mismatch we refuse to persist and flag the connection.
+  // ---------------------------------------------------------------------
+  const fileOrgNumber = parsed.meta.orgNumber;
+  const { data: customerRow } = await admin
+    .from("customers")
+    .select("org_number")
+    .eq("id", opts.customerId)
+    .maybeSingle();
+  const customerOrgNumber =
+    (customerRow as { org_number?: string | null } | null)?.org_number ?? null;
+
+  if (
+    customerOrgNumber &&
+    fileOrgNumber &&
+    !orgNumbersMatch(customerOrgNumber, fileOrgNumber)
+  ) {
+    const message =
+      `SIE file org number ${normalizeOrgNumber(fileOrgNumber)} does not match ` +
+      `customer org number ${normalizeOrgNumber(customerOrgNumber)}. ` +
+      `Connection is likely bound to the wrong Fortnox company; refusing to persist.`;
+    console.error("[SIE sync]", message);
+
+    // Flag the connection so the UI surfaces it and the nightly batch stops
+    // re-pulling the wrong company's ledger every night.
+    await admin
+      .from("sie_connections")
+      .update({
+        connection_status: "error",
+        last_error: message.slice(0, 2000),
+      } as never)
+      .eq("customer_id", opts.customerId);
+
+    const importId = await recordFailedImport(admin, {
+      customerId: opts.customerId,
+      sieType,
+      financialYearFrom,
+      financialYearTo,
+      byteSize: fetched.byteLength,
+      status: "org_mismatch",
+      errorMessage: message,
+    });
+    return failureResult({
+      importId,
+      status: "org_mismatch",
+      errorMessage: message,
+      durationMs: Date.now() - started,
+    });
+  }
 
   // ---------------------------------------------------------------------
   // Stage 3 — persist (best-effort, partial state is acceptable)
@@ -574,7 +633,7 @@ interface FailedImportInput {
   financialYearFrom: string;
   financialYearTo: string;
   byteSize: number | null;
-  status: "parse_error" | "fetch_error";
+  status: "parse_error" | "fetch_error" | "org_mismatch";
   errorMessage: string;
 }
 
@@ -609,7 +668,7 @@ async function recordFailedImport(
 
 function failureResult(opts: {
   importId: string | null;
-  status: "parse_error" | "fetch_error";
+  status: "parse_error" | "fetch_error" | "org_mismatch";
   errorMessage: string;
   durationMs: number;
 }): SyncSieResult {

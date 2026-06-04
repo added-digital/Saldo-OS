@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import {
+  AlertTriangle,
   ChevronLeft,
   ChevronRight,
   Link2,
@@ -33,7 +34,21 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import type { SieConnectionStatus } from "@/types/database"
+
+// A connection flagged `error` because the SIE file's org number didn't match
+// the customer's is worth distinguishing from a generic sync error — it means
+// the OAuth grant is bound to the wrong Fortnox company. We detect it from the
+// stored last_error text (see sync.ts), which always contains this phrase.
+function isOrgMismatch(lastError: string | null): boolean {
+  return !!lastError && /does not match/i.test(lastError)
+}
 
 // One row per customer in the table. We compose this client-side by joining
 // `customers` with `sie_connections` so a customer that hasn't been touched
@@ -184,6 +199,54 @@ export default function SettingsSiePage() {
     })()
   }, [isAdmin, loadRows])
 
+  // Surface the outcome of an OAuth round-trip. The callback route redirects
+  // back here with ?success=true or ?error=<code>. We read it once on mount,
+  // toast it, then strip the params from the URL so a refresh doesn't re-fire
+  // the toast. Using window.location avoids needing a Suspense boundary for
+  // useSearchParams on this settings sub-page.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    const success = params.get("success")
+    const error = params.get("error")
+    if (!success && !error) return
+
+    if (success === "true") {
+      toast.success(
+        t("settings.sie.toast.connected", "Customer connected to SIE"),
+      )
+    } else if (error === "org_mismatch") {
+      const fortnoxOrg = params.get("fortnox_org")
+      toast.error(
+        t(
+          "settings.sie.toast.orgMismatch",
+          "Wrong company: the Fortnox account you authorized doesn't match this customer's org number",
+        ) + (fortnoxOrg ? ` (Fortnox: ${fortnoxOrg})` : ""),
+        { duration: 8000 },
+      )
+    } else if (error) {
+      const message = params.get("message")
+      toast.error(
+        `${t("settings.sie.toast.connectFailed", "Connection failed")}: ${message ?? error}`,
+      )
+    }
+
+    // Strip the one-shot params so the toast doesn't repeat on refresh.
+    params.delete("success")
+    params.delete("error")
+    params.delete("message")
+    params.delete("customer_id")
+    params.delete("fortnox_org")
+    const query = params.toString()
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}`,
+    )
+    // Re-load so a freshly-connected customer's status flips to active.
+    void loadRows()
+  }, [t, loadRows])
+
   async function handleManualRefresh() {
     setRefreshing(true)
     try {
@@ -274,6 +337,7 @@ export default function SettingsSiePage() {
   }
 
   return (
+    <TooltipProvider delayDuration={150}>
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -405,7 +469,11 @@ export default function SettingsSiePage() {
                     {row.fortnoxCustomerNumber ?? "—"}
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={row.status} t={t} />
+                    <StatusBadge
+                      status={row.status}
+                      lastError={row.lastError}
+                      t={t}
+                    />
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {formatTimestamp(row.lastSyncedAt)}
@@ -497,6 +565,7 @@ export default function SettingsSiePage() {
         </div>
       ) : null}
     </div>
+    </TooltipProvider>
   )
 }
 
@@ -526,10 +595,11 @@ function StatCell({ label, value, tone }: StatCellProps) {
 
 type StatusBadgeProps = {
   status: SieStatus
+  lastError: string | null
   t: (key: string, fallback?: string) => string
 }
 
-function StatusBadge({ status, t }: StatusBadgeProps) {
+function StatusBadge({ status, lastError, t }: StatusBadgeProps) {
   if (status === "active") {
     return (
       <Badge
@@ -551,10 +621,31 @@ function StatusBadge({ status, t }: StatusBadgeProps) {
     )
   }
   if (status === "error") {
-    return (
-      <Badge variant="outline" className="border-destructive text-destructive">
-        {t("settings.sie.status.error", "Error")}
+    // An org-number mismatch means the grant is bound to the wrong Fortnox
+    // company — surface that distinctly from a generic sync error, and put
+    // the full stored detail in a tooltip.
+    const mismatch = isOrgMismatch(lastError)
+    const badge = (
+      <Badge
+        variant="outline"
+        className="border-destructive text-destructive gap-1"
+      >
+        {mismatch ? <AlertTriangle className="size-3" /> : null}
+        {mismatch
+          ? t("settings.sie.status.orgMismatch", "Wrong company")
+          : t("settings.sie.status.error", "Error")}
       </Badge>
+    )
+    if (!lastError) return badge
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help">{badge}</span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs text-xs">
+          {lastError}
+        </TooltipContent>
+      </Tooltip>
     )
   }
   if (status === "pending") {

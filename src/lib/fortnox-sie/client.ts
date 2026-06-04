@@ -409,6 +409,49 @@ export async function fetchSieFile(opts: {
   };
 }
 
+/**
+ * Fetch the connected company's organisation number straight from Fortnox,
+ * using a raw access token + tenant (NOT a stored sie_connections row).
+ *
+ * Used by the OAuth callback as a connect-time guard: at that point no row
+ * exists yet, so we can't go through `getValidSieAccessToken`. We compare the
+ * value this returns against the Saldo customer's `org_number` to make sure
+ * the admin authorised the Fortnox company they actually intended to.
+ *
+ * Returns null (rather than throwing) when Fortnox doesn't surface an org
+ * number, so the caller can decide how to treat the "unknown" case. A failed
+ * HTTP call still throws — that's a real error worth surfacing.
+ */
+export async function fetchCompanyOrgNumber(opts: {
+  accessToken: string;
+  tenantId: string | null;
+}): Promise<string | null> {
+  const url = `${FORTNOX_API_BASE}/3/companyinformation`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildAuthedHeaders(opts.accessToken, opts.tenantId),
+  });
+
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    throw new Error(
+      `Fortnox /companyinformation failed: ${response.status} ${bodyText.slice(0, 200)}`,
+    );
+  }
+
+  const body = (await response.json()) as {
+    CompanyInformation?: Record<string, unknown>;
+  };
+  const info = body.CompanyInformation ?? {};
+  // Fortnox spells this "OrganizationNumber" on companyinformation (with a z),
+  // but accept the s-spelling too in case of endpoint/version drift.
+  const raw =
+    (info.OrganizationNumber as string | undefined) ??
+    (info.OrganisationNumber as string | undefined) ??
+    null;
+  return raw && raw.trim() !== "" ? raw : null;
+}
+
 function buildAuthedHeaders(
   accessToken: string,
   tenantId: string | null,

@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { exchangeSieCodeForTokens } from "@/lib/fortnox-sie/auth";
+import { fetchCompanyOrgNumber } from "@/lib/fortnox-sie/client";
+import { normalizeOrgNumber, orgNumbersMatch } from "@/lib/fortnox-sie/org-number";
 import { extractTenantIdFromJwt } from "@/lib/fortnox/auth";
 
 export const runtime = "nodejs";
@@ -135,6 +137,56 @@ export async function GET(request: NextRequest) {
   }
 
   const tenantId = extractTenantIdFromJwt(tokens.access_token);
+
+  // -------------------------------------------------------------------------
+  // 4b. Identity guard — make sure the Fortnox company the admin just
+  //     authorised actually belongs to the customer they clicked "Connect"
+  //     on. The customer_id comes from the button; the Fortnox tenant comes
+  //     from whichever company the admin happened to be logged into. Without
+  //     this check those two can silently disagree, binding one company's
+  //     ledger tokens to a different customer's row.
+  //
+  //     We only BLOCK on a definite mismatch (both org numbers present and
+  //     different). If either side is missing we let it through but log it,
+  //     so a customer with no org_number on file can still be onboarded —
+  //     the sync-time backstop will catch it once a real SIE file arrives.
+  // -------------------------------------------------------------------------
+  const { data: customerRow } = await supabase
+    .from("customers")
+    .select("org_number")
+    .eq("id", customerId)
+    .maybeSingle();
+  const customerOrgNumber =
+    (customerRow as { org_number?: string | null } | null)?.org_number ?? null;
+
+  let fortnoxOrgNumber: string | null = null;
+  try {
+    fortnoxOrgNumber = await fetchCompanyOrgNumber({
+      accessToken: tokens.access_token,
+      tenantId,
+    });
+  } catch (error) {
+    // A failed lookup shouldn't hard-block onboarding, but it's worth a log —
+    // the sync-time backstop still protects the data either way.
+    console.error("[SIE OAuth] company org-number lookup failed:", error);
+  }
+
+  if (
+    customerOrgNumber &&
+    fortnoxOrgNumber &&
+    !orgNumbersMatch(customerOrgNumber, fortnoxOrgNumber)
+  ) {
+    console.error(
+      `[SIE OAuth] org-number mismatch for customer ${customerId}: ` +
+        `Saldo=${normalizeOrgNumber(customerOrgNumber)} ` +
+        `Fortnox=${normalizeOrgNumber(fortnoxOrgNumber)} — refusing to persist tokens.`,
+    );
+    return redirectBack(request, {
+      error: "org_mismatch",
+      fortnox_org: normalizeOrgNumber(fortnoxOrgNumber) ?? "",
+    });
+  }
+
   const now = new Date();
   const accessExpiresAt = new Date(
     now.getTime() + (tokens.expires_in ?? 3600) * 1000,
