@@ -33,7 +33,8 @@ import { useUser } from "@/hooks/use-user"
 import { useCachedData } from "@/hooks/use-cached-data"
 
 function getCustomerColumns(
-  t: (key: string, fallback?: string) => string
+  t: (key: string, fallback?: string) => string,
+  onShowOverdueInvoices: (customer: CustomerWithRelations) => void
 ): ColumnDef<CustomerWithRelations, unknown>[] {
   return [
     {
@@ -103,6 +104,33 @@ function getCustomerColumns(
       cell: ({ row }) => formatSek(row.getValue("contract_value") as number | null),
     },
     {
+      id: "has_overdue_invoices",
+      size: 150,
+      minSize: 100,
+      header: t("customers.table.overdueInvoices", "Overdue Invoices"),
+      cell: ({ row }) =>
+        row.original.has_overdue_invoices ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              onShowOverdueInvoices(row.original)
+            }}
+            className="cursor-pointer"
+            title={t("customers.table.overdueShowInvoices", "Show overdue invoices")}
+          >
+            <Badge
+              variant="destructive"
+              className="text-xs font-normal transition-opacity hover:opacity-80"
+            >
+              {t("customers.table.overdueBadge", "Overdue")}
+            </Badge>
+          </button>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+    {
       id: "segments",
       size: 200,
       minSize: 100,
@@ -161,6 +189,30 @@ function toCsvRow(values: string[]): string {
   return values.map(escapeCsvValue).join(",")
 }
 
+interface OverdueInvoiceRow {
+  id: string
+  document_number: string
+  invoice_date: string | null
+  due_date: string | null
+  total: number | null
+  balance: number | null
+  currency_code: string | null
+}
+
+function daysOverdue(dueDate: string | null): number | null {
+  if (!dueDate) return null
+  const due = Date.parse(dueDate)
+  if (Number.isNaN(due)) return null
+  const today = Date.parse(new Date().toISOString().slice(0, 10))
+  return Math.max(0, Math.floor((today - due) / 86400000))
+}
+
+function formatInvoiceAmount(value: number | null, currencyCode: string | null): string {
+  if (value == null) return "—"
+  if (!currencyCode || currencyCode === "SEK") return sekFormatter.format(value)
+  return `${numberFormatter.format(value)} ${currencyCode}`
+}
+
 interface CustomerListColumnDefinition {
   id: string
   labelKey: string
@@ -177,9 +229,11 @@ const customerListColumnDefinitions: CustomerListColumnDefinition[] = [
   { id: "account_manager", labelKey: "customers.columns.customerManager", fallbackLabel: "Customer Manager" },
   { id: "invoice_count", labelKey: "customers.columns.invoices", fallbackLabel: "Invoices" },
   { id: "contract_value", labelKey: "customers.columns.contractValue", fallbackLabel: "Contract Value" },
+  { id: "has_overdue_invoices", labelKey: "customers.columns.overdueInvoices", fallbackLabel: "Overdue Invoices" },
   { id: "segments", labelKey: "customers.columns.segments", fallbackLabel: "Segments" },
 ]
 
+const OVERDUE_GRACE_DAYS = 3
 const CUSTOMER_FILTERS_STORAGE_KEY = "saldo-crm:customers:filters"
 const CUSTOMER_LIST_COLUMNS_STORAGE_KEY = "saldo-crm:customers:list-columns"
 const CUSTOMER_TABLE_PAGE_SIZE = 15
@@ -187,6 +241,7 @@ const DEFAULT_VISIBLE_LIST_COLUMN_IDS = new Set<string>([
   "name",
   "fortnox_customer_number",
   "account_manager",
+  "has_overdue_invoices",
   "segments",
 ])
 
@@ -210,7 +265,9 @@ function isCustomerFilterState(value: unknown): value is CustomerFilterState {
     Array.isArray(candidate.managerIds) &&
     typeof candidate.missingPrimaryContact === "boolean" &&
     typeof candidate.missingEmail === "boolean" &&
-    typeof candidate.missingCustomerManager === "boolean"
+    typeof candidate.missingCustomerManager === "boolean" &&
+    (candidate.hasOverdueInvoices === undefined ||
+      typeof candidate.hasOverdueInvoices === "boolean")
   )
 }
 
@@ -275,10 +332,47 @@ export default function CustomersPage() {
       }
     }
 
+    // Customers with invoices that are unpaid (balance > 0) and overdue by
+    // more than OVERDUE_GRACE_DAYS days past the due date (due_date — same
+    // column the reports overdue KPI uses; final_pay_date is the date an
+    // invoice was fully paid, so it is NULL on unpaid invoices).
+    const overdueCutoff = new Date()
+    overdueCutoff.setDate(overdueCutoff.getDate() - OVERDUE_GRACE_DAYS)
+    const overdueCutoffIso = overdueCutoff.toISOString().slice(0, 10)
+
+    const overdueCustomerIds = new Set<string>()
+    const overdueCustomerNumbers = new Set<string>()
+    let invoiceFrom = 0
+    let invoiceHasMore = true
+
+    while (invoiceHasMore) {
+      const { data: invoiceRows } = await supabase
+        .from("invoices")
+        .select("customer_id, fortnox_customer_number")
+        .gt("balance", 0)
+        .lt("due_date", overdueCutoffIso)
+        .range(invoiceFrom, invoiceFrom + PAGE_SIZE - 1)
+
+      const rows = (invoiceRows ?? []) as unknown as {
+        customer_id: string | null
+        fortnox_customer_number: string | null
+      }[]
+      for (const row of rows) {
+        if (row.customer_id) overdueCustomerIds.add(row.customer_id)
+        if (row.fortnox_customer_number) overdueCustomerNumbers.add(row.fortnox_customer_number)
+      }
+      invoiceHasMore = rows.length === PAGE_SIZE
+      invoiceFrom += PAGE_SIZE
+    }
+
     return allRows.map((c) => ({
       ...c,
       account_manager: c.fortnox_cost_center ? profileByCostCenter.get(c.fortnox_cost_center) ?? null : null,
       segments: segmentMap[c.id] ?? [],
+      has_overdue_invoices:
+        overdueCustomerIds.has(c.id) ||
+        (c.fortnox_customer_number != null &&
+          overdueCustomerNumbers.has(c.fortnox_customer_number)),
     }))
   }, [])
 
@@ -287,7 +381,7 @@ export default function CustomersPage() {
     loading,
     refresh: refreshCustomers,
   } = useCachedData<CustomerWithRelations[]>({
-    key: `customers.v1.${user.id}`,
+    key: `customers.v3.${user.id}`,
     fetcher: fetchCustomers,
     staleMs: 120000,
   })
@@ -307,9 +401,52 @@ export default function CustomersPage() {
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageSize, setPageSize] = React.useState(CUSTOMER_TABLE_PAGE_SIZE)
   const [filters, setFilters] = React.useState<CustomerFilterState>(EMPTY_FILTERS)
+  const [overdueDialogCustomer, setOverdueDialogCustomer] = React.useState<CustomerWithRelations | null>(null)
+  const [overdueInvoiceRows, setOverdueInvoiceRows] = React.useState<OverdueInvoiceRow[]>([])
+  const [overdueInvoicesLoading, setOverdueInvoicesLoading] = React.useState(false)
   const [visibleListColumns, setVisibleListColumns] = React.useState<Record<string, boolean>>(() => getDefaultVisibleListColumns())
 
-  const columns = React.useMemo(() => getCustomerColumns(t), [t])
+  const handleShowOverdueInvoices = React.useCallback(
+    async (customer: CustomerWithRelations) => {
+      setOverdueDialogCustomer(customer)
+      setOverdueInvoiceRows([])
+      setOverdueInvoicesLoading(true)
+
+      const supabase = createClient()
+      const cutoff = new Date()
+      cutoff.setDate(cutoff.getDate() - OVERDUE_GRACE_DAYS)
+      const cutoffIso = cutoff.toISOString().slice(0, 10)
+
+      let query = supabase
+        .from("invoices")
+        .select("id, document_number, invoice_date, due_date, total, balance, currency_code")
+        .gt("balance", 0)
+        .lt("due_date", cutoffIso)
+        .order("due_date", { ascending: true })
+
+      query = customer.fortnox_customer_number
+        ? query.or(
+            `customer_id.eq.${customer.id},fortnox_customer_number.eq.${customer.fortnox_customer_number}`
+          )
+        : query.eq("customer_id", customer.id)
+
+      const { data, error } = await query
+
+      if (error) {
+        toast.error(t("customers.dialog.overdue.loadFailed", "Failed to load overdue invoices"))
+        setOverdueInvoiceRows([])
+      } else {
+        setOverdueInvoiceRows((data ?? []) as unknown as OverdueInvoiceRow[])
+      }
+      setOverdueInvoicesLoading(false)
+    },
+    [t]
+  )
+
+  const columns = React.useMemo(
+    () => getCustomerColumns(t, handleShowOverdueInvoices),
+    [t, handleShowOverdueInvoices]
+  )
 
   const listColumns = React.useMemo<CustomerListColumnOption[]>(
     () =>
@@ -370,7 +507,8 @@ export default function CustomersPage() {
     filters.managerIds.length > 0 ||
     filters.missingPrimaryContact ||
     filters.missingEmail ||
-    filters.missingCustomerManager
+    filters.missingCustomerManager ||
+    filters.hasOverdueInvoices
 
   const hasSearch = searchQuery.trim().length > 0
   const hasFilterResultGap = customers.length > 0 && filteredCustomers.length === 0 && (hasNonDefaultFilters || hasSearch)
@@ -430,7 +568,7 @@ export default function CustomersPage() {
 
       const parsedFilters = JSON.parse(storedFilters) as unknown
       if (isCustomerFilterState(parsedFilters)) {
-        setFilters(parsedFilters)
+        setFilters({ ...EMPTY_FILTERS, ...parsedFilters })
       }
     } catch {
       window.localStorage.removeItem(CUSTOMER_FILTERS_STORAGE_KEY)
@@ -563,6 +701,10 @@ export default function CustomersPage() {
             return customer.invoice_count == null ? "" : String(customer.invoice_count)
           case "contract_value":
             return customer.contract_value == null ? "" : String(customer.contract_value)
+          case "has_overdue_invoices":
+            return customer.has_overdue_invoices
+              ? t("customers.table.overdueBadge", "Overdue")
+              : ""
           case "segments":
             return (customer.segments ?? []).map((segment) => segment.name).join(" | ")
           default:
@@ -693,6 +835,100 @@ export default function CustomersPage() {
           },
         ]}
       />
+
+      <Dialog
+        open={overdueDialogCustomer !== null}
+        onOpenChange={(open) => {
+          if (!open) setOverdueDialogCustomer(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {t("customers.dialog.overdue.title", "Overdue Invoices")}
+              {overdueDialogCustomer ? ` — ${overdueDialogCustomer.name}` : ""}
+            </DialogTitle>
+            <DialogDescription>
+              {t(
+                "customers.dialog.overdue.description",
+                "Unpaid invoices overdue by more than 3 days."
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {overdueInvoicesLoading ? (
+            <p className="py-4 text-sm text-muted-foreground">
+              {t("customers.dialog.overdue.loading", "Loading invoices...")}
+            </p>
+          ) : overdueInvoiceRows.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">
+              {t("customers.dialog.overdue.none", "No overdue invoices found.")}
+            </p>
+          ) : (
+            <div className="max-h-96 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="pb-2 pr-4 font-medium">
+                      {t("customers.dialog.overdue.invoiceNo", "Invoice No.")}
+                    </th>
+                    <th className="pb-2 pr-4 font-medium">
+                      {t("customers.dialog.overdue.invoiceDate", "Invoice Date")}
+                    </th>
+                    <th className="pb-2 pr-4 font-medium">
+                      {t("customers.dialog.overdue.dueDate", "Due Date")}
+                    </th>
+                    <th className="pb-2 pr-4 text-right font-medium">
+                      {t("customers.dialog.overdue.daysOverdue", "Days Overdue")}
+                    </th>
+                    <th className="pb-2 text-right font-medium">
+                      {t("customers.dialog.overdue.balance", "Balance")}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overdueInvoiceRows.map((invoice) => {
+                    const overdueDays = daysOverdue(invoice.due_date)
+                    return (
+                      <tr key={invoice.id} className="border-b last:border-b-0">
+                        <td className="py-2 pr-4 font-medium">{invoice.document_number}</td>
+                        <td className="py-2 pr-4">{invoice.invoice_date ?? "—"}</td>
+                        <td className="py-2 pr-4">{invoice.due_date ?? "—"}</td>
+                        <td className="py-2 pr-4 text-right">
+                          {overdueDays == null ? (
+                            "—"
+                          ) : (
+                            <span className="font-medium text-destructive">{overdueDays}</span>
+                          )}
+                        </td>
+                        <td className="py-2 text-right">
+                          {formatInvoiceAmount(invoice.balance, invoice.currency_code)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!overdueInvoicesLoading && overdueInvoiceRows.length > 0 ? (
+            <div className="flex items-center justify-between border-t pt-3 text-sm">
+              <span className="text-muted-foreground">
+                {overdueInvoiceRows.length}{" "}
+                {overdueInvoiceRows.length === 1
+                  ? t("customers.dialog.overdue.invoiceSingular", "invoice")
+                  : t("customers.dialog.overdue.invoicePlural", "invoices")}
+              </span>
+              <span className="font-medium">
+                {t("customers.dialog.overdue.total", "Total")}:{" "}
+                {formatInvoiceAmount(
+                  overdueInvoiceRows.reduce((sum, invoice) => sum + (invoice.balance ?? 0), 0),
+                  overdueInvoiceRows[0]?.currency_code ?? "SEK"
+                )}
+              </span>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={segmentsDialogOpen} onOpenChange={setSegmentsDialogOpen}>
         <DialogContent>

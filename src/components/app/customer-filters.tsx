@@ -26,6 +26,7 @@ interface CustomerFilterState {
   missingPrimaryContact: boolean
   missingEmail: boolean
   missingCustomerManager: boolean
+  hasOverdueInvoices: boolean
 }
 
 interface CustomerListColumnOption {
@@ -42,6 +43,7 @@ const EMPTY_FILTERS: CustomerFilterState = {
   missingPrimaryContact: false,
   missingEmail: false,
   missingCustomerManager: false,
+  hasOverdueInvoices: false,
 }
 
 function hasActiveFilters(filters: CustomerFilterState): boolean {
@@ -53,7 +55,8 @@ function hasActiveFilters(filters: CustomerFilterState): boolean {
     filters.managerIds.length > 0 ||
     filters.missingPrimaryContact ||
     filters.missingEmail ||
-    filters.missingCustomerManager
+    filters.missingCustomerManager ||
+    filters.hasOverdueInvoices
   )
 }
 
@@ -91,6 +94,10 @@ function applyFilters(
     }
 
     if (filters.missingCustomerManager && Boolean(c.account_manager)) {
+      return false
+    }
+
+    if (filters.hasOverdueInvoices && !c.has_overdue_invoices) {
       return false
     }
 
@@ -193,6 +200,11 @@ function CustomerFilters({
     )
   }, [customers])
 
+  const overdueCustomerCount = React.useMemo(
+    () => customers.filter((c) => c.has_overdue_invoices).length,
+    [customers]
+  )
+
   const visibleManagers = React.useMemo(() => {
     if (!managerQuery) return managers
 
@@ -210,7 +222,8 @@ function CustomerFilters({
     filters.managerIds.length +
     (filters.missingPrimaryContact ? 1 : 0) +
     (filters.missingEmail ? 1 : 0) +
-    (filters.missingCustomerManager ? 1 : 0)
+    (filters.missingCustomerManager ? 1 : 0) +
+    (filters.hasOverdueInvoices ? 1 : 0)
 
   const missingFieldsCount = [
     filters.missingPrimaryContact,
@@ -385,6 +398,38 @@ function CustomerFilters({
                 {t("customers.filters.noManagersAvailable", "No customer managers available.")}
               </p>
             )}
+          </FilterSection>
+
+          <FilterSection
+            title={t("customers.filters.section.invoices", "Invoices")}
+            count={filters.hasOverdueInvoices ? 1 : 0}
+          >
+            <label
+              htmlFor="customer-filter-has-overdue-invoices"
+              className="flex cursor-pointer items-center gap-3 text-sm"
+            >
+              <Checkbox
+                id="customer-filter-has-overdue-invoices"
+                checked={filters.hasOverdueInvoices}
+                onCheckedChange={() =>
+                  onFiltersChange({
+                    ...filters,
+                    hasOverdueInvoices: !filters.hasOverdueInvoices,
+                  })
+                }
+              />
+              <span>
+                {t(
+                  "customers.filters.field.hasOverdueInvoices",
+                  "Has overdue invoices (3+ days)"
+                )}
+              </span>
+              {overdueCustomerCount > 0 ? (
+                <Badge variant="secondary" className="h-5 min-w-5 px-1 text-[11px]">
+                  {overdueCustomerCount}
+                </Badge>
+              ) : null}
+            </label>
           </FilterSection>
 
           <FilterSection

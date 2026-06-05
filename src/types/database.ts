@@ -125,6 +125,8 @@ export interface CustomerSegment {
 export interface CustomerWithRelations extends Customer {
   account_manager?: Pick<Profile, "id" | "full_name" | "email"> | null
   segments?: Segment[]
+  /** True when the customer has at least one unpaid invoice overdue by more than 3 days. */
+  has_overdue_invoices?: boolean
 }
 
 export interface CustomerKpi {
