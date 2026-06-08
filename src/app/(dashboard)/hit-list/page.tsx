@@ -36,6 +36,8 @@ import {
   type HitListRule,
   type HitListUnit,
 } from "@/lib/fortnox-sie/hit-list-definitions"
+import { Button } from "@/components/ui/button"
+import { SearchInput } from "@/components/app/search-input"
 
 /**
  * /hit-list — Träfflista.
@@ -52,13 +54,19 @@ interface MatchRow {
   customerName: string
   fortnoxCustomerNumber: string | null
   value: number | null
+  consultantId: string | null
+  consultantName: string | null
+  costCenter: string | null
 }
 
 // Stored handling status for a company under a given rule. "none" is the
-// default and is represented by the absence of a hit_list_statuses row.
+// default and is represented by a NULL status (or no row at all).
 type HitStatus = "under_hantering" | "hanterad"
-// Sentinel used as the Select value for the "no status" option — Radix Select
-// can't use an empty string as an item value.
+// Manually set priority for a company under a given rule, stored alongside
+// the status in hit_list_statuses. "none" = NULL / no row.
+type HitPriority = "high" | "medium" | "low"
+// Sentinel used as the Select value for the "no status"/"no priority"
+// options — Radix Select can't use an empty string as an item value.
 const STATUS_NONE = "none"
 
 // State key: one status per (rule, customer) pair.
@@ -85,8 +93,16 @@ export default function HitListPage() {
     Record<string, MatchRow[]>
   >({})
   const [statuses, setStatuses] = React.useState<Record<string, HitStatus>>({})
+  const [priorities, setPriorities] = React.useState<Record<string, HitPriority>>({})
   const [loading, setLoading] = React.useState(true)
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({})
+
+  // Toolbar filters.
+  const [searchQuery, setSearchQuery] = React.useState("")
+  const [consultantFilter, setConsultantFilter] = React.useState("all")
+  const [priorityFilter, setPriorityFilter] = React.useState<HitPriority | typeof STATUS_NONE | "all">("all")
+  const [statusFilter, setStatusFilter] = React.useState<HitStatus | typeof STATUS_NONE | "all">("all")
+  const [clientScope, setClientScope] = React.useState<"all" | "mine">("all")
 
   const currentYear = new Date().getFullYear()
   const yearFrom = `${currentYear}-01-01`
@@ -193,27 +209,59 @@ export default function HitListPage() {
         rawMatches[rule.key] = list
       }
 
-      // Resolve names for all matched customers in one query.
+      // Resolve names + consultant (customer manager) for all matched
+      // customers. Consultants are resolved the same way as on /customers:
+      // customers.fortnox_cost_center → profiles.fortnox_cost_center.
       const nameById = new Map<
         string,
-        { name: string; fortnoxCustomerNumber: string | null }
+        {
+          name: string
+          fortnoxCustomerNumber: string | null
+          costCenter: string | null
+        }
+      >()
+      const consultantByCostCenter = new Map<
+        string,
+        { id: string; name: string }
       >()
       if (matchedCustomerIds.size > 0) {
-        const { data: customerData } = await supabase
-          .from("customers")
-          .select("id, name, fortnox_customer_number")
-          .in("id", Array.from(matchedCustomerIds))
+        const [{ data: customerData }, { data: profileData }] =
+          await Promise.all([
+            supabase
+              .from("customers")
+              .select("id, name, fortnox_customer_number, fortnox_cost_center")
+              .in("id", Array.from(matchedCustomerIds)),
+            supabase
+              .from("profiles")
+              .select("id, full_name, email, fortnox_cost_center")
+              .eq("is_active", true)
+              .not("fortnox_cost_center", "is", null),
+          ])
 
         if (cancelled) return
+
+        for (const p of (profileData ?? []) as Array<{
+          id: string
+          full_name: string | null
+          email: string
+          fortnox_cost_center: string
+        }>) {
+          consultantByCostCenter.set(p.fortnox_cost_center, {
+            id: p.id,
+            name: p.full_name ?? p.email,
+          })
+        }
 
         for (const c of (customerData ?? []) as Array<{
           id: string
           name: string
           fortnox_customer_number: string | null
+          fortnox_cost_center: string | null
         }>) {
           nameById.set(c.id, {
             name: c.name,
             fortnoxCustomerNumber: c.fortnox_customer_number,
+            costCenter: c.fortnox_cost_center,
           })
         }
       }
@@ -224,24 +272,31 @@ export default function HitListPage() {
         resolved[rule.key] = (rawMatches[rule.key] ?? [])
           .map((m) => {
             const info = nameById.get(m.customerId)
+            const consultant = info?.costCenter
+              ? consultantByCostCenter.get(info.costCenter) ?? null
+              : null
             return {
               customerId: m.customerId,
               customerName: info?.name ?? "—",
               fortnoxCustomerNumber: info?.fortnoxCustomerNumber ?? null,
               value: m.value,
+              consultantId: consultant?.id ?? null,
+              consultantName: consultant?.name ?? null,
+              costCenter: info?.costCenter ?? null,
             }
           })
           .sort((a, b) => ((a.value ?? 0) - (b.value ?? 0)) * dir)
       }
 
-      // Load any saved handling statuses for the matched companies. Scoped by
-      // customer; we key the resulting map per (rule, customer). Absence of a
-      // row means "no status".
+      // Load any saved handling statuses + priorities for the matched
+      // companies. Keyed per (rule, customer). NULL / absent row means "no
+      // status" / "no priority".
       const statusMap: Record<string, HitStatus> = {}
+      const priorityMap: Record<string, HitPriority> = {}
       if (matchedCustomerIds.size > 0) {
         const { data: statusData, error: statusError } = await supabase
           .from("hit_list_statuses")
-          .select("customer_id, rule_key, status")
+          .select("customer_id, rule_key, status, priority")
           .in("customer_id", Array.from(matchedCustomerIds))
 
         if (cancelled) return
@@ -253,14 +308,18 @@ export default function HitListPage() {
           for (const row of (statusData ?? []) as Array<{
             customer_id: string
             rule_key: string
-            status: HitStatus
+            status: HitStatus | null
+            priority: HitPriority | null
           }>) {
-            statusMap[statusKey(row.rule_key, row.customer_id)] = row.status
+            const key = statusKey(row.rule_key, row.customer_id)
+            if (row.status) statusMap[key] = row.status
+            if (row.priority) priorityMap[key] = row.priority
           }
         }
       }
 
       setStatuses(statusMap)
+      setPriorities(priorityMap)
       setMatchesByRule(resolved)
       setLoading(false)
     })()
@@ -270,25 +329,51 @@ export default function HitListPage() {
     }
   }, [hasAccess, yearFrom])
 
-  // Persist a status change for one company under one rule. Optimistic: we
-  // update local state immediately, then upsert (or delete, for "none") and
-  // roll back on failure. Writes go straight through the browser client —
-  // admin-only RLS on hit_list_statuses authorizes them.
-  const updateStatus = React.useCallback(
-    async (ruleKey: string, customerId: string, next: HitStatus | "none") => {
+  // Persist a status or priority change for one company under one rule. Both
+  // live on the same hit_list_statuses row, so we recompute the row from the
+  // current maps: if both fields end up empty the row is deleted, otherwise
+  // it's upserted. Optimistic with rollback. Admin-only RLS authorizes writes.
+  const updateRow = React.useCallback(
+    async (
+      ruleKey: string,
+      customerId: string,
+      field: "status" | "priority",
+      next: HitStatus | HitPriority | "none",
+    ) => {
       const key = statusKey(ruleKey, customerId)
-      const previous = statuses[key]
+      const previousStatus = statuses[key]
+      const previousPriority = priorities[key]
 
-      setStatuses((prev) => {
-        const copy = { ...prev }
-        if (next === STATUS_NONE) delete copy[key]
-        else copy[key] = next
-        return copy
-      })
+      const nextStatus =
+        field === "status"
+          ? next === STATUS_NONE
+            ? undefined
+            : (next as HitStatus)
+          : previousStatus
+      const nextPriority =
+        field === "priority"
+          ? next === STATUS_NONE
+            ? undefined
+            : (next as HitPriority)
+          : previousPriority
+
+      const setKeyed = (
+        setter: React.Dispatch<React.SetStateAction<Record<string, never>>>,
+        value: unknown,
+      ) =>
+        setter((prev) => {
+          const copy = { ...prev } as Record<string, unknown>
+          if (value === undefined) delete copy[key]
+          else copy[key] = value
+          return copy as Record<string, never>
+        })
+
+      setKeyed(setStatuses as never, nextStatus)
+      setKeyed(setPriorities as never, nextPriority)
 
       const supabase = createClient()
       try {
-        if (next === STATUS_NONE) {
+        if (nextStatus === undefined && nextPriority === undefined) {
           const { error } = await supabase
             .from("hit_list_statuses")
             .delete()
@@ -300,7 +385,8 @@ export default function HitListPage() {
             {
               customer_id: customerId,
               rule_key: ruleKey,
-              status: next,
+              status: nextStatus ?? null,
+              priority: nextPriority ?? null,
               updated_by: user.id,
             } as never,
             { onConflict: "customer_id,rule_key" } as never,
@@ -308,22 +394,99 @@ export default function HitListPage() {
           if (error) throw error
         }
       } catch (err) {
-        // Roll back to the previous value on failure.
-        setStatuses((prev) => {
-          const copy = { ...prev }
-          if (previous) copy[key] = previous
-          else delete copy[key]
-          return copy
-        })
+        // Roll back both fields on failure.
+        setKeyed(setStatuses as never, previousStatus)
+        setKeyed(setPriorities as never, previousPriority)
         toast.error(
-          `${t("hitList.status.saveFailed", "Failed to save status")}: ${
+          `${t("hitList.status.saveFailed", "Failed to save")}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         )
       }
     },
-    [statuses, user.id, t],
+    [statuses, priorities, user.id, t],
   )
+
+  const updateStatus = React.useCallback(
+    (ruleKey: string, customerId: string, next: HitStatus | "none") =>
+      updateRow(ruleKey, customerId, "status", next),
+    [updateRow],
+  )
+
+  const updatePriority = React.useCallback(
+    (ruleKey: string, customerId: string, next: HitPriority | "none") =>
+      updateRow(ruleKey, customerId, "priority", next),
+    [updateRow],
+  )
+
+  // Distinct consultants across all matched companies (for the select).
+  const consultants = React.useMemo(() => {
+    const map = new Map<string, string>()
+    for (const rows of Object.values(matchesByRule)) {
+      for (const m of rows) {
+        if (m.consultantId && m.consultantName && !map.has(m.consultantId)) {
+          map.set(m.consultantId, m.consultantName)
+        }
+      }
+    }
+    return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    )
+  }, [matchesByRule])
+
+  // Rule-level filter: search (name/summary) hides whole rules.
+  const visibleRules = React.useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return HIT_LIST_RULES
+    return HIT_LIST_RULES.filter((rule) => {
+      const haystack = `${rule.names[language]} ${rule.summary[language]}`.toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [searchQuery, language])
+
+  // Company-level filters: consultant, priority, status and All/My Clients
+  // narrow the matches inside each rule; rules stay visible with an updated
+  // count.
+  const filteredMatchesByRule = React.useMemo(() => {
+    const result: Record<string, MatchRow[]> = {}
+    for (const rule of HIT_LIST_RULES) {
+      result[rule.key] = (matchesByRule[rule.key] ?? []).filter((m) => {
+        const key = statusKey(rule.key, m.customerId)
+        if (
+          clientScope === "mine" &&
+          (!user.fortnox_cost_center || m.costCenter !== user.fortnox_cost_center)
+        ) {
+          return false
+        }
+        if (consultantFilter !== "all" && m.consultantId !== consultantFilter) {
+          return false
+        }
+        if (statusFilter !== "all") {
+          const status = statuses[key]
+          if (statusFilter === STATUS_NONE ? status !== undefined : status !== statusFilter) {
+            return false
+          }
+        }
+        if (priorityFilter !== "all") {
+          const priority = priorities[key]
+          if (priorityFilter === STATUS_NONE ? priority !== undefined : priority !== priorityFilter) {
+            return false
+          }
+        }
+        return true
+      })
+    }
+    return result
+  }, [
+    matchesByRule,
+    statuses,
+    priorities,
+    clientScope,
+    consultantFilter,
+    statusFilter,
+    priorityFilter,
+    user.fortnox_cost_center,
+  ])
 
   if (!hasAccess) {
     return (
@@ -351,6 +514,98 @@ export default function HitListPage() {
         </p>
       </div>
 
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <SearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder={t("hitList.filters.search", "Search lists...")}
+          className="w-full lg:max-w-xs"
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={consultantFilter} onValueChange={setConsultantFilter}>
+            <SelectTrigger size="sm" className="h-9 w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                {t("hitList.filters.allConsultants", "All Consultants")}
+              </SelectItem>
+              {consultants.map((consultant) => (
+                <SelectItem key={consultant.id} value={consultant.id}>
+                  {consultant.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={priorityFilter}
+            onValueChange={(next) =>
+              setPriorityFilter(next as HitPriority | typeof STATUS_NONE | "all")
+            }
+          >
+            <SelectTrigger size="sm" className="h-9 w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                {t("hitList.filters.allPriorities", "All Priorities")}
+              </SelectItem>
+              <SelectItem value={STATUS_NONE}>
+                {t("hitList.priority.none", "No priority")}
+              </SelectItem>
+              <SelectItem value="high">{t("hitList.priority.high", "High")}</SelectItem>
+              <SelectItem value="medium">{t("hitList.priority.medium", "Medium")}</SelectItem>
+              <SelectItem value="low">{t("hitList.priority.low", "Low")}</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={statusFilter}
+            onValueChange={(next) =>
+              setStatusFilter(next as HitStatus | typeof STATUS_NONE | "all")
+            }
+          >
+            <SelectTrigger size="sm" className="h-9 w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                {t("hitList.filters.allStatuses", "All Statuses")}
+              </SelectItem>
+              <SelectItem value={STATUS_NONE}>
+                {t("hitList.status.none", "No status")}
+              </SelectItem>
+              <SelectItem value="under_hantering">
+                {t("hitList.status.underHantering", "Under hantering")}
+              </SelectItem>
+              <SelectItem value="hanterad">
+                {t("hitList.status.hanterad", "Hanterad")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+
+          <div className="flex items-center rounded-md border p-0.5">
+            <Button
+              variant={clientScope === "all" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setClientScope("all")}
+            >
+              {t("hitList.filters.scopeAll", "All")}
+            </Button>
+            <Button
+              variant={clientScope === "mine" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setClientScope("mine")}
+            >
+              {t("hitList.filters.scopeMine", "My Clients")}
+            </Button>
+          </div>
+        </div>
+      </div>
+
       {loading ? (
         <div className="divide-y overflow-hidden rounded-md border">
           {HIT_LIST_RULES.map((rule) => (
@@ -359,15 +614,21 @@ export default function HitListPage() {
             </div>
           ))}
         </div>
+      ) : visibleRules.length === 0 ? (
+        <div className="rounded-md border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
+          {t("hitList.filters.noRules", "No lists match your filters.")}
+        </div>
       ) : (
         <div className="divide-y overflow-hidden rounded-md border">
-          {HIT_LIST_RULES.map((rule) => (
+          {visibleRules.map((rule) => (
             <HitListRow
               key={rule.key}
               rule={rule}
-              matches={matchesByRule[rule.key] ?? []}
+              matches={filteredMatchesByRule[rule.key] ?? []}
               statuses={statuses}
+              priorities={priorities}
               onStatusChange={updateStatus}
+              onPriorityChange={updatePriority}
               open={expanded[rule.key] ?? false}
               onToggle={() =>
                 setExpanded((prev) => ({ ...prev, [rule.key]: !prev[rule.key] }))
@@ -386,7 +647,9 @@ function HitListRow({
   rule,
   matches,
   statuses,
+  priorities,
   onStatusChange,
+  onPriorityChange,
   open,
   onToggle,
   language,
@@ -395,10 +658,16 @@ function HitListRow({
   rule: HitListRule
   matches: MatchRow[]
   statuses: Record<string, HitStatus>
+  priorities: Record<string, HitPriority>
   onStatusChange: (
     ruleKey: string,
     customerId: string,
     next: HitStatus | "none",
+  ) => void
+  onPriorityChange: (
+    ruleKey: string,
+    customerId: string,
+    next: HitPriority | "none",
   ) => void
   open: boolean
   onToggle: () => void
@@ -481,8 +750,14 @@ function HitListRow({
                       <TableHead className="min-w-[200px]">
                         {t("hitList.columns.company", "Company")}
                       </TableHead>
+                      <TableHead className="min-w-[140px]">
+                        {t("hitList.columns.consultant", "Consultant")}
+                      </TableHead>
                       <TableHead className="text-right whitespace-nowrap">
                         {rule.valueLabel[language]}
+                      </TableHead>
+                      <TableHead className="w-40">
+                        {t("hitList.columns.priority", "Priority")}
                       </TableHead>
                       <TableHead className="w-48">
                         {t("hitList.columns.status", "Status")}
@@ -506,8 +781,22 @@ function HitListRow({
                             </div>
                           ) : null}
                         </TableCell>
+                        <TableCell>
+                          {m.consultantName ?? (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right whitespace-nowrap tabular-nums">
                           {formatValue(m.value, rule.valueUnit)}
+                        </TableCell>
+                        <TableCell>
+                          <PriorityPicker
+                            value={priorities[statusKey(rule.key, m.customerId)]}
+                            onChange={(next) =>
+                              onPriorityChange(rule.key, m.customerId, next)
+                            }
+                            t={t}
+                          />
                         </TableCell>
                         <TableCell>
                           <StatusPicker
@@ -540,6 +829,46 @@ function HitListRow({
         </div>
       ) : null}
     </div>
+  )
+}
+
+function PriorityPicker({
+  value,
+  onChange,
+  t,
+}: {
+  value: HitPriority | undefined
+  onChange: (next: HitPriority | "none") => void
+  t: (key: string, fallback?: string) => string
+}) {
+  return (
+    <Select
+      value={value ?? STATUS_NONE}
+      onValueChange={(next) => onChange(next as HitPriority | "none")}
+    >
+      <SelectTrigger
+        size="sm"
+        className={cn(
+          "h-8 w-full",
+          value === "high" && "border-semantic-error/40 text-semantic-error",
+          value === "medium" && "border-semantic-warning/40 text-semantic-warning",
+        )}
+        // Sits inside an expandable rule row — stop the toggle from firing.
+        onClick={(event) => event.stopPropagation()}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={STATUS_NONE}>
+          <span className="text-muted-foreground">
+            {t("hitList.priority.none", "No priority")}
+          </span>
+        </SelectItem>
+        <SelectItem value="high">{t("hitList.priority.high", "High")}</SelectItem>
+        <SelectItem value="medium">{t("hitList.priority.medium", "Medium")}</SelectItem>
+        <SelectItem value="low">{t("hitList.priority.low", "Low")}</SelectItem>
+      </SelectContent>
+    </Select>
   )
 }
 
