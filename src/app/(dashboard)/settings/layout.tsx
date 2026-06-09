@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { User, Shield, UserCog, Link2, Tags, RefreshCw, Mail, FolderOpen, Database } from "lucide-react"
+import { User, Shield, UserCog, Link2, Tags, RefreshCw, Mail, FolderOpen, Database, BarChart3 } from "lucide-react"
 import { type LucideIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -28,6 +28,7 @@ function getSettingsTabs(t: (key: string, fallback?: string) => string): Setting
     { label: t("settings.tabs.mailTemplates", "Mail Templates"), href: "/settings/mail", icon: Mail },
     { label: t("settings.tabs.sie", "SIE"), href: "/settings/sie", icon: Database },
     { label: t("settings.tabs.sync", "Sync"), href: "/settings/sync", icon: RefreshCw },
+    { label: t("settings.tabs.usage", "Usage"), href: "/settings/usage", icon: BarChart3 },
   ]
 }
 

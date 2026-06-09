@@ -520,11 +520,11 @@ function KpiCard({
     >
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
-          <CardTitle className="text-sm font-medium text-muted-foreground">
-            {/* Localized KPI name lives with the definition (sv/en). */}
-            {definition.names[language]}
-          </CardTitle>
-          <div className="flex items-center gap-1.5">
+          <div className="space-y-1.5">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              {/* Localized KPI name lives with the definition (sv/en). */}
+              {definition.names[language]}
+            </CardTitle>
             {flagged ? (
               <Badge
                 variant="outline"
@@ -534,6 +534,8 @@ function KpiCard({
                 {t("keyMetrics.detail.flag", "Off target")}
               </Badge>
             ) : null}
+          </div>
+          <div className="flex items-center gap-1.5">
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
