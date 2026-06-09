@@ -520,21 +520,10 @@ function KpiCard({
     >
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
-          <div className="space-y-1.5">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              {/* Localized KPI name lives with the definition (sv/en). */}
-              {definition.names[language]}
-            </CardTitle>
-            {flagged ? (
-              <Badge
-                variant="outline"
-                className="gap-1 border-semantic-warning text-semantic-warning"
-              >
-                <AlertTriangle className="size-3" />
-                {t("keyMetrics.detail.flag", "Off target")}
-              </Badge>
-            ) : null}
-          </div>
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            {/* Localized KPI name lives with the definition (sv/en). */}
+            {definition.names[language]}
+          </CardTitle>
           <div className="flex items-center gap-1.5">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -557,13 +546,24 @@ function KpiCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-1">
-        <div
-          className={cn(
-            "text-2xl font-semibold tabular-nums",
-            value == null && "text-muted-foreground",
-          )}
-        >
-          {formatValue(value, definition.unit, definition.decimals)}
+        <div className="flex items-center justify-between gap-2">
+          <div
+            className={cn(
+              "text-2xl font-semibold tabular-nums",
+              value == null && "text-muted-foreground",
+            )}
+          >
+            {formatValue(value, definition.unit, definition.decimals)}
+          </div>
+          {flagged ? (
+            <Badge
+              variant="outline"
+              className="gap-1 border-semantic-warning text-semantic-warning"
+            >
+              <AlertTriangle className="size-3" />
+              {t("keyMetrics.detail.flag", "Off target")}
+            </Badge>
+          ) : null}
         </div>
       </CardContent>
     </Card>

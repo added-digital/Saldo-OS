@@ -82,15 +82,15 @@ function StatCard({
   value: number | null;
 }) {
   return (
-    <Card>
-      <CardHeader className="p-6 pb-0">
+    <Card className="gap-2">
+      <CardHeader className="p-6 pb-1 pt-0">
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <Icon className="size-4" />
           {label}
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-6 pt-0">
-        <p className="text-4xl font-semibold leading-tight">
+      <CardContent className="p-6 pt-0 pb-0">
+        <p className="text-2xl font-semibold leading-tight">
           {value === null ? (
             "—"
           ) : (
@@ -172,7 +172,7 @@ export default function UsagePage() {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {loading || !data ? (
           Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-[116px] w-full" />
+            <Skeleton key={i} className="h-[92px] w-full" />
           ))
         ) : (
           <>
