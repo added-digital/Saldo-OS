@@ -213,9 +213,6 @@ const dictionaries = {
     "usage.table.never": "Never",
     "usage.table.page": "Page",
     "usage.table.users": "users",
-    "usage.generatedAt": "Generated",
-    "usage.trendNote":
-      "Active-user history needs Phase 1 event tracking — we only know each user's last sign-in today.",
     "settings.files.description":
       "Upload and organize files in folders for future AI references.",
     "settings.files.servicesFolder": "Services",
@@ -1118,9 +1115,6 @@ const dictionaries = {
     "usage.table.never": "Aldrig",
     "usage.table.page": "Sida",
     "usage.table.users": "användare",
-    "usage.generatedAt": "Genererad",
-    "usage.trendNote":
-      "Historik över aktiva användare kräver händelsespårning i fas 1 — idag känner vi bara till varje användares senaste inloggning.",
     "settings.files.description":
       "Ladda upp och organisera filer i mappar för framtida AI-referenser.",
     "settings.files.servicesFolder": "Tjänster",

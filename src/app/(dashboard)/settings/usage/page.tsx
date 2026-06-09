@@ -331,17 +331,6 @@ export default function UsagePage() {
           ) : null}
         </CardContent>
       </Card>
-
-      {data ? (
-        <p className="text-xs text-muted-foreground">
-          {t("usage.generatedAt", "Generated")} {formatDateTime(data.generatedAt)}
-          {" · "}
-          {t(
-            "usage.trendNote",
-            "Active-user history needs Phase 1 event tracking — we only know each user's last sign-in today."
-          )}
-        </p>
-      ) : null}
     </div>
   );
 }
