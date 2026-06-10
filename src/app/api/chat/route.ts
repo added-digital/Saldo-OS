@@ -22,6 +22,11 @@ type ChatRequestBody = {
   message?: string;
   question?: string; // alias accepted for compatibility with the existing UI
   conversation_id?: string | null;
+  // Optional orientation about the page the user is viewing when they opt in
+  // to "use this page as context". Injected into the current user turn only —
+  // never persisted (the client stores the clean question), so it doesn't
+  // accumulate across the conversation.
+  page_context?: string | null;
 };
 
 type StoredMessage = {
@@ -236,9 +241,19 @@ async function handleChat(request: Request) {
     );
   }
 
+  // Prepend page context (if the user opted in) to the current turn only.
+  // Capped defensively so a malformed client can't blow the input budget.
+  const pageContext =
+    typeof body.page_context === "string"
+      ? body.page_context.trim().slice(0, 2000)
+      : "";
+  const userMessageContent = pageContext
+    ? `<current_page_context>\n${pageContext}\n</current_page_context>\n\n${message}`
+    : message;
+
   const messages: Anthropic.MessageParam[] = [
     ...trimmedHistory,
-    { role: "user", content: message },
+    { role: "user", content: userMessageContent },
   ];
 
   // ---------------------------------------------------------------------------

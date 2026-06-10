@@ -1,12 +1,14 @@
 "use client"
 
 import * as React from "react"
+import { usePathname } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { ArrowUp, GripVertical, Info, Loader2, MoreHorizontal, Paperclip, PanelLeftClose, PanelLeftOpen, Pin, Plus, Trash2, X } from "lucide-react"
+import { ArrowUp, FileText, GripVertical, Loader2, MoreHorizontal, Paperclip, PanelLeftClose, PanelLeftOpen, Pin, Plus, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
+import { buildPageContextPrompt, getPageContext } from "@/config/page-context"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { useTranslation } from "@/hooks/use-translation"
@@ -150,6 +152,40 @@ function getMessagesSignature(value: ChatMessage[]): string {
 
 export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
   const { t, language } = useTranslation()
+  const pathname = usePathname()
+  const pageContext = React.useMemo(() => getPageContext(pathname), [pathname])
+  const [usePageContextEnabled, setUsePageContextEnabled] = React.useState(false)
+  // Resolved name for an entity-scoped route (e.g. the customer behind a
+  // /key-metrics/<id> or /customers/<id> URL). Lets the chip read "Use
+  // 'Acme AB' as context" and gives the assistant the name alongside the id.
+  const [pageEntityName, setPageEntityName] = React.useState<string | null>(null)
+  const pageEntity = pageContext?.entity ?? null
+
+  React.useEffect(() => {
+    if (!pageEntity || pageEntity.type !== "customer") {
+      setPageEntityName(null)
+      return
+    }
+
+    let cancelled = false
+    setPageEntityName(null)
+    void (async () => {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from("customers")
+        .select("name")
+        .eq("id", pageEntity.id)
+        .maybeSingle()
+      if (cancelled) return
+      const name = (data as { name: string | null } | null)?.name?.trim()
+      setPageEntityName(name && name.length > 0 ? name : null)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [pageEntity])
+
   const [question, setQuestion] = React.useState("")
   const [loading, setLoading] = React.useState(false)
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
@@ -233,16 +269,6 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
       "How many invoices did we send this year?",
       "What services do we offer our customers?",
     ]
-  }, [language])
-
-  // Empty-state hint shown beneath the input on a fresh chat. Explains what
-  // the assistant currently has access to and what's still coming so users
-  // don't waste a turn asking about data that isn't wired up yet.
-  const chatContextHint = React.useMemo(() => {
-    if (language === "sv") {
-      return "Saldo OS Chat kan svara på frågor om CRM:et — kunder, fakturor, timmar, avtal, konsulter och KPI:er — samt interna dokument (t.ex. handboken). Ej anslutet ännu: SIE-filer och kundernas egna bokföringsunderlag."
-    }
-    return "Saldo OS Chat can answer questions about your CRM — customers, invoices, hours, contracts, consultants and KPIs — and your internal documents (e.g. handboken). Not yet connected: SIE files and customers' own bookkeeping records."
   }, [language])
 
   void customers
@@ -639,6 +665,13 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
 
     const attachmentNames = chatAttachments.map((attachment) => attachment.name)
 
+    // Page context is sent separately so the assistant gets it, but the
+    // stored/displayed message stays clean (no context prefix in the bubble).
+    const pageContextPrompt =
+      usePageContextEnabled && pageContext
+        ? buildPageContextPrompt(pageContext, pageEntityName)
+        : null
+
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -695,6 +728,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
               body: JSON.stringify({
                 question: trimmedQuestion,
                 conversation_id: activeConversationId,
+                page_context: pageContextPrompt,
               }),
               signal: abortController.signal,
             })
@@ -908,6 +942,42 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
     }))
   }
 
+  // "Use this page as context" toggle. Shown above the input whenever the
+  // current route maps to a known page (see src/config/page-context.ts). On
+  // entity-scoped routes the label resolves to the record name (e.g. the
+  // customer). When active, submitQuestion sends page_context with the question.
+  const pageContextLabel = pageEntityName ?? pageContext?.label ?? ""
+  const pageContextToggle = pageContext ? (
+    <button
+      type="button"
+      onClick={() => setUsePageContextEnabled((current) => !current)}
+      aria-pressed={usePageContextEnabled}
+      title={t(
+        "dashboard.ask.pageContext.hint",
+        "Include what you're viewing as context for the assistant.",
+      )}
+      className={cn(
+        "inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+        usePageContextEnabled
+          ? "border-primary/50 bg-primary/15 text-primary hover:bg-primary/25"
+          : "border-border bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+      )}
+    >
+      <FileText className="size-3.5 shrink-0" />
+      <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
+        <span className="shrink-0">
+          {usePageContextEnabled
+            ? t("dashboard.ask.pageContext.using", "Using")
+            : t("dashboard.ask.pageContext.use", "Use")}
+        </span>
+        <span className="min-w-0 truncate">“{pageContextLabel}”</span>
+        <span className="shrink-0">
+          {t("dashboard.ask.pageContext.asContext", "as context")}
+        </span>
+      </span>
+    </button>
+  ) : null
+
   return (
     <div className={cn(
       "grid h-full overflow-hidden",
@@ -1060,7 +1130,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
         <Button
           variant="ghost"
           size="sm"
-          className={cn("mt-2 h-8", historyCollapsed ? "justify-center px-0" : "justify-start")}
+          className={cn("mt-auto h-8", historyCollapsed ? "justify-center px-0" : "justify-start")}
           onClick={() => setHistoryCollapsed((current) => !current)}
         >
           {historyCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
@@ -1237,6 +1307,7 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
               </div>
             </div>
             <div className="flex w-full max-w-[600px] flex-col items-stretch gap-2.5">
+            {pageContextToggle}
             <form
               onSubmit={(e) => { e.preventDefault(); void submitQuestion() }}
               className="w-full rounded-2xl border bg-background p-2 shadow-sm"
@@ -1295,16 +1366,13 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
                 </button>
               </div>
             </form>
-              <div className="flex items-start gap-1.5 rounded-md border border-border/40 bg-muted/30 px-3 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
-                <Info className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-                <p className="text-left">{chatContextHint}</p>
-              </div>
             </div>
           </div>
         )}
 
         {hasMessages && (
           <div className="absolute bottom-6 left-1/2 z-20 w-[min(700px,calc(100%-2rem))] -translate-x-1/2">
+            {pageContextToggle ? <div className="mb-2 flex">{pageContextToggle}</div> : null}
             <form
               onSubmit={(e) => { e.preventDefault(); void submitQuestion() }}
               className="rounded-2xl border bg-background p-2 shadow-sm"

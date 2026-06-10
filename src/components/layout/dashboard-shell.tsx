@@ -7,6 +7,11 @@ import { SidebarProvider, Sidebar } from "@/components/layout/sidebar"
 import { SidebarNav } from "@/components/layout/sidebar-nav"
 import { Topbar } from "@/components/layout/topbar"
 import { FeedbackWidget } from "@/components/app/feedback-widget"
+import {
+  ChatDrawerProvider,
+  ChatDrawerMain,
+  GlobalChatDrawer,
+} from "@/components/app/global-chat-drawer"
 
 function DashboardShell({
   profile,
@@ -23,12 +28,13 @@ function DashboardShell({
             <Sidebar>
               <SidebarNav />
             </Sidebar>
-            <div className="flex flex-1 flex-col overflow-hidden">
-              <Topbar />
-              <main className="flex-1 overflow-y-auto p-6">
-                {children}
-              </main>
-            </div>
+            <ChatDrawerProvider>
+              <div className="relative flex flex-1 flex-col overflow-hidden">
+                <Topbar />
+                <GlobalChatDrawer />
+                <ChatDrawerMain>{children}</ChatDrawerMain>
+              </div>
+            </ChatDrawerProvider>
           </div>
           <FeedbackWidget />
         </SidebarProvider>
