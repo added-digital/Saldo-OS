@@ -80,6 +80,33 @@ function isContextOverflowError(err: unknown): boolean {
 }
 
 /**
+ * Detect Anthropic's "out of credits" billing error. It's a 400 whose message
+ * mentions the credit balance / billing. We never want to surface the raw
+ * billing text to end users — it's a server-side account problem, not
+ * something they can act on — so we catch it and show a neutral message.
+ */
+function isInsufficientCreditsError(err: unknown): boolean {
+  if (!(err instanceof Anthropic.APIError)) return false;
+  const message = err.message?.toLowerCase() ?? String(err).toLowerCase();
+  return (
+    message.includes("credit balance is too low") ||
+    message.includes("credit balance") ||
+    (message.includes("billing") && message.includes("upgrade"))
+  );
+}
+
+/**
+ * Neutral, user-facing message for billing/credit failures. Deliberately hides
+ * the Anthropic billing wording — end users can't fix it; an admin tops up the
+ * account. Swedish-first to match the UI, English in parentheses.
+ */
+const INSUFFICIENT_CREDITS_FALLBACK =
+  "Assistenten är tillfälligt otillgänglig just nu. Försök igen om en stund " +
+  "— kvarstår problemet, kontakta en administratör.\n\n" +
+  "_(The assistant is temporarily unavailable. Please try again shortly; if " +
+  "it persists, contact an administrator.)_";
+
+/**
  * Friendly Swedish-first fallback for context-overflow situations. The UI
  * locale is Swedish; English appears as a graceful fallback for non-Swedish
  * users. Worded as a suggestion (narrow by time/consultant/count) rather
@@ -119,6 +146,20 @@ export async function POST(request: Request) {
   try {
     return await handleChat(request);
   } catch (error) {
+    // Billing/credit exhaustion: log the real cause for ops, but show users a
+    // neutral "temporarily unavailable" message rather than the raw Anthropic
+    // billing text.
+    if (isInsufficientCreditsError(error)) {
+      console.error(
+        "[/api/chat] Anthropic credit balance too low:",
+        error instanceof Error ? error.message : error,
+      );
+      return NextResponse.json(
+        { error: INSUFFICIENT_CREDITS_FALLBACK },
+        { status: 503 },
+      );
+    }
+
     const message =
       error instanceof Error ? error.message : "Unknown error.";
     const stack = error instanceof Error ? error.stack : undefined;
