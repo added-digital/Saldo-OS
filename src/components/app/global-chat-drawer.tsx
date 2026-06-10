@@ -58,7 +58,7 @@ function useChatDrawer() {
 
 export function ChatDrawerProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const [view, setView] = React.useState<DrawerView>("default")
+  const [view, setView] = React.useState<DrawerView>("peek")
   const [hydrated, setHydrated] = React.useState(false)
 
   // Restore the last view once on mount (avoids SSR/client mismatch).
