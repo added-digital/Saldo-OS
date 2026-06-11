@@ -58,7 +58,7 @@ const dictionaries = {
     "engagements.detail.thisYear": "This year",
     "engagements.detail.clientSetup": "Client setup",
     "engagements.detail.editOnCustomer": "Edit on customer",
-    "customers.bokslut.title": "Bokslut setup",
+    "customers.bokslut.title": "Year-end setup",
     "customers.bokslut.needsSegmentation": "Needs segmentation",
     "customers.bokslut.save": "Save setup",
     "customers.bokslut.saving": "Saving…",
