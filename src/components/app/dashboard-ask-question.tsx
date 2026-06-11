@@ -151,7 +151,7 @@ function getMessagesSignature(value: ChatMessage[]): string {
 }
 
 export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
-  const { t, language } = useTranslation()
+  const { t } = useTranslation()
   const pathname = usePathname()
   const pageContext = React.useMemo(() => getPageContext(pathname), [pathname])
   const [usePageContextEnabled, setUsePageContextEnabled] = React.useState(false)
@@ -246,30 +246,6 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
       behavior,
     })
   }, [])
-
-  // Starter questions cover the three main capability categories the chat
-  // supports, phrased so they work for every role: "our" is naturally scoped
-  // by row-level security (admin sees firm-wide, team lead sees their team,
-  // consultant sees their own customers). The questions are also length-
-  // matched so the buttons line up evenly in the UI.
-  //   1. Top customers (KPI breakdown) → get_kpi_summary with by_customer
-  //   2. Invoice count this year       → get_kpi_summary
-  //   3. Services we offer             → search_documents
-  const starterQuestions = React.useMemo(() => {
-    if (language === "sv") {
-      return [
-        "Visa kunderna med högst omsättning i år",
-        "Hur många fakturor har vi skickat i år?",
-        "Vilka tjänster erbjuder vi våra kunder?",
-      ]
-    }
-
-    return [
-      "Show top customers by turnover this year",
-      "How many invoices did we send this year?",
-      "What services do we offer our customers?",
-    ]
-  }, [language])
 
   void customers
   void users
@@ -839,11 +815,6 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
     }
   }
 
-  function handleStarterQuestionClick(starterQuestion: string) {
-    if (loading) return
-    void submitQuestion(starterQuestion)
-  }
-
   function handleAttachmentSelected(file: File) {
     setChatAttachments((current) => [
       ...current,
@@ -1270,41 +1241,6 @@ export function DashboardAskQuestion({ customers, users }: AskQuestionProps) {
               <h1 className="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
                 {t("dashboard.ask.heading", "What do you need insights on today?")}
               </h1>
-              <div className="mt-4 flex flex-col items-center gap-2">
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  {starterQuestions.slice(0, 2).map((starterQuestion) => (
-                    <button
-                      key={starterQuestion}
-                      type="button"
-                      onClick={() => handleStarterQuestionClick(starterQuestion)}
-                      disabled={loading}
-                      className={cn(
-                        "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                        loading
-                          ? "cursor-not-allowed border-muted-foreground/30 text-muted-foreground/50"
-                          : "border-border bg-background text-foreground hover:bg-muted",
-                      )}
-                    >
-                      {starterQuestion}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleStarterQuestionClick(starterQuestions[2])}
-                    disabled={loading}
-                    className={cn(
-                      "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                      loading
-                        ? "cursor-not-allowed border-muted-foreground/30 text-muted-foreground/50"
-                        : "border-border bg-background text-foreground hover:bg-muted",
-                    )}
-                  >
-                    {starterQuestions[2]}
-                  </button>
-                </div>
-              </div>
             </div>
             <div className="flex w-full max-w-[600px] flex-col items-stretch gap-2.5">
             {pageContextToggle}

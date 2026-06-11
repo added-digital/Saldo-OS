@@ -82,6 +82,14 @@ export interface Customer {
   bolagsverket_updated_at: string | null
   fortnox_raw: Record<string, unknown> | null
   last_synced_at: string | null
+  /** Durable Bokslut tags (permissions, systems, agreements), keyed by field. */
+  bokslut_setup: Record<string, "yes" | "no" | "na"> | null
+  /** Set true on Fortnox import; cleared when the Bokslut setup is saved. */
+  needs_segmentation: boolean
+  /** Date the Saldo agreement was signed. */
+  saldoavtal_date: string | null
+  /** Agreed fixed monthly fee in SEK, if any. */
+  fixed_monthly_price: number | null
   created_at: string
   updated_at: string
 }
@@ -546,7 +554,7 @@ export interface Database {
       }
       customers: {
         Row: Customer
-        Insert: Omit<Customer, "id" | "created_at" | "updated_at">
+        Insert: Omit<Customer, "id" | "created_at" | "updated_at" | "bokslut_setup" | "needs_segmentation" | "saldoavtal_date" | "fixed_monthly_price">
         Update: Partial<Omit<Customer, "id" | "created_at" | "updated_at">>
       }
       segments: {

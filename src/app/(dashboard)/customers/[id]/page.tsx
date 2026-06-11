@@ -33,6 +33,7 @@ import type {
   Segment,
 } from "@/types/database"
 import { PageHeader } from "@/components/app/page-header"
+import { CustomerBokslutSetup } from "@/components/app/customer-bokslut-setup"
 import { StatusBadge } from "@/components/app/status-badge"
 import { UserAvatar } from "@/components/app/user-avatar"
 import { Button } from "@/components/ui/button"
@@ -932,6 +933,8 @@ export default function CustomerDetailPage({
           )}
         </CardContent>
       </Card>
+
+      <CustomerBokslutSetup customerId={customer.id} />
 
       {customer.fortnox_raw && (
         <Collapsible>

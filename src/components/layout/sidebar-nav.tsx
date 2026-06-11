@@ -93,6 +93,7 @@ function SidebarNav({ className }: SidebarNavProps) {
       Home: "navigation.items.home",
       Customers: "navigation.items.customers",
       Contacts: "navigation.items.contacts",
+      Bokslut: "navigation.items.engagements",
       "Send mail": "navigation.items.sendMail",
       "Mail history": "navigation.items.mailHistory",
       "Mail tracking": "navigation.items.mailTracking",

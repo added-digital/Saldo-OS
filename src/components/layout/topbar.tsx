@@ -21,6 +21,7 @@ import { useTranslation } from "@/hooks/use-translation";
 import { createClient } from "@/lib/supabase/client";
 import { UserAvatar } from "@/components/app/user-avatar";
 import { FlagGB, FlagSE } from "@/components/ui/flag";
+import { SegmentationAlert } from "@/components/app/segmentation-alert";
 import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { useSidebar } from "@/components/layout/sidebar";
 
@@ -59,6 +60,8 @@ function Topbar({ className }: TopbarProps) {
       </Button>
 
       <Breadcrumbs className="min-w-0 flex-1" />
+
+      <SegmentationAlert />
 
       <Separator orientation="vertical" className="h-6" />
 
