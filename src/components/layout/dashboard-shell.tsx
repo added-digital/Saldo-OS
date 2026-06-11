@@ -7,6 +7,7 @@ import { SidebarProvider, Sidebar } from "@/components/layout/sidebar"
 import { SidebarNav } from "@/components/layout/sidebar-nav"
 import { Topbar } from "@/components/layout/topbar"
 import { FeedbackWidget } from "@/components/app/feedback-widget"
+import { UnsavedChangesProvider } from "@/components/app/unsaved-changes"
 import {
   ChatDrawerProvider,
   ChatDrawerMain,
@@ -24,19 +25,21 @@ function DashboardShell({
     <UserProvider profile={profile}>
       <SyncProvider>
         <SidebarProvider>
-          <div className="flex h-screen overflow-hidden">
-            <Sidebar>
-              <SidebarNav />
-            </Sidebar>
-            <ChatDrawerProvider>
-              <div className="relative flex flex-1 flex-col overflow-hidden">
-                <Topbar />
-                <GlobalChatDrawer />
-                <ChatDrawerMain>{children}</ChatDrawerMain>
-              </div>
-            </ChatDrawerProvider>
-          </div>
-          <FeedbackWidget />
+          <UnsavedChangesProvider>
+            <div className="flex h-screen overflow-hidden">
+              <Sidebar>
+                <SidebarNav />
+              </Sidebar>
+              <ChatDrawerProvider>
+                <div className="relative flex flex-1 flex-col overflow-hidden">
+                  <Topbar />
+                  <GlobalChatDrawer />
+                  <ChatDrawerMain>{children}</ChatDrawerMain>
+                </div>
+              </ChatDrawerProvider>
+            </div>
+            <FeedbackWidget />
+          </UnsavedChangesProvider>
         </SidebarProvider>
       </SyncProvider>
     </UserProvider>

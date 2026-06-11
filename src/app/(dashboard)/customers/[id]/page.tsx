@@ -34,6 +34,7 @@ import type {
 } from "@/types/database"
 import { PageHeader } from "@/components/app/page-header"
 import { CustomerBokslutSetup } from "@/components/app/customer-bokslut-setup"
+import { useUnsavedChanges } from "@/components/app/unsaved-changes"
 import { StatusBadge } from "@/components/app/status-badge"
 import { UserAvatar } from "@/components/app/user-avatar"
 import { Button } from "@/components/ui/button"
@@ -75,6 +76,7 @@ export default function CustomerDetailPage({
 }) {
   const { id } = use(params)
   const router = useRouter()
+  const { confirmNavigation } = useUnsavedChanges()
   const [customer, setCustomer] = React.useState<Customer | null>(null)
   const [accountManager, setAccountManager] = React.useState<Profile | null>(
     null,
@@ -645,7 +647,7 @@ export default function CustomerDetailPage({
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => router.push("/customers")}
+          onClick={() => confirmNavigation(() => router.push("/customers"))}
         >
           <ArrowLeft className="size-4" />
           <span className="sr-only">Back</span>

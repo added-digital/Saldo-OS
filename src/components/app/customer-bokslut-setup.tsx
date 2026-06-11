@@ -7,6 +7,8 @@ import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
+import { useSidebar } from "@/components/layout/sidebar"
+import { useUnsavedChangesGuard } from "@/components/app/unsaved-changes"
 import type { ChecklistValue, EngagementChecklistField } from "@/types/engagement"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -41,6 +43,7 @@ function serializeSetup(
  */
 export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
   const { t } = useTranslation()
+  const { collapsed } = useSidebar()
   const [fields, setFields] = React.useState<EngagementChecklistField[]>([])
   const [setup, setSetup] = React.useState<Record<string, ChecklistValue>>({})
   const [needsSegmentation, setNeedsSegmentation] = React.useState(false)
@@ -50,12 +53,21 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
   const [saving, setSaving] = React.useState(false)
   // Signature of the last-saved values, to detect unsaved changes.
   const [snapshot, setSnapshot] = React.useState<string>("")
+  // Last-saved structured values, so "Discard" can restore them.
+  const savedRef = React.useRef<{
+    setup: Record<string, ChecklistValue>
+    date: string
+    price: string
+  }>({ setup: {}, date: "", price: "" })
 
   const currentSignature = React.useMemo(
     () => serializeSetup(setup, saldoavtalDate, fixedMonthlyPrice),
     [setup, saldoavtalDate, fixedMonthlyPrice],
   )
   const dirty = currentSignature !== snapshot
+
+  // Report unsaved changes to the app-wide navigation guard.
+  useUnsavedChangesGuard(dirty, `bokslut-setup:${customerId}`)
 
   React.useEffect(() => {
     let cancelled = false
@@ -82,6 +94,11 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       setSaldoavtalDate(loadedDate)
       setFixedMonthlyPrice(loadedPrice)
       setSnapshot(serializeSetup(loadedSetup, loadedDate, loadedPrice))
+      savedRef.current = {
+        setup: { ...loadedSetup },
+        date: loadedDate,
+        price: loadedPrice,
+      }
       setLoading(false)
     })()
     return () => {
@@ -133,7 +150,18 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       return
     }
     setNeedsSegmentation(false)
+    // Mark the just-saved values as the new clean baseline.
+    const savedPrice = priceNum != null && Number.isFinite(priceNum) ? fixedMonthlyPrice : ""
+    savedRef.current = { setup: { ...setup }, date: saldoavtalDate, price: savedPrice }
+    setSnapshot(serializeSetup(setup, saldoavtalDate, savedPrice))
+    if (savedPrice !== fixedMonthlyPrice) setFixedMonthlyPrice(savedPrice)
     toast.success(t("customers.bokslut.saved", "Customer setup saved"))
+  }
+
+  function handleDiscard() {
+    setSetup({ ...savedRef.current.setup })
+    setSaldoavtalDate(savedRef.current.date)
+    setFixedMonthlyPrice(savedRef.current.price)
   }
 
   if (loading) {
@@ -206,11 +234,45 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
           </div>
         </div>
 
-        <Button onClick={handleSave} disabled={saving} size="sm">
-          {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-          {saving ? t("customers.bokslut.saving", "Saving…") : t("customers.bokslut.save", "Save setup")}
-        </Button>
       </CardContent>
+
+      {/* Floating save bar — appears only when there are unsaved changes. */}
+      {dirty ? (
+        <div
+          className="pointer-events-none fixed bottom-6 right-0 z-40 flex justify-center px-4 transition-[left] duration-200"
+          style={{
+            left: collapsed
+              ? "var(--sidebar-width-collapsed)"
+              : "var(--sidebar-width)",
+          }}
+        >
+          <div className="pointer-events-auto flex items-center gap-3 rounded-lg border bg-background/95 py-2 pl-4 pr-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-semantic-warning opacity-60" />
+                <span className="relative inline-flex size-2 rounded-full bg-semantic-warning" />
+              </span>
+              {t("customers.bokslut.unsaved", "Unsaved changes")}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleDiscard}
+                disabled={saving}
+              >
+                {t("customers.bokslut.discard", "Discard")}
+              </Button>
+              <Button onClick={handleSave} disabled={saving} size="sm">
+                {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+                {saving
+                  ? t("customers.bokslut.saving", "Saving…")
+                  : t("customers.bokslut.save", "Save setup")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </Card>
   )
 }
