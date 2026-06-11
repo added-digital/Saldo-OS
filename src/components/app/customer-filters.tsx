@@ -26,6 +26,7 @@ interface CustomerFilterState {
   missingPrimaryContact: boolean
   missingEmail: boolean
   missingCustomerManager: boolean
+  missingBokslutSetup: boolean
   hasOverdueInvoices: boolean
 }
 
@@ -43,6 +44,7 @@ const EMPTY_FILTERS: CustomerFilterState = {
   missingPrimaryContact: false,
   missingEmail: false,
   missingCustomerManager: false,
+  missingBokslutSetup: false,
   hasOverdueInvoices: false,
 }
 
@@ -56,6 +58,7 @@ function hasActiveFilters(filters: CustomerFilterState): boolean {
     filters.missingPrimaryContact ||
     filters.missingEmail ||
     filters.missingCustomerManager ||
+    filters.missingBokslutSetup ||
     filters.hasOverdueInvoices
   )
 }
@@ -95,6 +98,13 @@ function applyFilters(
 
     if (filters.missingCustomerManager && Boolean(c.account_manager)) {
       return false
+    }
+
+    if (filters.missingBokslutSetup) {
+      // "Missing segmentation" = no durable Bokslut tags filled in yet.
+      const hasSetup =
+        c.bokslut_setup != null && Object.keys(c.bokslut_setup).length > 0
+      if (hasSetup) return false
     }
 
     if (filters.hasOverdueInvoices && !c.has_overdue_invoices) {
@@ -223,12 +233,14 @@ function CustomerFilters({
     (filters.missingPrimaryContact ? 1 : 0) +
     (filters.missingEmail ? 1 : 0) +
     (filters.missingCustomerManager ? 1 : 0) +
+    (filters.missingBokslutSetup ? 1 : 0) +
     (filters.hasOverdueInvoices ? 1 : 0)
 
   const missingFieldsCount = [
     filters.missingPrimaryContact,
     filters.missingEmail,
     filters.missingCustomerManager,
+    filters.missingBokslutSetup,
   ].filter(Boolean).length
 
   function toggleStatus(status: CustomerStatusFilter) {
@@ -254,7 +266,11 @@ function CustomerFilters({
   }
 
   function toggleFlag(
-    key: "missingPrimaryContact" | "missingEmail" | "missingCustomerManager"
+    key:
+      | "missingPrimaryContact"
+      | "missingEmail"
+      | "missingCustomerManager"
+      | "missingBokslutSetup"
   ) {
     onFiltersChange({ ...filters, [key]: !filters[key] })
   }
@@ -451,6 +467,10 @@ function CustomerFilters({
                   key: "missingCustomerManager",
                   label: t("customers.filters.field.customerManager", "Customer Manager"),
                 },
+                {
+                  key: "missingBokslutSetup",
+                  label: t("customers.filters.field.segmentation", "Segmentering"),
+                },
               ].map((item) => {
                 const id = `customer-filter-${item.key}`
                 const checked = filters[item.key as keyof CustomerFilterState] as boolean
@@ -470,6 +490,7 @@ function CustomerFilters({
                             | "missingPrimaryContact"
                             | "missingEmail"
                             | "missingCustomerManager"
+                            | "missingBokslutSetup"
                         )
                       }
                     />

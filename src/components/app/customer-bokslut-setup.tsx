@@ -20,6 +20,20 @@ function nextValue(v: ChecklistValue | undefined): ChecklistValue | undefined {
   return CYCLE[(CYCLE.indexOf(v) + 1) % CYCLE.length]
 }
 
+// Stable signature of the editable values (setup keys sorted) so we can detect
+// unsaved changes regardless of key insertion order.
+function serializeSetup(
+  setup: Record<string, ChecklistValue>,
+  date: string,
+  price: string,
+): string {
+  const sorted = Object.keys(setup)
+    .sort()
+    .map((k) => `${k}:${setup[k]}`)
+    .join("|")
+  return `${sorted}~~${date}~~${price}`
+}
+
 /**
  * The durable Bokslut "tags" for a customer (permissions, systems, agreements).
  * This is the source of truth — the Bokslut board reads these read-only.
@@ -34,6 +48,14 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
   const [fixedMonthlyPrice, setFixedMonthlyPrice] = React.useState<string>("")
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
+  // Signature of the last-saved values, to detect unsaved changes.
+  const [snapshot, setSnapshot] = React.useState<string>("")
+
+  const currentSignature = React.useMemo(
+    () => serializeSetup(setup, saldoavtalDate, fixedMonthlyPrice),
+    [setup, saldoavtalDate, fixedMonthlyPrice],
+  )
+  const dirty = currentSignature !== snapshot
 
   React.useEffect(() => {
     let cancelled = false
@@ -52,10 +74,14 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
         saldoavtal_date: string | null
         fixed_monthly_price: number | null
       } | null
-      setSetup(cust?.bokslut_setup ?? {})
+      const loadedSetup = cust?.bokslut_setup ?? {}
+      const loadedDate = cust?.saldoavtal_date ?? ""
+      const loadedPrice = cust?.fixed_monthly_price != null ? String(cust.fixed_monthly_price) : ""
+      setSetup(loadedSetup)
       setNeedsSegmentation(Boolean(cust?.needs_segmentation))
-      setSaldoavtalDate(cust?.saldoavtal_date ?? "")
-      setFixedMonthlyPrice(cust?.fixed_monthly_price != null ? String(cust.fixed_monthly_price) : "")
+      setSaldoavtalDate(loadedDate)
+      setFixedMonthlyPrice(loadedPrice)
+      setSnapshot(serializeSetup(loadedSetup, loadedDate, loadedPrice))
       setLoading(false)
     })()
     return () => {

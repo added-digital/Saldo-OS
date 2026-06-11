@@ -266,6 +266,8 @@ function isCustomerFilterState(value: unknown): value is CustomerFilterState {
     typeof candidate.missingPrimaryContact === "boolean" &&
     typeof candidate.missingEmail === "boolean" &&
     typeof candidate.missingCustomerManager === "boolean" &&
+    (candidate.missingBokslutSetup === undefined ||
+      typeof candidate.missingBokslutSetup === "boolean") &&
     (candidate.hasOverdueInvoices === undefined ||
       typeof candidate.hasOverdueInvoices === "boolean")
   )
@@ -508,6 +510,7 @@ export default function CustomersPage() {
     filters.missingPrimaryContact ||
     filters.missingEmail ||
     filters.missingCustomerManager ||
+    filters.missingBokslutSetup ||
     filters.hasOverdueInvoices
 
   const hasSearch = searchQuery.trim().length > 0
