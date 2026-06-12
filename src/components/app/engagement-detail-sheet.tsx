@@ -8,6 +8,7 @@ import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { cn, formatBytes } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
+import { useUser } from "@/hooks/use-user"
 import type {
   ChecklistValue,
   EngagementActivity,
@@ -20,7 +21,7 @@ import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/app/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
+import { MentionTextarea, extractMentionIds } from "@/components/app/mention-textarea"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -130,6 +131,10 @@ export function EngagementDetailSheet({
   onDeleted: (id: string) => void
 }) {
   const { t } = useTranslation()
+  const { user } = useUser()
+  // Mentions already present when the sheet opened — so we only notify on newly
+  // added @-mentions, not every save.
+  const initialMentionIdsRef = React.useRef<Set<string>>(new Set())
   const [bokslutStatusId, setBokslutStatusId] = React.useState<string>(NONE)
   const [ink2StatusId, setInk2StatusId] = React.useState<string>(NONE)
   const [consultantId, setConsultantId] = React.useState<string>(NONE)
@@ -176,7 +181,9 @@ export function EngagementDetailSheet({
     setNextYearNote(row.next_year_note ?? "")
     setGeneralComment(row.general_comment ?? "")
     setYearSetup((row.setup ?? {}) as Record<string, ChecklistValue>)
-  }, [row])
+    const initialText = `${row.bokslut_comment ?? ""}\n${row.next_year_note ?? ""}\n${row.general_comment ?? ""}`
+    initialMentionIdsRef.current = new Set(extractMentionIds(initialText, consultants))
+  }, [row, consultants])
 
   // Load activity and durable customer setup for the open row.
   React.useEffect(() => {
@@ -223,6 +230,21 @@ export function EngagementDetailSheet({
     if (error) {
       toast.error(`${t("engagements.toast.error", "Couldn't update engagement")}: ${error.message}`)
       return
+    }
+
+    // Notify newly @-mentioned consultants (excluding self and anyone already
+    // mentioned before this edit). Best-effort — never blocks the save.
+    const mentionText = `${bokslutComment}\n${nextYearNote}\n${generalComment}`
+    const mentionedIds = extractMentionIds(mentionText, consultants)
+    const newRecipientIds = mentionedIds.filter(
+      (cid) => cid !== user?.id && !initialMentionIdsRef.current.has(cid),
+    )
+    if (newRecipientIds.length > 0) {
+      await supabase.rpc("create_engagement_mention_notifications" as never, {
+        p_engagement_id: row.id,
+        p_recipient_ids: newRecipientIds,
+      } as never)
+      initialMentionIdsRef.current = new Set(mentionedIds)
     }
 
     let merged: EngagementBoardRow = { ...row }
@@ -461,15 +483,15 @@ export function EngagementDetailSheet({
 
           <div className="space-y-1.5">
             <Label htmlFor="eng-bokslut-comment">{t("engagements.detail.bokslutComment", "Bokslut comment")}</Label>
-            <Textarea id="eng-bokslut-comment" rows={2} value={bokslutComment} onChange={(e) => setBokslutComment(e.target.value)} />
+            <MentionTextarea id="eng-bokslut-comment" rows={2} people={consultants} value={bokslutComment} onChange={setBokslutComment} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="eng-next-year">{t("engagements.detail.nextYearNote", "For next year")}</Label>
-            <Textarea id="eng-next-year" rows={2} value={nextYearNote} onChange={(e) => setNextYearNote(e.target.value)} />
+            <MentionTextarea id="eng-next-year" rows={2} people={consultants} value={nextYearNote} onChange={setNextYearNote} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="eng-general">{t("engagements.detail.generalComment", "General comment")}</Label>
-            <Textarea id="eng-general" rows={2} value={generalComment} onChange={(e) => setGeneralComment(e.target.value)} />
+            <MentionTextarea id="eng-general" rows={2} people={consultants} value={generalComment} onChange={setGeneralComment} />
           </div>
 
           <Button onClick={handleSave} disabled={saving} className="w-full">

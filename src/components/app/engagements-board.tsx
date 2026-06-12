@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Plus, CalendarClock, Building2, User as UserIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -85,6 +86,8 @@ function applyStatus(
 
 export function EngagementsBoard() {
   const { t } = useTranslation()
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [loading, setLoading] = React.useState(true)
   const [statuses, setStatuses] = React.useState<EngagementStatus[]>([])
   const [rows, setRows] = React.useState<EngagementBoardRow[]>([])
@@ -133,6 +136,15 @@ export function EngagementsBoard() {
       cancelled = true
     }
   }, [])
+
+  // Deep-link: open a specific engagement when arriving via ?engagement=<id>
+  // (e.g. from a notification). Waits for the row to be present in the board.
+  React.useEffect(() => {
+    const target = searchParams.get("engagement")
+    if (target && rows.some((r) => r.id === target)) {
+      setDetailId(target)
+    }
+  }, [searchParams, rows])
 
   const userNames = React.useMemo(
     () => Object.fromEntries(consultants.map((c) => [c.id, c.name])),
@@ -348,7 +360,11 @@ export function EngagementsBoard() {
         userNames={userNames}
         open={detailId !== null}
         onOpenChange={(open) => {
-          if (!open) setDetailId(null)
+          if (!open) {
+            setDetailId(null)
+            // Drop the deep-link param so the sheet doesn't re-open on re-render.
+            if (searchParams.get("engagement")) router.replace("/bokslut")
+          }
         }}
         onSaved={(updated) => setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))}
         onDeleted={(id) => {
