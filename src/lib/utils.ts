@@ -26,6 +26,19 @@ export function formatDateTime(date: string | Date): string {
   })
 }
 
+export function formatBytes(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—"
+  if (value < 1024) return `${value} B`
+  const units = ["KB", "MB", "GB", "TB"]
+  let size = value / 1024
+  let unit = 0
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024
+    unit++
+  }
+  return `${size.toFixed(size < 10 ? 1 : 0)} ${units[unit]}`
+}
+
 export function getInitials(name: string | null | undefined): string {
   if (!name) return "?"
   return name

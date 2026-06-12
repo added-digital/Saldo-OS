@@ -76,3 +76,14 @@ export interface EngagementActivity {
   metadata: Record<string, unknown> | null
   created_at: string
 }
+
+export interface EngagementAttachment {
+  id: string
+  engagement_id: string
+  storage_path: string
+  file_name: string
+  file_type: string | null
+  file_size: number | null
+  uploaded_by: string | null
+  created_at: string
+}

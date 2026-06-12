@@ -2,15 +2,16 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ChevronDown, Loader2, Trash2 } from "lucide-react"
+import { ChevronDown, Download, Loader2, Paperclip, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
-import { cn } from "@/lib/utils"
+import { cn, formatBytes } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import type {
   ChecklistValue,
   EngagementActivity,
+  EngagementAttachment,
   EngagementBoardRow,
   EngagementChecklistField,
   EngagementStatus,
@@ -39,6 +40,35 @@ import {
 } from "@/components/ui/select"
 
 const NONE = "none"
+
+const STORAGE_BUCKET =
+  process.env.NEXT_PUBLIC_SUPABASE_FILES_BUCKET ?? "crm-files"
+
+// Attachment upload constraints (mirrors the product decision: 25 MB, common
+// document types). Enforced client-side; the storage RLS prefix gates access.
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+const ALLOWED_ATTACHMENT_EXTENSIONS = [
+  "pdf",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "csv",
+  "txt",
+  "zip",
+]
+
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf(".")
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : ""
+}
 
 // Click-cycle order for a checklist value: unset → yes → no → na → unset.
 const CYCLE: Array<ChecklistValue | undefined> = [undefined, "yes", "no", "na"]
@@ -112,6 +142,12 @@ export function EngagementDetailSheet({
   const [deleting, setDeleting] = React.useState(false)
   const [activity, setActivity] = React.useState<EngagementActivity[]>([])
 
+  // Attachments
+  const [attachments, setAttachments] = React.useState<EngagementAttachment[]>([])
+  const [uploading, setUploading] = React.useState(false)
+  const [deletingAttachmentId, setDeletingAttachmentId] = React.useState<string | null>(null)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+
   // Checklist: per-year (engagement) values vs durable (customer) values.
   const [yearSetup, setYearSetup] = React.useState<Record<string, ChecklistValue>>({})
   // Durable client setup is read-only here — the customer card owns it.
@@ -148,14 +184,16 @@ export function EngagementDetailSheet({
     let cancelled = false
     void (async () => {
       const supabase = createClient()
-      const [actRes, custRes] = await Promise.all([
+      const [actRes, custRes, attRes] = await Promise.all([
         supabase.from("engagement_activity").select("*").eq("engagement_id", row.id).order("created_at", { ascending: false }).limit(100),
         supabase.from("customers").select("bokslut_setup").eq("id", row.customer_id).maybeSingle(),
+        supabase.from("engagement_attachments").select("*").eq("engagement_id", row.id).order("created_at", { ascending: false }),
       ])
       if (cancelled) return
       setActivity((actRes.data ?? []) as EngagementActivity[])
       const cust = custRes.data as { bokslut_setup: Record<string, ChecklistValue> | null } | null
       setCustomerSetup(cust?.bokslut_setup ?? {})
+      setAttachments((attRes.data ?? []) as EngagementAttachment[])
     })()
     return () => {
       cancelled = true
@@ -220,6 +258,102 @@ export function EngagementDetailSheet({
     onDeleted(row.id)
     toast.success(t("engagements.toast.deleted", "Engagement deleted"))
     onOpenChange(false)
+  }
+
+  async function handleUploadFiles(files: FileList | null) {
+    if (!row || !files || files.length === 0) return
+    const supabase = createClient()
+    setUploading(true)
+    try {
+      for (const file of Array.from(files)) {
+        const ext = fileExtension(file.name)
+        if (!ALLOWED_ATTACHMENT_EXTENSIONS.includes(ext)) {
+          toast.error(
+            `${file.name}: ${t("engagements.detail.attachmentsBadType", "That file type isn't allowed")}`,
+          )
+          continue
+        }
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          toast.error(
+            `${file.name}: ${t("engagements.detail.attachmentsTooLarge", "File is too large (max 25 MB)")}`,
+          )
+          continue
+        }
+
+        const path = `engagements/${row.id}/${crypto.randomUUID()}.${ext}`
+        const { error: uploadError } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(path, file, {
+            contentType: file.type || undefined,
+            upsert: false,
+          })
+        if (uploadError) {
+          toast.error(
+            `${file.name}: ${t("engagements.detail.attachmentsUploadFailed", "Upload failed")}`,
+          )
+          continue
+        }
+
+        const { data: inserted, error: insertError } = await supabase
+          .from("engagement_attachments")
+          .insert({
+            engagement_id: row.id,
+            storage_path: path,
+            file_name: file.name,
+            file_type: file.type || null,
+            file_size: file.size,
+          } as never)
+          .select("*")
+          .single()
+
+        if (insertError || !inserted) {
+          // Roll back the orphaned storage object if the metadata insert failed.
+          await supabase.storage.from(STORAGE_BUCKET).remove([path])
+          toast.error(
+            `${file.name}: ${t("engagements.detail.attachmentsUploadFailed", "Upload failed")}`,
+          )
+          continue
+        }
+
+        setAttachments((cur) => [inserted as EngagementAttachment, ...cur])
+        toast.success(t("engagements.detail.attachmentsUploaded", "File attached"))
+      }
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    }
+  }
+
+  async function handleOpenAttachment(att: EngagementAttachment) {
+    const supabase = createClient()
+    const { data, error } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .createSignedUrl(att.storage_path, 60)
+    if (error || !data?.signedUrl) {
+      toast.error(t("engagements.detail.attachmentsOpenFailed", "Couldn't open file"))
+      return
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer")
+  }
+
+  async function handleDeleteAttachment(att: EngagementAttachment) {
+    const supabase = createClient()
+    setDeletingAttachmentId(att.id)
+    const { error: removeError } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .remove([att.storage_path])
+    // Even if the object is already gone, proceed to clear the metadata row.
+    const { error: dbError } = await supabase
+      .from("engagement_attachments")
+      .delete()
+      .eq("id", att.id)
+    setDeletingAttachmentId(null)
+    if (dbError || removeError) {
+      toast.error(t("engagements.detail.attachmentsDeleteFailed", "Couldn't remove file"))
+      if (dbError) return
+    }
+    setAttachments((cur) => cur.filter((a) => a.id !== att.id))
+    toast.success(t("engagements.detail.attachmentsDeleted", "File removed"))
   }
 
   function renderActivityLine(a: EngagementActivity): string {
@@ -342,6 +476,104 @@ export function EngagementDetailSheet({
             {saving ? <Loader2 className="size-4 animate-spin" /> : null}
             {saving ? t("engagements.detail.saving", "Saving…") : t("engagements.detail.save", "Save changes")}
           </Button>
+
+          <Separator />
+
+          {/* Attachments — source files / supporting docs for this engagement. */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="flex items-center gap-2">
+                <Paperclip className="size-4 text-muted-foreground" />
+                {t("engagements.detail.attachments", "Attachments")}
+                {attachments.length > 0 ? (
+                  <Badge variant="outline" className="text-[11px]">
+                    {attachments.length}
+                  </Badge>
+                ) : null}
+              </Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={uploading}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {uploading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Upload className="size-4" />
+                )}
+                {uploading
+                  ? t("engagements.detail.attachmentsUploading", "Uploading…")
+                  : t("engagements.detail.attachmentsAdd", "Add file")}
+              </Button>
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              accept={ALLOWED_ATTACHMENT_EXTENSIONS.map((e) => `.${e}`).join(",")}
+              onChange={(e) => handleUploadFiles(e.target.files)}
+            />
+
+            {attachments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {t("engagements.detail.attachmentsEmpty", "No files attached yet.")}
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {attachments.map((att) => (
+                  <li
+                    key={att.id}
+                    className="flex items-center gap-2 rounded-md border p-2"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAttachment(att)}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      title={att.file_name}
+                    >
+                      <Download className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {att.file_name}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          {formatBytes(att.file_size)} · {fmtDateTime(att.created_at)}
+                        </span>
+                      </span>
+                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 shrink-0 text-muted-foreground hover:text-semantic-error"
+                      disabled={deletingAttachmentId === att.id}
+                      onClick={() => handleDeleteAttachment(att)}
+                    >
+                      {deletingAttachmentId === att.id ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3.5" />
+                      )}
+                      <span className="sr-only">
+                        {t("engagements.detail.attachmentsRemove", "Remove file")}
+                      </span>
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <p className="text-xs text-muted-foreground">
+              {t(
+                "engagements.detail.attachmentsHint",
+                "Up to 25 MB. PDF, Office, images, CSV, TXT or ZIP.",
+              )}
+            </p>
+          </div>
 
           <Separator />
 
