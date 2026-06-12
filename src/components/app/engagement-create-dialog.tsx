@@ -163,6 +163,7 @@ export function EngagementCreateDialog({
                 type="date"
                 value={fiscalYearEnd}
                 onChange={(e) => setFiscalYearEnd(e.target.value)}
+                className="[&::-webkit-calendar-picker-indicator]:invert"
               />
             </div>
             <div className="space-y-1.5">

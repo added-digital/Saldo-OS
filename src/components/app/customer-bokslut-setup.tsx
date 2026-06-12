@@ -220,6 +220,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
               type="date"
               value={saldoavtalDate}
               onChange={(e) => setSaldoavtalDate(e.target.value)}
+              className="[&::-webkit-calendar-picker-indicator]:invert"
             />
           </div>
           <div className="space-y-1.5">
