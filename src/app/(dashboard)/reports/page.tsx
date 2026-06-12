@@ -41,6 +41,11 @@ import {
   ChartTooltip,
 } from "@/components/ui/chart";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Command,
   CommandEmpty,
   CommandInput,
@@ -340,6 +345,45 @@ function SearchSelect({
         </PopoverContent>
       </Popover>
     </div>
+  );
+}
+
+/**
+ * A report section beneath the chart that is collapsed by default. The header
+ * (title + description) is the click target; the body lives in the collapsible
+ * content so the page opens compact and each section is expanded on demand.
+ */
+function CollapsibleReportSection({
+  title,
+  description,
+  defaultOpen = false,
+  children,
+}: {
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Collapsible defaultOpen={defaultOpen} className="space-y-3">
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="group flex w-full cursor-pointer items-start justify-between gap-3 border-t border-[#8b6f2a] pt-6 text-left"
+        >
+          <div className="space-y-1">
+            <h3 className="text-base font-semibold">{title}</h3>
+            {description ? (
+              <p className="text-sm text-muted-foreground">{description}</p>
+            ) : null}
+          </div>
+          <ChevronDown className="mt-1 size-5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-3 pt-3">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -4793,19 +4837,13 @@ function renderWorkloadShareCell(percentage: number) {
 
   function renderArticleGroupsSection() {
     return (
-      <section className="space-y-3">
-        <div className="space-y-1 border-t border-[#8b6f2a] pt-6">
-          <h3 className="text-base font-semibold">
-            {t("reports.sections.articleGroups.title", "Article groups")} ({articleGroupRows.length})
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {t(
-              "reports.sections.articleGroups.description",
-              "Mapped follow-up per article group for current selection.",
-            )}
-          </p>
-        </div>
-
+      <CollapsibleReportSection
+        title={`${t("reports.sections.articleGroups.title", "Article groups")} (${articleGroupRows.length})`}
+        description={t(
+          "reports.sections.articleGroups.description",
+          "Mapped follow-up per article group for current selection.",
+        )}
+      >
         {articleGroupsLoading ? (
           <Skeleton className="h-[280px] w-full" />
         ) : articleGroupRows.length === 0 ? (
@@ -4926,7 +4964,7 @@ function renderWorkloadShareCell(percentage: number) {
             </Table>
           </div>
         )}
-      </section>
+      </CollapsibleReportSection>
     );
   }
 
@@ -5334,21 +5372,19 @@ function renderWorkloadShareCell(percentage: number) {
           </section>
 
           {selectedManagerId && !selectedCustomerId ? (
-            <section className="space-y-3">
-              <div className="space-y-1 border-t border-[#8b6f2a] pt-6">
-                <h3 className="text-base font-semibold">
+            <CollapsibleReportSection
+              title={
+                <>
                   {t("reports.sections.customersInCostCenter.title", "Customers in cost center")}{" "}
                   {selectedManager?.fortnox_cost_center ?? "-"} -{" "}
                   {selectedManager?.full_name ?? t("reports.selectedCustomerManager", "Selected customer manager")}
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  {t(
-                    "reports.sections.customersInCostCenter.description",
-                    "Period summary for customers in the selected customer manager scope.",
-                  )}
-                </p>
-              </div>
-
+                </>
+              }
+              description={t(
+                "reports.sections.customersInCostCenter.description",
+                "Period summary for customers in the selected customer manager scope.",
+              )}
+            >
               <DataTable
                 columns={managerCustomerSummaryColumns}
                 data={managerCustomerSummaryRows}
@@ -5369,31 +5405,28 @@ function renderWorkloadShareCell(percentage: number) {
                   ),
                 }}
               />
-            </section>
+            </CollapsibleReportSection>
           ) : null}
 
-          <section className="space-y-3">
-            <div className="space-y-1 border-t border-[#8b6f2a] pt-6">
-              <h3 className="text-base font-semibold">
-                {t("reports.sections.timeReporting.title", "Time reporting")}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {selectedWindowMode === "current-month"
+          <CollapsibleReportSection
+            title={t("reports.sections.timeReporting.title", "Time reporting")}
+            description={
+              selectedWindowMode === "current-month"
+                ? t(
+                    "reports.sections.timeReporting.currentMonthDescription",
+                    "Current month view based on selected month.",
+                  )
+                : selectedWindowMode === "rolling-year"
                   ? t(
-                      "reports.sections.timeReporting.currentMonthDescription",
-                      "Current month view based on selected month.",
+                      "reports.sections.timeReporting.rollingYearDescription",
+                      "Calendar year view based on selected month year.",
                     )
-                  : selectedWindowMode === "rolling-year"
-                    ? t(
-                        "reports.sections.timeReporting.rollingYearDescription",
-                        "Calendar year view based on selected month year.",
-                      )
-                    : t(
-                        "reports.sections.timeReporting.rolling12MonthsDescription",
-                        "Rolling 12-month view based on selected month.",
-                      )}
-              </p>
-            </div>
+                  : t(
+                      "reports.sections.timeReporting.rolling12MonthsDescription",
+                      "Rolling 12-month view based on selected month.",
+                    )
+            }
+          >
             {!selectedCustomerId ? (
               <DataTable
                 columns={monthlyTimeReportingColumns}
@@ -5501,21 +5534,16 @@ function renderWorkloadShareCell(percentage: number) {
                 />
               </div>
             ) : null}
-          </section>
+          </CollapsibleReportSection>
 
           {selectedManagerId && !selectedCustomerId ? renderArticleGroupsSection() : null}
 
           {selectedCustomerId ? (
             <div className="space-y-10">
-              <section className="space-y-3">
-                <div className="space-y-1 border-t border-[#8b6f2a] pt-6">
-                  <h3 className="text-base font-semibold">
-                    {t("reports.sections.customerAccruals.title", "Customer Accruals")}
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
-                    {selectedCustomer?.name ?? t("reports.selectedCustomer", "Selected customer")}
-                  </p>
-                </div>
+              <CollapsibleReportSection
+                title={t("reports.sections.customerAccruals.title", "Customer Accruals")}
+                description={selectedCustomer?.name ?? t("reports.selectedCustomer", "Selected customer")}
+              >
                 <DataTable
                   columns={customerAccrualColumns}
                   data={customerAccruals}
@@ -5531,18 +5559,17 @@ function renderWorkloadShareCell(percentage: number) {
                     ),
                   }}
                 />
-              </section>
+              </CollapsibleReportSection>
 
-              <section className="space-y-3">
-                <div className="space-y-1 border-t border-[#8b6f2a] pt-6">
-                  <h3 className="text-base font-semibold">
-                    {t("reports.sections.monthlyTurnoverAndHours.title", "Monthly turnover and hours")}
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
+              <CollapsibleReportSection
+                title={t("reports.sections.monthlyTurnoverAndHours.title", "Monthly turnover and hours")}
+                description={
+                  <>
                     {selectedCustomer?.name ?? t("reports.selectedCustomer", "Selected customer")} ·{" "}
                     {rollingWindow.title}
-                  </p>
-                </div>
+                  </>
+                }
+              >
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <Popover
                     open={monthlyArticleGroupFilterOpen}
@@ -5643,7 +5670,7 @@ function renderWorkloadShareCell(percentage: number) {
                     }}
                   />
                 )}
-              </section>
+              </CollapsibleReportSection>
 
               {renderArticleGroupsSection()}
             </div>
