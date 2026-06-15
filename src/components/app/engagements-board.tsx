@@ -210,6 +210,16 @@ export function EngagementsBoard() {
 
   const detailRow = detailId ? rows.find((r) => r.id === detailId) ?? null : null
 
+  // Stable handlers so memoized cards don't re-render on every board update
+  // (e.g. opening the detail sheet). Card calls these with its own row id.
+  const handleCardClick = React.useCallback((id: string) => setDetailId(id), [])
+  const handleCardDragStart = React.useCallback((id: string) => setDraggingId(id), [])
+  const handleCardDragEnd = React.useCallback(() => {
+    setDraggingId(null)
+    setDragOverCol(null)
+  }, [])
+  const overdueLabel = t("engagements.overdue", "Overdue")
+
   async function moveEngagement(id: string, toStatusId: string | null) {
     const row = rows.find((r) => r.id === id)
     if (!row) return
@@ -365,13 +375,10 @@ export function EngagementsBoard() {
                       key={row.id}
                       row={row}
                       dragging={draggingId === row.id}
-                      onDragStart={() => setDraggingId(row.id)}
-                      onDragEnd={() => {
-                        setDraggingId(null)
-                        setDragOverCol(null)
-                      }}
-                      onClick={() => setDetailId(row.id)}
-                      overdueLabel={t("engagements.overdue", "Overdue")}
+                      onDragStart={handleCardDragStart}
+                      onDragEnd={handleCardDragEnd}
+                      onClick={handleCardClick}
+                      overdueLabel={overdueLabel}
                     />
                   ))}
                 </div>
@@ -442,7 +449,7 @@ function FilterSelect({
   )
 }
 
-function EngagementCard({
+const EngagementCard = React.memo(function EngagementCard({
   row,
   dragging,
   onDragStart,
@@ -452,17 +459,17 @@ function EngagementCard({
 }: {
   row: EngagementBoardRow
   dragging: boolean
-  onDragStart: () => void
+  onDragStart: (id: string) => void
   onDragEnd: () => void
-  onClick: () => void
+  onClick: (id: string) => void
   overdueLabel: string
 }) {
   return (
     <div
       draggable
-      onDragStart={onDragStart}
+      onDragStart={() => onDragStart(row.id)}
       onDragEnd={onDragEnd}
-      onClick={onClick}
+      onClick={() => onClick(row.id)}
       className={cn(
         "cursor-pointer rounded-md border bg-background p-2.5 text-left shadow-sm transition-opacity hover:border-border-strong",
         dragging && "opacity-50",
@@ -513,4 +520,4 @@ function EngagementCard({
       </div>
     </div>
   )
-}
+})
