@@ -216,23 +216,33 @@ export function EngagementsBoard() {
   // board filtering runs in a low-priority render, not on every keystroke.
   const deferredCustomer = React.useDeferredValue(filterCustomer)
   const customerQuery = deferredCustomer.trim().toLowerCase()
-  const filteredRows = React.useMemo(
+  // Everything except the overdue toggle, so the overdue count reflects the
+  // current scope (consultant / group / year / cleared / search) without being
+  // circular with the toggle itself.
+  const scopedRows = React.useMemo(
     () =>
       rows.filter(
         (r) =>
           (filterConsultant === ALL || r.consultant_id === filterConsultant) &&
           (filterGroup === ALL || r.group_name === filterGroup) &&
           (filterYear === ALL || r.fiscal_year_end === filterYear) &&
-          (!filterOverdue || r.is_overdue) &&
           (clearedMode === "show" ||
             (clearedMode === "hide" && !r.cleared_at) ||
             (clearedMode === "only" && !!r.cleared_at)) &&
           (customerQuery === "" || r.customer_name.toLowerCase().includes(customerQuery)),
       ),
-    [rows, filterConsultant, filterGroup, filterYear, filterOverdue, clearedMode, customerQuery],
+    [rows, filterConsultant, filterGroup, filterYear, clearedMode, customerQuery],
   )
 
-  const overdueCount = React.useMemo(() => rows.filter((r) => r.is_overdue).length, [rows])
+  const filteredRows = React.useMemo(
+    () => (filterOverdue ? scopedRows.filter((r) => r.is_overdue) : scopedRows),
+    [scopedRows, filterOverdue],
+  )
+
+  const overdueCount = React.useMemo(
+    () => scopedRows.filter((r) => r.is_overdue).length,
+    [scopedRows],
+  )
   // Customers that already have at least one engagement on the board.
   const engagedCustomerIds = React.useMemo(
     () => new Set(rows.map((r) => r.customer_id)),
