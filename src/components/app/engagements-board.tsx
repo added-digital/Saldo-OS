@@ -212,7 +212,10 @@ export function EngagementsBoard() {
     return Array.from(set).sort().reverse()
   }, [rows])
 
-  const customerQuery = filterCustomer.trim().toLowerCase()
+  // Deferred so typing in the search box stays responsive — the (heavier)
+  // board filtering runs in a low-priority render, not on every keystroke.
+  const deferredCustomer = React.useDeferredValue(filterCustomer)
+  const customerQuery = deferredCustomer.trim().toLowerCase()
   const filteredRows = React.useMemo(
     () =>
       rows.filter(
@@ -369,7 +372,7 @@ export function EngagementsBoard() {
             <button
               key={wf}
               type="button"
-              onClick={() => setWorkflow(wf)}
+              onClick={() => React.startTransition(() => setWorkflow(wf))}
               className={cn(
                 "cursor-pointer rounded px-3 py-1 text-sm font-medium transition-colors",
                 workflow === wf ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
@@ -395,7 +398,7 @@ export function EngagementsBoard() {
             type="button"
             size="sm"
             variant={filterOverdue ? "default" : "outline"}
-            onClick={() => setFilterOverdue((v) => !v)}
+            onClick={() => React.startTransition(() => setFilterOverdue((v) => !v))}
             aria-pressed={filterOverdue}
           >
             <AlertTriangle className="size-4" />
@@ -411,23 +414,26 @@ export function EngagementsBoard() {
           </Button>
           <FilterSelect
             value={filterConsultant}
-            onChange={setFilterConsultant}
+            onChange={(v) => React.startTransition(() => setFilterConsultant(v))}
             allLabel={t("engagements.filter.consultant", "Consultant")}
             options={consultantOptions.map((c) => ({ value: c.id, label: c.name }))}
           />
           <FilterSelect
             value={filterGroup}
-            onChange={setFilterGroup}
+            onChange={(v) => React.startTransition(() => setFilterGroup(v))}
             allLabel={t("engagements.filter.group", "Group")}
             options={groupOptions.map((g) => ({ value: g, label: g }))}
           />
           <FilterSelect
             value={filterYear}
-            onChange={setFilterYear}
+            onChange={(v) => React.startTransition(() => setFilterYear(v))}
             allLabel={t("engagements.filter.year", "Fiscal year")}
             options={yearOptions.map((y) => ({ value: y, label: y }))}
           />
-          <Select value={clearedMode} onValueChange={(v) => setClearedMode(v as typeof clearedMode)}>
+          <Select
+            value={clearedMode}
+            onValueChange={(v) => React.startTransition(() => setClearedMode(v as typeof clearedMode))}
+          >
             <SelectTrigger size="sm" className="w-[150px]">
               <SelectValue />
             </SelectTrigger>
