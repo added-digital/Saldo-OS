@@ -62,6 +62,8 @@ export interface EngagementBoardRow {
   customer_setup: Record<string, ChecklistValue> | null
   created_at: string
   updated_at: string
+  /** Set when the engagement has been cleared (hidden) from the board. */
+  cleared_at: string | null
 }
 
 export interface EngagementActivity {

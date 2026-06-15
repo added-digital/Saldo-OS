@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Download,
   Mail,
+  Plus,
   RefreshCw,
   Search,
   Tag,
@@ -1197,9 +1198,10 @@ export default function MailHistoryPage() {
                       name: assignQuery.trim(),
                     })
                   }
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60 disabled:opacity-50"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-primary hover:bg-muted/60 disabled:opacity-50"
                 >
-                  <span className="text-muted-foreground">
+                  <Plus className="size-4 shrink-0" />
+                  <span className="shrink-0">
                     {t("mail.history.campaign.create", "Create")}
                   </span>
                   <span className="truncate font-medium">

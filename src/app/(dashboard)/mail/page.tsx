@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, Search, Send, TriangleAlert, X } from "lucide-react"
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Search, Send, TriangleAlert, X } from "lucide-react"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
@@ -1340,7 +1340,7 @@ export default function MailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-end gap-4">
-          <div className="w-[200px] max-w-full space-y-2">
+          <div className="min-w-[200px] flex-1 space-y-2">
             <Label htmlFor="mail-template-select">
               {t("mail.send.templateSelect", "Template")}
             </Label>
@@ -1362,7 +1362,7 @@ export default function MailPage() {
             </Select>
           </div>
 
-          <div className="w-[200px] max-w-full space-y-2">
+          <div className="min-w-[200px] flex-1 space-y-2">
             <Label>{t("mail.send.campaign.label", "Campaign group (optional)")}</Label>
             <Popover open={campaignPickerOpen} onOpenChange={setCampaignPickerOpen}>
               <PopoverTrigger asChild>
@@ -1435,9 +1435,10 @@ export default function MailPage() {
                         setCampaignQuery("")
                         setCampaignPickerOpen(false)
                       }}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-primary hover:bg-muted/60"
                     >
-                      <span className="text-muted-foreground">
+                      <Plus className="size-4 shrink-0" />
+                      <span className="shrink-0">
                         {t("mail.send.campaign.create", "Create")}
                       </span>
                       <span className="truncate font-medium">

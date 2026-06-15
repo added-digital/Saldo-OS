@@ -2,12 +2,13 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle } from "lucide-react"
+import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
+import { useUser } from "@/hooks/use-user"
 import type {
   EngagementBoardRow,
   EngagementChecklistField,
@@ -26,6 +27,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { EngagementCreateDialog } from "@/components/app/engagement-create-dialog"
 import { EngagementDetailSheet } from "@/components/app/engagement-detail-sheet"
 
@@ -87,6 +94,7 @@ function applyStatus(
 
 export function EngagementsBoard() {
   const { t } = useTranslation()
+  const { user } = useUser()
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loading, setLoading] = React.useState(true)
@@ -102,11 +110,14 @@ export function EngagementsBoard() {
   const [filterYear, setFilterYear] = React.useState<string>(ALL)
   const [filterCustomer, setFilterCustomer] = React.useState<string>("")
   const [filterOverdue, setFilterOverdue] = React.useState<boolean>(false)
+  const [clearedMode, setClearedMode] = React.useState<"hide" | "show" | "only">("hide")
 
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = React.useState<string | null>(null)
   const [detailId, setDetailId] = React.useState<string | null>(null)
   const [createOpen, setCreateOpen] = React.useState(false)
+  const [createForCustomerId, setCreateForCustomerId] = React.useState<string | undefined>(undefined)
+  const [missingOpen, setMissingOpen] = React.useState(false)
 
   React.useEffect(() => {
     let cancelled = false
@@ -149,6 +160,18 @@ export function EngagementsBoard() {
     }
   }, [searchParams, rows])
 
+  // Default-scope the board to the logged-in user's own bokslut: once rows
+  // load, if the current user is the consultant on any engagement, preselect
+  // them in the consultant filter. Applied once; the user can switch to All.
+  const scopeAppliedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (scopeAppliedRef.current || !user?.id || rows.length === 0) return
+    scopeAppliedRef.current = true
+    if (rows.some((r) => r.consultant_id === user.id)) {
+      setFilterConsultant(user.id)
+    }
+  }, [user, rows])
+
   const userNames = React.useMemo(
     () => Object.fromEntries(consultants.map((c) => [c.id, c.name])),
     [consultants],
@@ -160,7 +183,16 @@ export function EngagementsBoard() {
     const ofWorkflow = statuses
       .filter((s) => s.workflow === workflow)
       .sort((a, b) => a.sort_order - b.sort_order)
-    return [{ id: NO_STATUS, label: t("engagements.noStatus", "No status") }, ...ofWorkflow.map((s) => ({ id: s.id, label: s.label }))]
+    // "Ej aktuell" (is_parked) is a side bucket, not a pipeline stage. Park it
+    // at the far left and de-emphasize it so the linear flow reads left→right
+    // and ends cleanly at the terminal "Registrerad hos Bolagsverket".
+    const parked = ofWorkflow.filter((s) => s.is_parked)
+    const active = ofWorkflow.filter((s) => !s.is_parked)
+    return [
+      ...parked.map((s) => ({ id: s.id, label: s.label, parked: true })),
+      { id: NO_STATUS, label: t("engagements.noStatus", "No status"), parked: false },
+      ...active.map((s) => ({ id: s.id, label: s.label, parked: false })),
+    ]
   }, [statuses, workflow, t])
 
   // Distinct filter option lists derived from the loaded rows.
@@ -189,12 +221,20 @@ export function EngagementsBoard() {
           (filterGroup === ALL || r.group_name === filterGroup) &&
           (filterYear === ALL || r.fiscal_year_end === filterYear) &&
           (!filterOverdue || r.is_overdue) &&
+          (clearedMode === "show" ||
+            (clearedMode === "hide" && !r.cleared_at) ||
+            (clearedMode === "only" && !!r.cleared_at)) &&
           (customerQuery === "" || r.customer_name.toLowerCase().includes(customerQuery)),
       ),
-    [rows, filterConsultant, filterGroup, filterYear, filterOverdue, customerQuery],
+    [rows, filterConsultant, filterGroup, filterYear, filterOverdue, clearedMode, customerQuery],
   )
 
   const overdueCount = React.useMemo(() => rows.filter((r) => r.is_overdue).length, [rows])
+  // Customers that already have at least one engagement on the board.
+  const engagedCustomerIds = React.useMemo(
+    () => new Set(rows.map((r) => r.customer_id)),
+    [rows],
+  )
 
   const rowsByColumn = React.useMemo(() => {
     const map = new Map<string, EngagementBoardRow[]>()
@@ -212,13 +252,62 @@ export function EngagementsBoard() {
 
   // Stable handlers so memoized cards don't re-render on every board update
   // (e.g. opening the detail sheet). Card calls these with its own row id.
-  const handleCardClick = React.useCallback((id: string) => setDetailId(id), [])
+  // Defer the heavy detail-sheet mount into a transition so the click paints
+  // immediately (keeps INP low); the sheet then renders without blocking.
+  const handleCardClick = React.useCallback((id: string) => {
+    React.startTransition(() => setDetailId(id))
+  }, [])
   const handleCardDragStart = React.useCallback((id: string) => setDraggingId(id), [])
   const handleCardDragEnd = React.useCallback(() => {
     setDraggingId(null)
     setDragOverCol(null)
   }, [])
   const overdueLabel = t("engagements.overdue", "Overdue")
+  const clearLabels = React.useMemo(
+    () => ({
+      mark: t("engagements.clear.mark", "Mark as cleared"),
+      restore: t("engagements.clear.restore", "Restore to board"),
+      badge: t("engagements.clear.badge", "Cleared"),
+    }),
+    [t],
+  )
+
+  // Toggle an engagement's cleared state (optimistic). rowsRef keeps the
+  // handler stable so memoized cards don't re-render on every board update.
+  const rowsRef = React.useRef(rows)
+  rowsRef.current = rows
+  const handleToggleCleared = React.useCallback(
+    (id: string) => {
+      const row = rowsRef.current.find((r) => r.id === id)
+      if (!row) return
+      const next = row.cleared_at ? null : new Date().toISOString()
+      const snapshot = rowsRef.current
+      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, cleared_at: next } : r)))
+      void (async () => {
+        const supabase = createClient()
+        const { error } = await supabase
+          .from("engagements")
+          .update({ cleared_at: next } as never)
+          .eq("id", id)
+        if (error) {
+          setRows(snapshot)
+          toast.error(`${t("engagements.toast.error", "Couldn't update engagement")}: ${error.message}`)
+          return
+        }
+        if (next) {
+          toast.success(t("engagements.clear.toastCleared", "Cleared and hidden from the board"), {
+            action: {
+              label: t("engagements.clear.undo", "Undo"),
+              onClick: () => handleToggleCleared(id),
+            },
+          })
+        } else {
+          toast.success(t("engagements.clear.toastRestored", "Restored to the board"))
+        }
+      })()
+    },
+    [t],
+  )
 
   async function moveEngagement(id: string, toStatusId: string | null) {
     const row = rows.find((r) => r.id === id)
@@ -257,7 +346,17 @@ export function EngagementsBoard() {
         title={t("engagements.title", "Engagements")}
         description={t("engagements.description", "Year-end close and tax declaration workflow per client.")}
       >
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
+        <Button size="sm" variant="outline" onClick={() => setMissingOpen(true)}>
+          <ClipboardList className="size-4" />
+          {t("engagements.missing.button", "Without bokslut")}
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => {
+            setCreateForCustomerId(undefined)
+            setCreateOpen(true)
+          }}
+        >
           <Plus className="size-4" />
           {t("engagements.new", "New engagement")}
         </Button>
@@ -328,6 +427,16 @@ export function EngagementsBoard() {
             allLabel={t("engagements.filter.year", "Fiscal year")}
             options={yearOptions.map((y) => ({ value: y, label: y }))}
           />
+          <Select value={clearedMode} onValueChange={(v) => setClearedMode(v as typeof clearedMode)}>
+            <SelectTrigger size="sm" className="w-[150px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hide">{t("engagements.filter.cleared.hide", "Hide cleared")}</SelectItem>
+              <SelectItem value="show">{t("engagements.filter.cleared.show", "Show cleared")}</SelectItem>
+              <SelectItem value="only">{t("engagements.filter.cleared.only", "Only cleared")}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -361,26 +470,44 @@ export function EngagementsBoard() {
                 className={cn(
                   "flex w-[270px] shrink-0 flex-col rounded-lg border bg-muted/20 transition-colors",
                   dragOverCol === col.id && "border-primary bg-primary/5",
+                  // Parked ("Ej aktuell"): set apart from the pipeline — dashed,
+                  // transparent, de-emphasized, with a gap before the flow.
+                  col.parked && "mr-3 border-dashed bg-transparent opacity-70",
                 )}
               >
                 <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-                  <span className="truncate text-sm font-medium">{col.label}</span>
+                  <span
+                    className={cn(
+                      "truncate text-sm font-medium",
+                      col.parked && "text-muted-foreground",
+                    )}
+                  >
+                    {col.label}
+                  </span>
                   <Badge variant="outline" className="shrink-0 text-[11px]">
                     {colRows.length}
                   </Badge>
                 </div>
                 <div className="flex min-h-[40px] flex-1 flex-col gap-2 overflow-y-auto p-2">
-                  {colRows.map((row) => (
-                    <EngagementCard
-                      key={row.id}
-                      row={row}
-                      dragging={draggingId === row.id}
-                      onDragStart={handleCardDragStart}
-                      onDragEnd={handleCardDragEnd}
-                      onClick={handleCardClick}
-                      overdueLabel={overdueLabel}
-                    />
-                  ))}
+                  {colRows.map((row) => {
+                    const isDone =
+                      workflow === "bokslut" ? row.bokslut_status_is_done : row.ink2_status_is_done
+                    return (
+                      <EngagementCard
+                        key={row.id}
+                        row={row}
+                        dragging={draggingId === row.id}
+                        cleared={!!row.cleared_at}
+                        canClear={Boolean(isDone) || !!row.cleared_at}
+                        onToggleCleared={handleToggleCleared}
+                        clearLabels={clearLabels}
+                        onDragStart={handleCardDragStart}
+                        onDragEnd={handleCardDragEnd}
+                        onClick={handleCardClick}
+                        overdueLabel={overdueLabel}
+                      />
+                    )
+                  })}
                 </div>
               </div>
             )
@@ -393,7 +520,19 @@ export function EngagementsBoard() {
         onOpenChange={setCreateOpen}
         defaultFiscalYearEnd={defaultFiscalYearEnd}
         groupOptions={groupOptions}
+        presetCustomerId={createForCustomerId}
         onCreated={(row) => setRows((prev) => [row, ...prev])}
+      />
+
+      <MissingBokslutDialog
+        open={missingOpen}
+        onOpenChange={setMissingOpen}
+        engagedCustomerIds={engagedCustomerIds}
+        onCreateForCustomer={(id) => {
+          setCreateForCustomerId(id)
+          setMissingOpen(false)
+          setCreateOpen(true)
+        }}
       />
 
       <EngagementDetailSheet
@@ -449,9 +588,149 @@ function FilterSelect({
   )
 }
 
+type ActiveCustomer = { id: string; name: string; org_number: string | null; office: string | null }
+
+// Swedish org-number rule: the leading group digit 5 = aktiebolag (AB).
+// The 3rd digit ≥ 2 disambiguates from a personnummer (enskild firma) that
+// happens to start with 5 (e.g. a person born in the 1950s), since a
+// personnummer's 3rd digit is the month tens (0–1).
+function isAktiebolag(orgNumber: string | null): boolean {
+  const d = (orgNumber ?? "").replace(/\D/g, "")
+  return d.length === 10 && d[0] === "5" && d[2] >= "2"
+}
+
+function MissingBokslutDialog({
+  open,
+  onOpenChange,
+  engagedCustomerIds,
+  onCreateForCustomer,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  engagedCustomerIds: Set<string>
+  onCreateForCustomer: (customerId: string) => void
+}) {
+  const { t } = useTranslation()
+  const [customers, setCustomers] = React.useState<ActiveCustomer[] | null>(null)
+  const [query, setQuery] = React.useState("")
+
+  // Lazy-load active customers the first time the dialog opens.
+  React.useEffect(() => {
+    if (!open || customers !== null) return
+    let cancelled = false
+    void (async () => {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from("customers")
+        .select("id, name, org_number, office")
+        .eq("status", "active")
+        .order("name")
+        .limit(5000)
+      if (cancelled) return
+      setCustomers((data ?? []) as ActiveCustomer[])
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, customers])
+
+  // Only aktiebolag are relevant for the year-end close; exclude enskild firma,
+  // HB/KB and föreningar from the gap list.
+  const missing = React.useMemo(
+    () =>
+      (customers ?? []).filter(
+        (c) => !engagedCustomerIds.has(c.id) && isAktiebolag(c.org_number),
+      ),
+    [customers, engagedCustomerIds],
+  )
+  const q = query.trim().toLowerCase()
+  const filtered = React.useMemo(
+    () =>
+      q === ""
+        ? missing
+        : missing.filter(
+            (c) =>
+              c.name.toLowerCase().includes(q) ||
+              (c.org_number ?? "").toLowerCase().includes(q),
+          ),
+    [missing, q],
+  )
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[80vh] flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {t("engagements.missing.title", "Active customers without a bokslut")}
+            {customers !== null ? (
+              <Badge variant="outline" className="text-[11px]">
+                {missing.length}
+              </Badge>
+            ) : null}
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground">
+            {t("engagements.missing.description", "Active customers that have no engagement mapped on the board.")}
+          </p>
+        </DialogHeader>
+
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("engagements.missing.search", "Search customers…")}
+            className="h-8 pl-8"
+          />
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {customers === null ? (
+            <div className="space-y-2 py-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-9 w-full rounded-md" />
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              {t("engagements.missing.none", "No active customers are missing a bokslut.")}
+            </p>
+          ) : (
+            <ul className="divide-y">
+              {filtered.map((c) => (
+                <li key={c.id} className="flex items-center justify-between gap-3 py-2">
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {c.org_number ?? ""}
+                    {c.office ? ` · ${c.office}` : ""}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0"
+                    title={t("engagements.missing.create", "Create engagement")}
+                    onClick={() => onCreateForCustomer(c.id)}
+                  >
+                    <Plus className="size-4" />
+                    <span className="sr-only">{t("engagements.missing.create", "Create engagement")}</span>
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 const EngagementCard = React.memo(function EngagementCard({
   row,
   dragging,
+  cleared,
+  canClear,
+  onToggleCleared,
+  clearLabels,
   onDragStart,
   onDragEnd,
   onClick,
@@ -459,6 +738,10 @@ const EngagementCard = React.memo(function EngagementCard({
 }: {
   row: EngagementBoardRow
   dragging: boolean
+  cleared: boolean
+  canClear: boolean
+  onToggleCleared: (id: string) => void
+  clearLabels: { mark: string; restore: string; badge: string }
   onDragStart: (id: string) => void
   onDragEnd: () => void
   onClick: (id: string) => void
@@ -473,14 +756,40 @@ const EngagementCard = React.memo(function EngagementCard({
       className={cn(
         "cursor-pointer rounded-md border bg-background p-2.5 text-left shadow-sm transition-opacity hover:border-border-strong",
         dragging && "opacity-50",
+        cleared && "opacity-60",
       )}
     >
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{row.customer_name}</p>
+        {cleared ? (
+          <Badge variant="secondary" className="shrink-0 gap-1 text-[10px]">
+            <CheckCircle2 className="size-3" />
+            {clearLabels.badge}
+          </Badge>
+        ) : null}
         {row.customer_setup?.holdingbolag === "yes" ? (
           <Badge variant="outline" className="shrink-0 text-[10px]">
             Holding
           </Badge>
+        ) : null}
+        {canClear ? (
+          <button
+            type="button"
+            title={cleared ? clearLabels.restore : clearLabels.mark}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleCleared(row.id)
+            }}
+            className={cn(
+              "shrink-0 cursor-pointer rounded-full p-0.5 transition-colors",
+              cleared
+                ? "text-muted-foreground hover:text-foreground"
+                : "text-muted-foreground hover:text-semantic-success",
+            )}
+          >
+            {cleared ? <RotateCcw className="size-4" /> : <CheckCircle2 className="size-4" />}
+            <span className="sr-only">{cleared ? clearLabels.restore : clearLabels.mark}</span>
+          </button>
         ) : null}
       </div>
 

@@ -37,12 +37,14 @@ export function EngagementCreateDialog({
   onOpenChange,
   defaultFiscalYearEnd,
   groupOptions,
+  presetCustomerId,
   onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   defaultFiscalYearEnd: string
   groupOptions: string[]
+  presetCustomerId?: string
   onCreated: (row: EngagementBoardRow) => void
 }) {
   const { t } = useTranslation()
@@ -74,8 +76,11 @@ export function EngagementCreateDialog({
   }, [open, customers.length])
 
   React.useEffect(() => {
-    if (open) setFiscalYearEnd(defaultFiscalYearEnd)
-  }, [open, defaultFiscalYearEnd])
+    if (open) {
+      setFiscalYearEnd(defaultFiscalYearEnd)
+      setCustomerId(presetCustomerId ?? "")
+    }
+  }, [open, defaultFiscalYearEnd, presetCustomerId])
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null
 
@@ -148,30 +153,51 @@ export function EngagementCreateDialog({
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label>{t("engagements.create.customer", "Customer")}</Label>
-            {/* Inline (not in a Popover) so the list scrolls — a portaled
-                dropdown sits outside the Dialog's scroll-lock and can't wheel. */}
-            <Command className="rounded-md border">
-              <CommandInput placeholder={t("engagements.create.search", "Search customers…")} />
-              <CommandList className="max-h-[220px]">
-                <CommandEmpty>—</CommandEmpty>
-                {customers.map((c) => (
-                  <CommandItem
-                    key={c.id}
-                    value={c.name}
-                    onSelect={() => setCustomerId(c.id)}
-                  >
-                    <Check className={cn("size-4", customerId === c.id ? "opacity-100" : "opacity-0")} />
-                    <span className="truncate">{c.name}</span>
-                    {c.office ? <span className="ml-auto text-xs text-muted-foreground">{c.office}</span> : null}
-                  </CommandItem>
-                ))}
-              </CommandList>
-            </Command>
+            {/* Once a customer is chosen, show just a chip (with a Change
+                action) and hide the search entirely — no scrolling needed. */}
             {selectedCustomer ? (
-              <p className="text-xs text-muted-foreground">
-                {t("engagements.create.customer", "Customer")}: <span className="text-foreground">{selectedCustomer.name}</span>
-              </p>
-            ) : null}
+              <div className="flex items-center gap-2 rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                  {selectedCustomer.name}
+                </span>
+                {selectedCustomer.office ? (
+                  <span className="shrink-0 text-xs text-muted-foreground">{selectedCustomer.office}</span>
+                ) : null}
+                {/* No "Change" when routed via the gap-list shortcut — the
+                    customer is fixed in that flow. */}
+                {!presetCustomerId ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="shrink-0"
+                    onClick={() => setCustomerId("")}
+                  >
+                    {t("engagements.create.changeCustomer", "Change")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              /* Inline (not in a Popover) so the list scrolls — a portaled
+                 dropdown sits outside the Dialog's scroll-lock and can't wheel. */
+              <Command className="rounded-md border">
+                <CommandInput placeholder={t("engagements.create.search", "Search customers…")} />
+                <CommandList className="max-h-[220px]">
+                  <CommandEmpty>—</CommandEmpty>
+                  {customers.map((c) => (
+                    <CommandItem
+                      key={c.id}
+                      value={c.name}
+                      onSelect={() => setCustomerId(c.id)}
+                    >
+                      <Check className={cn("size-4", customerId === c.id ? "opacity-100" : "opacity-0")} />
+                      <span className="truncate">{c.name}</span>
+                      {c.office ? <span className="ml-auto text-xs text-muted-foreground">{c.office}</span> : null}
+                    </CommandItem>
+                  ))}
+                </CommandList>
+              </Command>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
