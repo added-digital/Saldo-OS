@@ -30,15 +30,19 @@ import {
 type CustomerOption = { id: string; name: string; office: string | null }
 type ConsultantOption = { id: string; name: string }
 
+const NONE = "none"
+
 export function EngagementCreateDialog({
   open,
   onOpenChange,
   defaultFiscalYearEnd,
+  groupOptions,
   onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   defaultFiscalYearEnd: string
+  groupOptions: string[]
   onCreated: (row: EngagementBoardRow) => void
 }) {
   const { t } = useTranslation()
@@ -46,6 +50,7 @@ export function EngagementCreateDialog({
   const [consultants, setConsultants] = React.useState<ConsultantOption[]>([])
   const [customerId, setCustomerId] = React.useState<string>("")
   const [consultantId, setConsultantId] = React.useState<string>("")
+  const [group, setGroup] = React.useState<string>(NONE)
   const [fiscalYearEnd, setFiscalYearEnd] = React.useState<string>(defaultFiscalYearEnd)
   const [creating, setCreating] = React.useState(false)
 
@@ -74,6 +79,19 @@ export function EngagementCreateDialog({
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null
 
+  // Default the group to the selected customer's office (overridable below).
+  React.useEffect(() => {
+    const office = customers.find((c) => c.id === customerId)?.office
+    setGroup(office && office.trim() ? office : NONE)
+  }, [customerId, customers])
+
+  // Dropdown options: the known groups, plus this customer's office if new.
+  const groupSelectOptions = React.useMemo(() => {
+    const set = new Set(groupOptions.filter((g) => g && g.trim()))
+    if (selectedCustomer?.office && selectedCustomer.office.trim()) set.add(selectedCustomer.office)
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [groupOptions, selectedCustomer])
+
   async function handleCreate() {
     if (!customerId || !fiscalYearEnd) return
     setCreating(true)
@@ -85,7 +103,7 @@ export function EngagementCreateDialog({
         customer_id: customerId,
         fiscal_year_end: fiscalYearEnd,
         consultant_id: consultantId || null,
-        group_name: selectedCustomer?.office ?? null,
+        group_name: group === NONE ? null : group,
       } as never)
       .select("id")
       .single()
@@ -116,6 +134,7 @@ export function EngagementCreateDialog({
     }
     setCustomerId("")
     setConsultantId("")
+    setGroup(NONE)
     onOpenChange(false)
   }
 
@@ -181,6 +200,23 @@ export function EngagementCreateDialog({
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>{t("engagements.create.group", "Group")}</Label>
+            <Select value={group} onValueChange={setGroup}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="—" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>—</SelectItem>
+                {groupSelectOptions.map((g) => (
+                  <SelectItem key={g} value={g}>
+                    {g}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 

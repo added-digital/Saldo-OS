@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon } from "lucide-react"
+import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -17,6 +17,7 @@ import type {
 import { PageHeader } from "@/components/app/page-header"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Select,
@@ -99,6 +100,8 @@ export function EngagementsBoard() {
   const [filterConsultant, setFilterConsultant] = React.useState<string>(ALL)
   const [filterGroup, setFilterGroup] = React.useState<string>(ALL)
   const [filterYear, setFilterYear] = React.useState<string>(ALL)
+  const [filterCustomer, setFilterCustomer] = React.useState<string>("")
+  const [filterOverdue, setFilterOverdue] = React.useState<boolean>(false)
 
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = React.useState<string | null>(null)
@@ -177,16 +180,21 @@ export function EngagementsBoard() {
     return Array.from(set).sort().reverse()
   }, [rows])
 
+  const customerQuery = filterCustomer.trim().toLowerCase()
   const filteredRows = React.useMemo(
     () =>
       rows.filter(
         (r) =>
           (filterConsultant === ALL || r.consultant_id === filterConsultant) &&
           (filterGroup === ALL || r.group_name === filterGroup) &&
-          (filterYear === ALL || r.fiscal_year_end === filterYear),
+          (filterYear === ALL || r.fiscal_year_end === filterYear) &&
+          (!filterOverdue || r.is_overdue) &&
+          (customerQuery === "" || r.customer_name.toLowerCase().includes(customerQuery)),
       ),
-    [rows, filterConsultant, filterGroup, filterYear],
+    [rows, filterConsultant, filterGroup, filterYear, filterOverdue, customerQuery],
   )
+
+  const overdueCount = React.useMemo(() => rows.filter((r) => r.is_overdue).length, [rows])
 
   const rowsByColumn = React.useMemo(() => {
     const map = new Map<string, EngagementBoardRow[]>()
@@ -263,7 +271,35 @@ export function EngagementsBoard() {
           ))}
         </div>
 
+        <div className="relative w-full sm:w-[220px]">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={filterCustomer}
+            onChange={(e) => setFilterCustomer(e.target.value)}
+            placeholder={t("engagements.filter.customer", "Search customer…")}
+            className="h-8 pl-8"
+          />
+        </div>
+
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={filterOverdue ? "default" : "outline"}
+            onClick={() => setFilterOverdue((v) => !v)}
+            aria-pressed={filterOverdue}
+          >
+            <AlertTriangle className="size-4" />
+            {t("engagements.filter.overdue", "Overdue")}
+            {overdueCount > 0 ? (
+              <Badge
+                variant={filterOverdue ? "secondary" : "outline"}
+                className="ml-1 text-[10px]"
+              >
+                {overdueCount}
+              </Badge>
+            ) : null}
+          </Button>
           <FilterSelect
             value={filterConsultant}
             onChange={setFilterConsultant}
@@ -349,6 +385,7 @@ export function EngagementsBoard() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         defaultFiscalYearEnd={defaultFiscalYearEnd}
+        groupOptions={groupOptions}
         onCreated={(row) => setRows((prev) => [row, ...prev])}
       />
 
@@ -356,6 +393,7 @@ export function EngagementsBoard() {
         row={detailRow}
         statuses={statuses}
         consultants={consultants}
+        groupOptions={groupOptions}
         checklistFields={checklistFields}
         userNames={userNames}
         open={detailId !== null}

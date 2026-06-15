@@ -113,6 +113,7 @@ export function EngagementDetailSheet({
   row,
   statuses,
   consultants,
+  groupOptions,
   checklistFields,
   userNames,
   open,
@@ -123,6 +124,7 @@ export function EngagementDetailSheet({
   row: EngagementBoardRow | null
   statuses: EngagementStatus[]
   consultants: Array<{ id: string; name: string }>
+  groupOptions: string[]
   checklistFields: EngagementChecklistField[]
   userNames: Record<string, string>
   open: boolean
@@ -138,6 +140,7 @@ export function EngagementDetailSheet({
   const [bokslutStatusId, setBokslutStatusId] = React.useState<string>(NONE)
   const [ink2StatusId, setInk2StatusId] = React.useState<string>(NONE)
   const [consultantId, setConsultantId] = React.useState<string>(NONE)
+  const [groupName, setGroupName] = React.useState<string>(NONE)
   const [deadline, setDeadline] = React.useState<string>("")
   const [bokslutComment, setBokslutComment] = React.useState<string>("")
   const [nextYearNote, setNextYearNote] = React.useState<string>("")
@@ -168,6 +171,13 @@ export function EngagementDetailSheet({
   )
   const statusById = React.useMemo(() => new Map(statuses.map((s) => [s.id, s])), [statuses])
 
+  // Group options: known groups plus the row's current value (so it's always selectable).
+  const groupSelectOptions = React.useMemo(() => {
+    const set = new Set(groupOptions.filter((g) => g && g.trim()))
+    if (row?.group_name && row.group_name.trim()) set.add(row.group_name)
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [groupOptions, row])
+
   const yearFields = React.useMemo(() => checklistFields.filter((f) => f.scope === "engagement"), [checklistFields])
   const customerFields = React.useMemo(() => checklistFields.filter((f) => f.scope === "customer"), [checklistFields])
 
@@ -176,6 +186,7 @@ export function EngagementDetailSheet({
     setBokslutStatusId(row.bokslut_status_id ?? NONE)
     setInk2StatusId(row.ink2_status_id ?? NONE)
     setConsultantId(row.consultant_id ?? NONE)
+    setGroupName(row.group_name ?? NONE)
     setDeadline(row.deadline ?? "")
     setBokslutComment(row.bokslut_comment ?? "")
     setNextYearNote(row.next_year_note ?? "")
@@ -218,6 +229,7 @@ export function EngagementDetailSheet({
       bokslut_status_id: bokslutStatusId === NONE ? null : bokslutStatusId,
       ink2_status_id: ink2StatusId === NONE ? null : ink2StatusId,
       consultant_id: consultantId === NONE ? null : consultantId,
+      group_name: groupName === NONE ? null : groupName,
       deadline: deadline || null,
       bokslut_comment: bokslutComment || null,
       next_year_note: nextYearNote || null,
@@ -254,6 +266,7 @@ export function EngagementDetailSheet({
       ...merged,
       consultant_id: patch.consultant_id,
       consultant_name: patch.consultant_id ? consultants.find((c) => c.id === patch.consultant_id)?.name ?? null : null,
+      group_name: patch.group_name,
       deadline: patch.deadline,
       is_overdue: Boolean(patch.deadline && new Date(patch.deadline) < new Date() && !merged.bokslut_status_is_done),
       bokslut_comment: patch.bokslut_comment,
@@ -435,6 +448,23 @@ export function EngagementDetailSheet({
               <Label htmlFor="eng-deadline">{t("engagements.detail.deadline", "Deadline")}</Label>
               <Input id="eng-deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>{t("engagements.detail.group", "Group")}</Label>
+            <Select value={groupName} onValueChange={setGroupName}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="—" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>—</SelectItem>
+                {groupSelectOptions.map((g) => (
+                  <SelectItem key={g} value={g}>
+                    {g}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Per-year material checklist (resets each fiscal year). */}
