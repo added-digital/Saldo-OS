@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/select"
 
 type CustomerOption = { id: string; name: string; office: string | null }
-type ConsultantOption = { id: string; name: string }
+type ConsultantOption = { id: string; name: string; group: string | null }
 
 const NONE = "none"
 
@@ -52,6 +52,7 @@ export function EngagementCreateDialog({
   const [consultants, setConsultants] = React.useState<ConsultantOption[]>([])
   const [customerId, setCustomerId] = React.useState<string>("")
   const [consultantId, setConsultantId] = React.useState<string>("")
+  const [coConsultantId, setCoConsultantId] = React.useState<string>("")
   const [group, setGroup] = React.useState<string>(NONE)
   const [fiscalYearEnd, setFiscalYearEnd] = React.useState<string>(defaultFiscalYearEnd)
   const [creating, setCreating] = React.useState(false)
@@ -62,13 +63,26 @@ export function EngagementCreateDialog({
     let cancelled = false
     void (async () => {
       const supabase = createClient()
-      const [custRes, profRes] = await Promise.all([
+      const [custRes, profRes, teamRes] = await Promise.all([
         supabase.from("customers").select("id, name, office").eq("status", "active").order("name").limit(1000),
-        supabase.from("profiles").select("id, full_name, email").eq("is_active", true).order("full_name").limit(500),
+        // Fetch team_id only — profiles↔teams has two FKs (team_id + teams.lead_id),
+        // so an embedded teams(name) is ambiguous. Resolve names via a separate map.
+        supabase.from("profiles").select("id, full_name, email, team_id").eq("is_active", true).order("full_name").limit(500),
+        supabase.from("teams").select("id, name"),
       ])
       if (cancelled) return
       setCustomers(((custRes.data ?? []) as Array<{ id: string; name: string; office: string | null }>).map((c) => ({ id: c.id, name: c.name, office: c.office })))
-      setConsultants(((profRes.data ?? []) as Array<{ id: string; full_name: string | null; email: string }>).map((p) => ({ id: p.id, name: p.full_name ?? p.email })))
+      const teamName = new Map(
+        ((teamRes.data ?? []) as Array<{ id: string; name: string | null }>).map((t) => [t.id, t.name]),
+      )
+      setConsultants(
+        ((profRes.data ?? []) as Array<{ id: string; full_name: string | null; email: string; team_id: string | null }>).map((p) => ({
+          id: p.id,
+          name: p.full_name ?? p.email,
+          // The consultant's team is the office/group on this board.
+          group: p.team_id ? teamName.get(p.team_id) ?? null : null,
+        })),
+      )
     })()
     return () => {
       cancelled = true
@@ -84,18 +98,20 @@ export function EngagementCreateDialog({
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null
 
-  // Default the group to the selected customer's office (overridable below).
+  // Default the group from the consultant's team, falling back to the
+  // customer's office. The selector is hidden on create (auto-set); it's
+  // editable later in the detail sheet.
   React.useEffect(() => {
+    const consultantGroup = consultants.find((c) => c.id === consultantId)?.group
     const office = customers.find((c) => c.id === customerId)?.office
-    setGroup(office && office.trim() ? office : NONE)
-  }, [customerId, customers])
-
-  // Dropdown options: the known groups, plus this customer's office if new.
-  const groupSelectOptions = React.useMemo(() => {
-    const set = new Set(groupOptions.filter((g) => g && g.trim()))
-    if (selectedCustomer?.office && selectedCustomer.office.trim()) set.add(selectedCustomer.office)
-    return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [groupOptions, selectedCustomer])
+    const next =
+      consultantGroup && consultantGroup.trim()
+        ? consultantGroup
+        : office && office.trim()
+          ? office
+          : null
+    setGroup(next ?? NONE)
+  }, [customerId, consultantId, customers, consultants])
 
   async function handleCreate() {
     if (!customerId || !fiscalYearEnd) return
@@ -108,6 +124,7 @@ export function EngagementCreateDialog({
         customer_id: customerId,
         fiscal_year_end: fiscalYearEnd,
         consultant_id: consultantId || null,
+        co_consultant_id: coConsultantId || null,
         group_name: group === NONE ? null : group,
       } as never)
       .select("id")
@@ -139,6 +156,7 @@ export function EngagementCreateDialog({
     }
     setCustomerId("")
     setConsultantId("")
+    setCoConsultantId("")
     setGroup(NONE)
     onOpenChange(false)
   }
@@ -229,21 +247,25 @@ export function EngagementCreateDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label>{t("engagements.create.group", "Group")}</Label>
-            <Select value={group} onValueChange={setGroup}>
+            <Label>{t("engagements.create.coConsultant", "Co-helper")}</Label>
+            <Select value={coConsultantId} onValueChange={setCoConsultantId}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="—" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={NONE}>—</SelectItem>
-                {groupSelectOptions.map((g) => (
-                  <SelectItem key={g} value={g}>
-                    {g}
-                  </SelectItem>
-                ))}
+                {consultants
+                  .filter((p) => p.id !== consultantId)
+                  .map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
+          {/* Group is auto-derived from the consultant's team (fallback: the
+              customer's office) and set on create; it stays editable in the
+              engagement detail sheet, so no selector is shown here. */}
         </div>
 
         <DialogFooter>

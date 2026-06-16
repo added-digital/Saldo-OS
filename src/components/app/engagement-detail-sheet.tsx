@@ -140,6 +140,7 @@ export function EngagementDetailSheet({
   const [bokslutStatusId, setBokslutStatusId] = React.useState<string>(NONE)
   const [ink2StatusId, setInk2StatusId] = React.useState<string>(NONE)
   const [consultantId, setConsultantId] = React.useState<string>(NONE)
+  const [coConsultantId, setCoConsultantId] = React.useState<string>(NONE)
   const [groupName, setGroupName] = React.useState<string>(NONE)
   const [deadline, setDeadline] = React.useState<string>("")
   const [bokslutComment, setBokslutComment] = React.useState<string>("")
@@ -186,6 +187,7 @@ export function EngagementDetailSheet({
     setBokslutStatusId(row.bokslut_status_id ?? NONE)
     setInk2StatusId(row.ink2_status_id ?? NONE)
     setConsultantId(row.consultant_id ?? NONE)
+    setCoConsultantId(row.co_consultant_id ?? NONE)
     setGroupName(row.group_name ?? NONE)
     setDeadline(row.deadline ?? "")
     setBokslutComment(row.bokslut_comment ?? "")
@@ -229,6 +231,7 @@ export function EngagementDetailSheet({
       bokslut_status_id: bokslutStatusId === NONE ? null : bokslutStatusId,
       ink2_status_id: ink2StatusId === NONE ? null : ink2StatusId,
       consultant_id: consultantId === NONE ? null : consultantId,
+      co_consultant_id: coConsultantId === NONE ? null : coConsultantId,
       group_name: groupName === NONE ? null : groupName,
       deadline: deadline || null,
       bokslut_comment: bokslutComment || null,
@@ -266,6 +269,8 @@ export function EngagementDetailSheet({
       ...merged,
       consultant_id: patch.consultant_id,
       consultant_name: patch.consultant_id ? consultants.find((c) => c.id === patch.consultant_id)?.name ?? null : null,
+      co_consultant_id: patch.co_consultant_id,
+      co_consultant_name: patch.co_consultant_id ? consultants.find((c) => c.id === patch.co_consultant_id)?.name ?? null : null,
       group_name: patch.group_name,
       deadline: patch.deadline,
       is_overdue: Boolean(patch.deadline && new Date(patch.deadline) < new Date() && !merged.bokslut_status_is_done),
@@ -448,6 +453,25 @@ export function EngagementDetailSheet({
               <Label htmlFor="eng-deadline">{t("engagements.detail.deadline", "Deadline")}</Label>
               <Input id="eng-deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>{t("engagements.detail.coConsultant", "Co-helper")}</Label>
+            <Select value={coConsultantId} onValueChange={setCoConsultantId}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="—" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>—</SelectItem>
+                {consultants
+                  .filter((c) => c.id !== consultantId)
+                  .map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-1.5">

@@ -167,7 +167,7 @@ export function EngagementsBoard() {
   React.useEffect(() => {
     if (scopeAppliedRef.current || !user?.id || rows.length === 0) return
     scopeAppliedRef.current = true
-    if (rows.some((r) => r.consultant_id === user.id)) {
+    if (rows.some((r) => r.consultant_id === user.id || r.co_consultant_id === user.id)) {
       setFilterConsultant(user.id)
     }
   }, [user, rows])
@@ -198,7 +198,10 @@ export function EngagementsBoard() {
   // Distinct filter option lists derived from the loaded rows.
   const consultantOptions = React.useMemo(() => {
     const map = new Map<string, string>()
-    for (const r of rows) if (r.consultant_id) map.set(r.consultant_id, r.consultant_name ?? r.consultant_id)
+    for (const r of rows) {
+      if (r.consultant_id) map.set(r.consultant_id, r.consultant_name ?? r.consultant_id)
+      if (r.co_consultant_id) map.set(r.co_consultant_id, r.co_consultant_name ?? r.co_consultant_id)
+    }
     return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
   }, [rows])
   const groupOptions = React.useMemo(() => {
@@ -223,7 +226,9 @@ export function EngagementsBoard() {
     () =>
       rows.filter(
         (r) =>
-          (filterConsultant === ALL || r.consultant_id === filterConsultant) &&
+          (filterConsultant === ALL ||
+            r.consultant_id === filterConsultant ||
+            r.co_consultant_id === filterConsultant) &&
           (filterGroup === ALL || r.group_name === filterGroup) &&
           (filterYear === ALL || r.fiscal_year_end === filterYear) &&
           (clearedMode === "show" ||
@@ -359,16 +364,22 @@ export function EngagementsBoard() {
         title={t("engagements.title", "Engagements")}
         description={t("engagements.description", "Year-end close and tax declaration workflow per client.")}
       >
-        <Button size="sm" variant="outline" onClick={() => setMissingOpen(true)}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => React.startTransition(() => setMissingOpen(true))}
+        >
           <ClipboardList className="size-4" />
           {t("engagements.missing.button", "Without bokslut")}
         </Button>
         <Button
           size="sm"
-          onClick={() => {
-            setCreateForCustomerId(undefined)
-            setCreateOpen(true)
-          }}
+          onClick={() =>
+            React.startTransition(() => {
+              setCreateForCustomerId(undefined)
+              setCreateOpen(true)
+            })
+          }
         >
           <Plus className="size-4" />
           {t("engagements.new", "New engagement")}
@@ -544,11 +555,13 @@ export function EngagementsBoard() {
         open={missingOpen}
         onOpenChange={setMissingOpen}
         engagedCustomerIds={engagedCustomerIds}
-        onCreateForCustomer={(id) => {
-          setCreateForCustomerId(id)
-          setMissingOpen(false)
-          setCreateOpen(true)
-        }}
+        onCreateForCustomer={(id) =>
+          React.startTransition(() => {
+            setCreateForCustomerId(id)
+            setMissingOpen(false)
+            setCreateOpen(true)
+          })
+        }
       />
 
       <EngagementDetailSheet
@@ -814,6 +827,12 @@ const EngagementCard = React.memo(function EngagementCard({
           <span className="inline-flex items-center gap-1">
             <UserIcon className="size-3" />
             {row.consultant_name}
+          </span>
+        ) : null}
+        {row.co_consultant_name ? (
+          <span className="inline-flex items-center gap-1 text-muted-foreground">
+            <UserIcon className="size-3" />
+            {row.co_consultant_name}
           </span>
         ) : null}
         {row.group_name ? (

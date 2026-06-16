@@ -34,6 +34,8 @@ export interface EngagementBoardRow {
   fiscal_year_end: string
   consultant_id: string | null
   consultant_name: string | null
+  co_consultant_id: string | null
+  co_consultant_name: string | null
   group_name: string | null
 
   bokslut_status_id: string | null
