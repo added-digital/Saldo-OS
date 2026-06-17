@@ -74,6 +74,10 @@ const TOOL_RULES: Record<string, CompactionRule> = {
   list_cost_centers: {
     arrayCaps: [{ field: "cost_centers", limit: 50 }],
   },
+  get_engagements: {
+    // `engagements` is capped to 25 (max 100) inside the tool; honor that max.
+    arrayCaps: [{ field: "engagements", limit: 100 }],
+  },
   search_invoices: {
     arrayCaps: [{ field: "invoices", limit: 30 }],
   },

@@ -27,8 +27,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
-type CustomerOption = { id: string; name: string; office: string | null }
-type ConsultantOption = { id: string; name: string; group: string | null }
+type CustomerOption = { id: string; name: string; office: string | null; costCenter: string | null }
+type ConsultantOption = { id: string; name: string; group: string | null; costCenter: string | null }
 
 const NONE = "none"
 
@@ -64,23 +64,31 @@ export function EngagementCreateDialog({
     void (async () => {
       const supabase = createClient()
       const [custRes, profRes, teamRes] = await Promise.all([
-        supabase.from("customers").select("id, name, office").eq("status", "active").order("name").limit(1000),
+        supabase.from("customers").select("id, name, office, fortnox_cost_center").eq("status", "active").order("name").limit(1000),
         // Fetch team_id only — profiles↔teams has two FKs (team_id + teams.lead_id),
         // so an embedded teams(name) is ambiguous. Resolve names via a separate map.
-        supabase.from("profiles").select("id, full_name, email, team_id").eq("is_active", true).order("full_name").limit(500),
+        supabase.from("profiles").select("id, full_name, email, team_id, fortnox_cost_center").eq("is_active", true).order("full_name").limit(500),
         supabase.from("teams").select("id, name"),
       ])
       if (cancelled) return
-      setCustomers(((custRes.data ?? []) as Array<{ id: string; name: string; office: string | null }>).map((c) => ({ id: c.id, name: c.name, office: c.office })))
+      setCustomers(
+        ((custRes.data ?? []) as Array<{ id: string; name: string; office: string | null; fortnox_cost_center: string | null }>).map((c) => ({
+          id: c.id,
+          name: c.name,
+          office: c.office,
+          costCenter: c.fortnox_cost_center,
+        })),
+      )
       const teamName = new Map(
         ((teamRes.data ?? []) as Array<{ id: string; name: string | null }>).map((t) => [t.id, t.name]),
       )
       setConsultants(
-        ((profRes.data ?? []) as Array<{ id: string; full_name: string | null; email: string; team_id: string | null }>).map((p) => ({
+        ((profRes.data ?? []) as Array<{ id: string; full_name: string | null; email: string; team_id: string | null; fortnox_cost_center: string | null }>).map((p) => ({
           id: p.id,
           name: p.full_name ?? p.email,
           // The consultant's team is the office/group on this board.
           group: p.team_id ? teamName.get(p.team_id) ?? null : null,
+          costCenter: p.fortnox_cost_center,
         })),
       )
     })()
@@ -97,6 +105,25 @@ export function EngagementCreateDialog({
   }, [open, defaultFiscalYearEnd, presetCustomerId])
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null
+
+  // Map each consultant's cost center → their id, so a customer's cost center
+  // resolves to its customer manager (the customer↔manager link runs through
+  // fortnox_cost_center; each consultant has their own).
+  const ccToConsultant = React.useMemo(() => {
+    const m = new Map<string, string>()
+    for (const c of consultants) {
+      if (c.costCenter && c.costCenter.trim() && !m.has(c.costCenter)) m.set(c.costCenter, c.id)
+    }
+    return m
+  }, [consultants])
+
+  // Default the main consultant to the selected customer's manager (via cost
+  // center). Resets when the customer changes; overridable in the dropdown.
+  React.useEffect(() => {
+    const cc = customers.find((c) => c.id === customerId)?.costCenter
+    const managerId = cc && cc.trim() ? ccToConsultant.get(cc) : undefined
+    setConsultantId(managerId ?? "")
+  }, [customerId, customers, ccToConsultant])
 
   // Default the group from the consultant's team, falling back to the
   // customer's office. The selector is hidden on create (auto-set); it's

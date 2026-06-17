@@ -8,6 +8,7 @@ import { getChurnedCustomers } from "./get-churned-customers";
 import { getConsultantCustomers } from "./get-consultant-customers";
 import { getCostCenterDetails } from "./get-cost-center-details";
 import { getCustomerOverview } from "./get-customer-overview";
+import { getEngagements } from "./get-engagements";
 import { getConsultantPersonalHours } from "./get-consultant-personal-hours";
 import { getKpiByConsultant } from "./get-kpi-by-consultant";
 import { getKpiSummary } from "./get-kpi-summary";
@@ -1004,6 +1005,64 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       required: ["query"],
     },
   },
+  {
+    name: "get_engagements",
+    description:
+      "Query the year-end close (Bokslut) board. Returns the total count, a " +
+      "status breakdown, the overdue count, and a capped sample list of " +
+      "engagements (year-end projects). Use for questions about the board: how " +
+      "many clients are in a given status, what's overdue, a consultant's " +
+      "year-end workload, what's left to register, etc. Filter by workflow " +
+      "(bokslut = year-end close, ink2 = tax declaration), consultant or " +
+      "co-helper name, group/office, fiscal year, and status. Cleared (hidden) " +
+      "engagements are excluded unless include_cleared is true.",
+    input_schema: {
+      type: "object",
+      properties: {
+        workflow: {
+          type: "string",
+          enum: ["bokslut", "ink2"],
+          description: "Which pipeline to report on. Defaults to bokslut.",
+        },
+        consultant: {
+          type: "string",
+          description:
+            "Filter to engagements where this name is the assigned consultant " +
+            "OR the co-helper (case-insensitive substring, e.g. 'Derya').",
+        },
+        group: {
+          type: "string",
+          description:
+            "Filter by group/office, e.g. Milano, Sydney, Tokyo, London, Lima, P&U.",
+        },
+        fiscal_year: {
+          type: "string",
+          description:
+            "Filter by fiscal year end — a year like '2025' or a full date " +
+            "'2025-12-31'. Matches the start of the engagement's fiscal_year_end.",
+        },
+        status: {
+          type: "string",
+          description:
+            "Filter by status label of the active workflow (case-insensitive " +
+            "substring), e.g. 'Registrerad', 'Granskad', 'Inväntar', 'Inlämnad'.",
+        },
+        only_overdue: {
+          type: "boolean",
+          description: "Only engagements past their deadline whose bokslut isn't done.",
+        },
+        include_cleared: {
+          type: "boolean",
+          description: "Include cleared (hidden-from-board) engagements. Default false.",
+        },
+        limit: {
+          type: "number",
+          description: "Max engagements in the sample list (1–100, default 25).",
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 type AnyToolHandler = (
@@ -1016,6 +1075,7 @@ const HANDLERS: Record<string, AnyToolHandler> = {
   get_churn_analysis: getChurnAnalysis as AnyToolHandler,
   get_churned_customers: getChurnedCustomers as AnyToolHandler,
   get_customer_overview: getCustomerOverview as AnyToolHandler,
+  get_engagements: getEngagements as AnyToolHandler,
   get_kpi_summary: getKpiSummary as AnyToolHandler,
   get_kpi_by_consultant: getKpiByConsultant as AnyToolHandler,
   get_consultant_personal_hours: getConsultantPersonalHours as AnyToolHandler,

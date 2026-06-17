@@ -41,6 +41,11 @@ const PAGE_CONTEXTS: Record<string, Omit<PageContext, "path">> = {
     label: "Contacts",
     description: "The list of contact persons across the firm's customers.",
   },
+  bokslut: {
+    label: "Bokslut",
+    description:
+      "The Bokslut board — per-client year-end close (Bokslut) and income-tax declaration (INK2) workflow shown as status columns, with consultant/group/year filters, deadlines and overdue flags.",
+  },
   mail: {
     label: "Send mail",
     description: "The page for composing and sending email to customers.",
