@@ -784,6 +784,9 @@ const EngagementCard = React.memo(function EngagementCard({
       onClick={() => onClick(row.id)}
       className={cn(
         "cursor-pointer rounded-md border bg-background p-2.5 text-left shadow-sm transition-opacity hover:border-border-strong",
+        // Let the browser skip layout/paint for off-screen cards — cuts the
+        // reflow cost when overlays (Select/Sheet) lock the page on open.
+        "[content-visibility:auto] [contain-intrinsic-size:auto_92px]",
         dragging && "opacity-50",
         cleared && "opacity-60",
       )}

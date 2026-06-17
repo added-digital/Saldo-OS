@@ -32,6 +32,9 @@ type ConsultantOption = { id: string; name: string; group: string | null; costCe
 
 const NONE = "none"
 
+// Internal teams that aren't board offices — never auto-fill the group from them.
+const NON_OFFICE_TEAMS = new Set(["added"])
+
 export function EngagementCreateDialog({
   open,
   onOpenChange,
@@ -129,14 +132,16 @@ export function EngagementCreateDialog({
   // customer's office. The selector is hidden on create (auto-set); it's
   // editable later in the detail sheet.
   React.useEffect(() => {
-    const consultantGroup = consultants.find((c) => c.id === consultantId)?.group
+    const rawGroup = consultants.find((c) => c.id === consultantId)?.group
+    // "Added" is an internal team, not a board office — don't let it become a
+    // group. Fall back to the customer's office in that case.
+    const consultantGroup =
+      rawGroup && rawGroup.trim() && !NON_OFFICE_TEAMS.has(rawGroup.trim().toLowerCase())
+        ? rawGroup
+        : null
     const office = customers.find((c) => c.id === customerId)?.office
     const next =
-      consultantGroup && consultantGroup.trim()
-        ? consultantGroup
-        : office && office.trim()
-          ? office
-          : null
+      consultantGroup ?? (office && office.trim() ? office : null)
     setGroup(next ?? NONE)
   }, [customerId, consultantId, customers, consultants])
 
