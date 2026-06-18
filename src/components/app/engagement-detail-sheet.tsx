@@ -438,8 +438,10 @@ export function EngagementDetailSheet({
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="eng-deadline">{t("engagements.detail.deadline", "Deadline")}</Label>
-              <Input id="eng-deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+              <Label>{t("engagements.detail.group", "Group")}</Label>
+              <div className="flex h-9 w-full items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
+                {row.group_name ?? "—"}
+              </div>
             </div>
           </div>
 
@@ -463,10 +465,8 @@ export function EngagementDetailSheet({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>{t("engagements.detail.group", "Group")}</Label>
-              <div className="flex h-9 w-full items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
-                {row.group_name ?? "—"}
-              </div>
+              <Label htmlFor="eng-deadline">{t("engagements.detail.deadline", "Deadline")}</Label>
+              <Input id="eng-deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
             </div>
           </div>
 
