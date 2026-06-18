@@ -169,10 +169,22 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
         financial_year_to_manual: financialYearToManual || null,
       } as never)
       .eq("id", customerId)
-    setSaving(false)
     if (error) {
+      setSaving(false)
       toast.error(error.message)
       return
+    }
+    // Push the saved räkenskapsår month-day onto this customer's existing
+    // engagements (keeps each engagement's cycle year). Explicit, user-driven —
+    // unlike the nightly sync, which never moves engagement year-ends.
+    const { error: propErr } = await supabase.rpc(
+      "propagate_customer_financial_year" as never,
+      { p_customer_id: customerId } as never,
+    )
+    setSaving(false)
+    if (propErr) {
+      toast.error(propErr.message)
+      // Customer save already succeeded; surface the propagation issue only.
     }
     setNeedsSegmentation(false)
     // Mark the just-saved values as the new clean baseline.
