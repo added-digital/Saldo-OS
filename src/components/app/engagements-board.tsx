@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw } from "lucide-react"
+import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, ChevronDown } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -33,6 +33,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 import { EngagementCreateDialog } from "@/components/app/engagement-create-dialog"
 import { EngagementDetailSheet } from "@/components/app/engagement-detail-sheet"
 
@@ -433,11 +445,12 @@ export function EngagementsBoard() {
               </Badge>
             ) : null}
           </Button>
-          <FilterSelect
+          <ManagerFilter
             value={filterConsultant}
             onChange={(v) => React.startTransition(() => setFilterConsultant(v))}
-            allLabel={t("engagements.filter.consultant", "Consultant")}
-            options={consultantOptions.map((c) => ({ value: c.id, label: c.name }))}
+            allLabel={t("engagements.filter.consultant", "Customer Manager")}
+            searchPlaceholder={t("reports.filters.searchCustomerManagers", "Search customer managers...")}
+            options={consultantOptions}
           />
           <FilterSelect
             value={filterGroup}
@@ -614,6 +627,65 @@ function FilterSelect({
         ))}
       </SelectContent>
     </Select>
+  )
+}
+
+// Searchable manager picker (Popover + Command), mirroring the Reports filter.
+function ManagerFilter({
+  value,
+  onChange,
+  options,
+  allLabel,
+  searchPlaceholder,
+}: {
+  value: string
+  onChange: (value: string) => void
+  options: Array<{ id: string; name: string }>
+  allLabel: string
+  searchPlaceholder: string
+}) {
+  const [open, setOpen] = React.useState(false)
+  const selected = options.find((o) => o.id === value) ?? null
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="w-[180px] justify-between font-normal">
+          <span className="truncate">{value === ALL ? allLabel : selected?.name ?? allLabel}</span>
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-(--radix-popover-trigger-width) p-0" align="start">
+        <Command>
+          <CommandInput placeholder={searchPlaceholder} />
+          <CommandList>
+            <CommandItem
+              value={allLabel}
+              onSelect={() => {
+                onChange(ALL)
+                setOpen(false)
+              }}
+            >
+              <Check className={cn("size-4", value === ALL ? "opacity-100" : "opacity-0")} />
+              {allLabel}
+            </CommandItem>
+            <CommandEmpty>—</CommandEmpty>
+            {options.map((o) => (
+              <CommandItem
+                key={o.id}
+                value={o.name}
+                onSelect={() => {
+                  onChange(o.id)
+                  setOpen(false)
+                }}
+              >
+                <Check className={cn("size-4", value === o.id ? "opacity-100" : "opacity-0")} />
+                <span className="truncate">{o.name}</span>
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -825,17 +897,12 @@ const EngagementCard = React.memo(function EngagementCard({
         ) : null}
       </div>
 
+      {/* Row 1: consultant + group together */}
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {row.consultant_name ? (
           <span className="inline-flex items-center gap-1">
             <UserIcon className="size-3" />
             {row.consultant_name}
-          </span>
-        ) : null}
-        {row.co_consultant_name ? (
-          <span className="inline-flex items-center gap-1 text-muted-foreground">
-            <UserIcon className="size-3" />
-            {row.co_consultant_name}
           </span>
         ) : null}
         {row.group_name ? (
@@ -846,7 +913,14 @@ const EngagementCard = React.memo(function EngagementCard({
         ) : null}
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {/* Row 2: co-helper + INK2 + deadline */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        {row.co_consultant_name ? (
+          <span className="inline-flex items-center gap-1 text-muted-foreground">
+            <UserIcon className="size-3" />
+            {row.co_consultant_name}
+          </span>
+        ) : null}
         {row.ink2_status_label ? (
           <Badge variant="outline" className="text-[10px]">
             INK2: {row.ink2_status_label}

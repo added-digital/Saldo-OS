@@ -16,6 +16,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 const CYCLE: Array<ChecklistValue | undefined> = [undefined, "yes", "no", "na"]
 function nextValue(v: ChecklistValue | undefined): ChecklistValue | undefined {
@@ -38,6 +45,13 @@ function serializeSetup(
 }
 
 const SV_MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
+const SV_MONTHS_FULL = [
+  "Januari", "Februari", "Mars", "April", "Maj", "Juni",
+  "Juli", "Augusti", "September", "Oktober", "November", "December",
+]
+// Year-ends are recurring (month-day only). We store the manual value with a
+// fixed sentinel leap year (handles 29 Feb); only the month-day is ever read.
+const FY_SENTINEL_YEAR = "2000"
 
 /** Format an ISO date's MM-DD as a Swedish month-day, e.g. "31 dec". */
 function formatYearEnd(iso: string | null): string {
@@ -265,13 +279,59 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
               {formatYearEnd(financialYearToSie)}
             </div>
           ) : (
-            <Input
-              id="financial-year-end"
-              type="date"
-              value={financialYearToManual}
-              onChange={(e) => setFinancialYearToManual(e.target.value)}
-              className="[&::-webkit-calendar-picker-indicator]:invert"
-            />
+            (() => {
+              // Recurring year-end as month + day (no year). Stored as
+              // <sentinel>-MM-DD; only month-day is ever used downstream.
+              const fyMonth = /^\d{4}-(\d{2})-\d{2}$/.exec(financialYearToManual)?.[1] ?? ""
+              const fyDay = /^\d{4}-\d{2}-(\d{2})$/.exec(financialYearToManual)?.[1] ?? ""
+              const daysInMonth = fyMonth ? new Date(2000, Number(fyMonth), 0).getDate() : 31
+              return (
+                <div className="grid grid-cols-2 gap-2">
+                  <Select
+                    value={fyMonth || undefined}
+                    onValueChange={(m) => {
+                      if (m === "none") {
+                        setFinancialYearToManual("")
+                        return
+                      }
+                      const last = new Date(2000, Number(m), 0).getDate()
+                      const day = fyDay && Number(fyDay) <= last ? fyDay : String(last).padStart(2, "0")
+                      setFinancialYearToManual(`${FY_SENTINEL_YEAR}-${m}-${day}`)
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={t("customers.bokslut.month", "Month")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">—</SelectItem>
+                      {SV_MONTHS_FULL.map((name, i) => (
+                        <SelectItem key={i} value={String(i + 1).padStart(2, "0")}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={fyDay || undefined}
+                    onValueChange={(d) => {
+                      if (fyMonth) setFinancialYearToManual(`${FY_SENTINEL_YEAR}-${fyMonth}-${d}`)
+                    }}
+                    disabled={!fyMonth}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={t("customers.bokslut.day", "Day")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: daysInMonth }, (_, i) => String(i + 1).padStart(2, "0")).map((d) => (
+                        <SelectItem key={d} value={d}>
+                          {Number(d)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )
+            })()
           )}
           <p className="text-xs text-muted-foreground">
             {t("customers.bokslut.financialYearHint", "The recurring year-end. Synced from SIE when connected; otherwise enter it manually.")}
