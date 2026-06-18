@@ -260,6 +260,25 @@ export function EngagementsBoard() {
     () => scopedRows.filter((r) => r.is_overdue).length,
     [scopedRows],
   )
+
+  const filtersActive =
+    filterConsultant !== ALL ||
+    filterGroup !== ALL ||
+    filterYear !== ALL ||
+    filterCustomer.trim() !== "" ||
+    filterOverdue ||
+    clearedMode !== "hide"
+
+  const resetFilters = React.useCallback(() => {
+    React.startTransition(() => {
+      setFilterConsultant(ALL)
+      setFilterGroup(ALL)
+      setFilterYear(ALL)
+      setFilterCustomer("")
+      setFilterOverdue(false)
+      setClearedMode("hide")
+    })
+  }, [])
   // Customers that already have at least one engagement on the board.
   const engagedCustomerIds = React.useMemo(
     () => new Set(rows.map((r) => r.customer_id)),
@@ -446,17 +465,18 @@ export function EngagementsBoard() {
             ) : null}
           </Button>
           <ManagerFilter
+            value={filterGroup}
+            onChange={(v) => React.startTransition(() => setFilterGroup(v))}
+            allLabel={t("reports.filters.allTeams", "All teams")}
+            searchPlaceholder={t("reports.filters.searchTeams", "Search teams...")}
+            options={groupOptions.map((g) => ({ id: g, name: g }))}
+          />
+          <ManagerFilter
             value={filterConsultant}
             onChange={(v) => React.startTransition(() => setFilterConsultant(v))}
             allLabel={t("engagements.filter.consultant", "Customer Manager")}
             searchPlaceholder={t("reports.filters.searchCustomerManagers", "Search customer managers...")}
             options={consultantOptions}
-          />
-          <FilterSelect
-            value={filterGroup}
-            onChange={(v) => React.startTransition(() => setFilterGroup(v))}
-            allLabel={t("engagements.filter.group", "Group")}
-            options={groupOptions.map((g) => ({ value: g, label: g }))}
           />
           <FilterSelect
             value={filterYear}
@@ -477,6 +497,12 @@ export function EngagementsBoard() {
               <SelectItem value="only">{t("engagements.filter.cleared.only", "Only cleared")}</SelectItem>
             </SelectContent>
           </Select>
+          {filtersActive ? (
+            <Button type="button" size="sm" variant="ghost" onClick={resetFilters}>
+              <RotateCcw className="size-4" />
+              {t("engagements.filter.reset", "Reset filters")}
+            </Button>
+          ) : null}
         </div>
       </div>
 
