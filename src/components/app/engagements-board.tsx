@@ -474,7 +474,7 @@ export function EngagementsBoard() {
           <ManagerFilter
             value={filterConsultant}
             onChange={(v) => React.startTransition(() => setFilterConsultant(v))}
-            allLabel={t("engagements.filter.consultant", "Customer Manager")}
+            allLabel={t("reports.filters.allCustomerManagers", "All customer managers")}
             searchPlaceholder={t("reports.filters.searchCustomerManagers", "Search customer managers...")}
             options={consultantOptions}
           />
