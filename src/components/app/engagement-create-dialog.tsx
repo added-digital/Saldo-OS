@@ -40,8 +40,9 @@ type ConsultantOption = { id: string; name: string; group: string | null; costCe
 
 const NONE = "none"
 
-// Internal teams that aren't board offices — never auto-fill the group from them.
-const NON_OFFICE_TEAMS = new Set(["added"])
+// Teams that should NOT auto-fill the group (not board offices). Empty now —
+// "Added" is a valid board group, so an Added-team consultant fills group "Added".
+const NON_OFFICE_TEAMS = new Set<string>()
 
 export function EngagementCreateDialog({
   open,
