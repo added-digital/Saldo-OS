@@ -230,9 +230,8 @@ export function EngagementDetailSheet({
     const patch = {
       bokslut_status_id: bokslutStatusId === NONE ? null : bokslutStatusId,
       ink2_status_id: ink2StatusId === NONE ? null : ink2StatusId,
-      consultant_id: consultantId === NONE ? null : consultantId,
+      // consultant_id + group_name are derived from the customer; not editable here.
       co_consultant_id: coConsultantId === NONE ? null : coConsultantId,
-      group_name: groupName === NONE ? null : groupName,
       deadline: deadline || null,
       bokslut_comment: bokslutComment || null,
       next_year_note: nextYearNote || null,
@@ -267,11 +266,8 @@ export function EngagementDetailSheet({
     merged = withStatus(merged, "ink2", patch.ink2_status_id ? statusById.get(patch.ink2_status_id) ?? null : null)
     merged = {
       ...merged,
-      consultant_id: patch.consultant_id,
-      consultant_name: patch.consultant_id ? consultants.find((c) => c.id === patch.consultant_id)?.name ?? null : null,
       co_consultant_id: patch.co_consultant_id,
       co_consultant_name: patch.co_consultant_id ? consultants.find((c) => c.id === patch.co_consultant_id)?.name ?? null : null,
-      group_name: patch.group_name,
       deadline: patch.deadline,
       is_overdue: Boolean(patch.deadline && new Date(patch.deadline) < new Date() && !merged.bokslut_status_is_done),
       bokslut_comment: patch.bokslut_comment,
@@ -433,21 +429,13 @@ export function EngagementDetailSheet({
           </div>
 
           <div className="grid grid-cols-2 gap-3">
+            {/* Consultant + group are derived from the customer / customer
+                manager — shown here read-only. */}
             <div className="space-y-1.5">
               <Label>{t("engagements.detail.consultant", "Consultant")}</Label>
-              <Select value={consultantId} onValueChange={setConsultantId}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="—" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>—</SelectItem>
-                  {consultants.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex h-9 w-full items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
+                {row.consultant_name ?? "—"}
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="eng-deadline">{t("engagements.detail.deadline", "Deadline")}</Label>
@@ -455,85 +443,35 @@ export function EngagementDetailSheet({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label>{t("engagements.detail.coConsultant", "Co-helper")}</Label>
-            <Select value={coConsultantId} onValueChange={setCoConsultantId}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="—" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE}>—</SelectItem>
-                {consultants
-                  .filter((c) => c.id !== consultantId)
-                  .map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>{t("engagements.detail.group", "Group")}</Label>
-            <Select value={groupName} onValueChange={setGroupName}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="—" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE}>—</SelectItem>
-                {groupSelectOptions.map((g) => (
-                  <SelectItem key={g} value={g}>
-                    {g}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Per-year material checklist (resets each fiscal year). */}
-          {yearFields.length > 0 ? (
-            <ChecklistGroup
-              title={t("engagements.detail.thisYear", "This year")}
-              fields={yearFields}
-              values={yearSetup}
-              onCycle={(key) => setYearSetup((cur) => applyCycle(cur, key))}
-            />
-          ) : null}
-
-          {/* Durable client setup — read-only here; the customer card owns it. */}
-          {customerFields.length > 0 ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <Label>{t("engagements.detail.clientSetup", "Client setup")}</Label>
-                <Link
-                  href={`/customers/${row.customer_id}`}
-                  className="text-xs text-primary hover:underline"
-                >
-                  {t("engagements.detail.editOnCustomer", "Edit on customer")}
-                </Link>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {customerFields.map((f) => {
-                  const value = customerSetup[f.key]
-                  return (
-                    <Badge
-                      key={f.key}
-                      variant="outline"
-                      className={cn(
-                        "gap-1 text-[11px]",
-                        value === "yes" && "border-semantic-success/40 text-semantic-success",
-                        value === "no" && "border-semantic-error/40 text-semantic-error",
-                        (value === "na" || value === undefined) && "text-muted-foreground",
-                      )}
-                    >
-                      {f.label}: {value === "yes" ? "Ja" : value === "no" ? "Nej" : value === "na" ? "–" : "?"}
-                    </Badge>
-                  )
-                })}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>{t("engagements.detail.coConsultant", "Co-helper")}</Label>
+              <Select value={coConsultantId} onValueChange={setCoConsultantId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="—" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>—</SelectItem>
+                  {consultants
+                    .filter((c) => c.id !== row.consultant_id)
+                    .map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("engagements.detail.group", "Group")}</Label>
+              <div className="flex h-9 w-full items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
+                {row.group_name ?? "—"}
               </div>
             </div>
-          ) : null}
+          </div>
+
+          {/* Setup checklists (This year / Client setup) intentionally not shown
+              here — they live on the customer card. */}
 
           <div className="space-y-1.5">
             <Label htmlFor="eng-bokslut-comment">{t("engagements.detail.bokslutComment", "Bokslut comment")}</Label>

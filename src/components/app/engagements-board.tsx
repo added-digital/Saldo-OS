@@ -184,14 +184,14 @@ export function EngagementsBoard() {
       .filter((s) => s.workflow === workflow)
       .sort((a, b) => a.sort_order - b.sort_order)
     // "Ej aktuell" (is_parked) is a side bucket, not a pipeline stage. Park it
-    // at the far left and de-emphasize it so the linear flow reads left→right
-    // and ends cleanly at the terminal "Registrerad hos Bolagsverket".
+    // at the far right and de-emphasize it so the linear flow reads left→right
+    // through the pipeline, with the parked bucket set apart at the end.
     const parked = ofWorkflow.filter((s) => s.is_parked)
     const active = ofWorkflow.filter((s) => !s.is_parked)
     return [
-      ...parked.map((s) => ({ id: s.id, label: s.label, parked: true })),
       { id: NO_STATUS, label: t("engagements.noStatus", "No status"), parked: false },
       ...active.map((s) => ({ id: s.id, label: s.label, parked: false })),
+      ...parked.map((s) => ({ id: s.id, label: s.label, parked: true })),
     ]
   }, [statuses, workflow, t])
 
@@ -497,9 +497,9 @@ export function EngagementsBoard() {
                 className={cn(
                   "flex w-[270px] shrink-0 flex-col rounded-lg border bg-muted/20 transition-colors",
                   dragOverCol === col.id && "border-primary bg-primary/5",
-                  // Parked ("Ej aktuell"): set apart from the pipeline — dashed,
-                  // transparent, de-emphasized, with a gap before the flow.
-                  col.parked && "mr-3 border-dashed bg-transparent opacity-70",
+                  // Parked ("Ej aktuell"): set apart at the end of the pipeline —
+                  // dashed, transparent, de-emphasized, with a gap before it.
+                  col.parked && "ml-3 border-dashed bg-transparent opacity-70",
                 )}
               >
                 <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
