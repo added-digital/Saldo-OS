@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "script:create-primary-contacts": "tsx scripts/create-primary-contacts.ts",
-    "script:check-i18n": "tsx scripts/check-i18n.ts"
+    "script:check-i18n": "tsx scripts/check-i18n.ts",
+    "script:test-fiscal-year": "tsx scripts/fiscal-year.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

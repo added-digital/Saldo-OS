@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import type { EngagementBoardRow } from "@/types/engagement"
+import { fiscalYearEndForCycle } from "@/lib/engagements/fiscal-year"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -27,7 +28,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
-type CustomerOption = { id: string; name: string; office: string | null; costCenter: string | null }
+type CustomerOption = {
+  id: string
+  name: string
+  office: string | null
+  costCenter: string | null
+  /** Customer's räkenskapsår end (effective SIE-or-manual date); MM-DD is used. */
+  financialYearEnd: string | null
+}
 type ConsultantOption = { id: string; name: string; group: string | null; costCenter: string | null }
 
 const NONE = "none"
@@ -67,7 +75,7 @@ export function EngagementCreateDialog({
     void (async () => {
       const supabase = createClient()
       const [custRes, profRes, teamRes] = await Promise.all([
-        supabase.from("customers").select("id, name, office, fortnox_cost_center").eq("status", "active").order("name").limit(1000),
+        supabase.from("customers").select("id, name, office, fortnox_cost_center, financial_year_to").eq("status", "active").order("name").limit(1000),
         // Fetch team_id only — profiles↔teams has two FKs (team_id + teams.lead_id),
         // so an embedded teams(name) is ambiguous. Resolve names via a separate map.
         supabase.from("profiles").select("id, full_name, email, team_id, fortnox_cost_center").eq("is_active", true).order("full_name").limit(500),
@@ -75,11 +83,12 @@ export function EngagementCreateDialog({
       ])
       if (cancelled) return
       setCustomers(
-        ((custRes.data ?? []) as Array<{ id: string; name: string; office: string | null; fortnox_cost_center: string | null }>).map((c) => ({
+        ((custRes.data ?? []) as Array<{ id: string; name: string; office: string | null; fortnox_cost_center: string | null; financial_year_to: string | null }>).map((c) => ({
           id: c.id,
           name: c.name,
           office: c.office,
           costCenter: c.fortnox_cost_center,
+          financialYearEnd: c.financial_year_to,
         })),
       )
       const teamName = new Map(
@@ -127,6 +136,15 @@ export function EngagementCreateDialog({
     const managerId = cc && cc.trim() ? ccToConsultant.get(cc) : undefined
     setConsultantId(managerId ?? "")
   }, [customerId, customers, ccToConsultant])
+
+  // Default the fiscal year from the customer's räkenskapsår: take its MONTH-DAY
+  // and stamp it onto the active close cycle's YEAR (defaultFiscalYearEnd). So a
+  // 31-Dec company → <cycle>-12-31, a 30-Jun company → <cycle>-06-30 — never the
+  // raw stored date (which may sit on a later Fortnox year). Overridable below.
+  React.useEffect(() => {
+    const customerYearEnd = customers.find((c) => c.id === customerId)?.financialYearEnd
+    setFiscalYearEnd(fiscalYearEndForCycle(customerYearEnd, defaultFiscalYearEnd))
+  }, [customerId, customers, defaultFiscalYearEnd])
 
   // Default the group from the consultant's team, falling back to the
   // customer's office. The selector is hidden on create (auto-set); it's

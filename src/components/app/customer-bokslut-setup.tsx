@@ -28,12 +28,24 @@ function serializeSetup(
   setup: Record<string, ChecklistValue>,
   date: string,
   price: string,
+  financialYearManual: string,
 ): string {
   const sorted = Object.keys(setup)
     .sort()
     .map((k) => `${k}:${setup[k]}`)
     .join("|")
-  return `${sorted}~~${date}~~${price}`
+  return `${sorted}~~${date}~~${price}~~${financialYearManual}`
+}
+
+const SV_MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
+
+/** Format an ISO date's MM-DD as a Swedish month-day, e.g. "31 dec". */
+function formatYearEnd(iso: string | null): string {
+  if (!iso) return "—"
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(iso)
+  if (!m) return "—"
+  const month = SV_MONTHS[Number(m[1]) - 1] ?? m[1]
+  return `${Number(m[2])} ${month}`
 }
 
 /**
@@ -49,6 +61,10 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
   const [needsSegmentation, setNeedsSegmentation] = React.useState(false)
   const [saldoavtalDate, setSaldoavtalDate] = React.useState<string>("")
   const [fixedMonthlyPrice, setFixedMonthlyPrice] = React.useState<string>("")
+  // Räkenskapsår end: _sie is read-only (sync-owned, authoritative); _manual is
+  // editable only when there's no SIE value.
+  const [financialYearToSie, setFinancialYearToSie] = React.useState<string | null>(null)
+  const [financialYearToManual, setFinancialYearToManual] = React.useState<string>("")
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   // Signature of the last-saved values, to detect unsaved changes.
@@ -58,11 +74,12 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
     setup: Record<string, ChecklistValue>
     date: string
     price: string
-  }>({ setup: {}, date: "", price: "" })
+    financialYearManual: string
+  }>({ setup: {}, date: "", price: "", financialYearManual: "" })
 
   const currentSignature = React.useMemo(
-    () => serializeSetup(setup, saldoavtalDate, fixedMonthlyPrice),
-    [setup, saldoavtalDate, fixedMonthlyPrice],
+    () => serializeSetup(setup, saldoavtalDate, fixedMonthlyPrice, financialYearToManual),
+    [setup, saldoavtalDate, fixedMonthlyPrice, financialYearToManual],
   )
   const dirty = currentSignature !== snapshot
 
@@ -75,7 +92,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       const supabase = createClient()
       const [cfgRes, custRes] = await Promise.all([
         supabase.from("engagement_config").select("checklist_fields").eq("id", 1).maybeSingle(),
-        supabase.from("customers").select("bokslut_setup, needs_segmentation, saldoavtal_date, fixed_monthly_price").eq("id", customerId).maybeSingle(),
+        supabase.from("customers").select("bokslut_setup, needs_segmentation, saldoavtal_date, fixed_monthly_price, financial_year_to_sie, financial_year_to_manual").eq("id", customerId).maybeSingle(),
       ])
       if (cancelled) return
       const cfg = cfgRes.data as { checklist_fields: EngagementChecklistField[] | null } | null
@@ -85,19 +102,25 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
         needs_segmentation: boolean
         saldoavtal_date: string | null
         fixed_monthly_price: number | null
+        financial_year_to_sie: string | null
+        financial_year_to_manual: string | null
       } | null
       const loadedSetup = cust?.bokslut_setup ?? {}
       const loadedDate = cust?.saldoavtal_date ?? ""
       const loadedPrice = cust?.fixed_monthly_price != null ? String(cust.fixed_monthly_price) : ""
+      const loadedFyManual = cust?.financial_year_to_manual ?? ""
       setSetup(loadedSetup)
       setNeedsSegmentation(Boolean(cust?.needs_segmentation))
       setSaldoavtalDate(loadedDate)
       setFixedMonthlyPrice(loadedPrice)
-      setSnapshot(serializeSetup(loadedSetup, loadedDate, loadedPrice))
+      setFinancialYearToSie(cust?.financial_year_to_sie ?? null)
+      setFinancialYearToManual(loadedFyManual)
+      setSnapshot(serializeSetup(loadedSetup, loadedDate, loadedPrice, loadedFyManual))
       savedRef.current = {
         setup: { ...loadedSetup },
         date: loadedDate,
         price: loadedPrice,
+        financialYearManual: loadedFyManual,
       }
       setLoading(false)
     })()
@@ -142,6 +165,8 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
         needs_segmentation: false,
         saldoavtal_date: saldoavtalDate || null,
         fixed_monthly_price: priceNum != null && Number.isFinite(priceNum) ? priceNum : null,
+        // Only the MANUAL column is written here; the _sie column is sync-owned.
+        financial_year_to_manual: financialYearToManual || null,
       } as never)
       .eq("id", customerId)
     setSaving(false)
@@ -152,8 +177,8 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
     setNeedsSegmentation(false)
     // Mark the just-saved values as the new clean baseline.
     const savedPrice = priceNum != null && Number.isFinite(priceNum) ? fixedMonthlyPrice : ""
-    savedRef.current = { setup: { ...setup }, date: saldoavtalDate, price: savedPrice }
-    setSnapshot(serializeSetup(setup, saldoavtalDate, savedPrice))
+    savedRef.current = { setup: { ...setup }, date: saldoavtalDate, price: savedPrice, financialYearManual: financialYearToManual }
+    setSnapshot(serializeSetup(setup, saldoavtalDate, savedPrice, financialYearToManual))
     if (savedPrice !== fixedMonthlyPrice) setFixedMonthlyPrice(savedPrice)
     toast.success(t("customers.bokslut.saved", "Customer setup saved"))
   }
@@ -162,6 +187,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
     setSetup({ ...savedRef.current.setup })
     setSaldoavtalDate(savedRef.current.date)
     setFixedMonthlyPrice(savedRef.current.price)
+    setFinancialYearToManual(savedRef.current.financialYearManual)
   }
 
   if (loading) {
@@ -211,6 +237,34 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
             </div>
           </div>
         ))}
+
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="financial-year-end">{t("customers.bokslut.financialYear", "Financial year-end")}</Label>
+            <Badge variant="outline" className="text-[11px]">
+              {financialYearToSie
+                ? t("customers.bokslut.financialYearFromSie", "From SIE")
+                : t("customers.bokslut.financialYearManual", "Manual")}
+            </Badge>
+          </div>
+          {financialYearToSie ? (
+            // SIE-synced → read-only, shown as the recurring month-day pattern.
+            <div className="flex h-9 w-full items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
+              {formatYearEnd(financialYearToSie)}
+            </div>
+          ) : (
+            <Input
+              id="financial-year-end"
+              type="date"
+              value={financialYearToManual}
+              onChange={(e) => setFinancialYearToManual(e.target.value)}
+              className="[&::-webkit-calendar-picker-indicator]:invert"
+            />
+          )}
+          <p className="text-xs text-muted-foreground">
+            {t("customers.bokslut.financialYearHint", "The recurring year-end. Synced from SIE when connected; otherwise enter it manually.")}
+          </p>
+        </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
