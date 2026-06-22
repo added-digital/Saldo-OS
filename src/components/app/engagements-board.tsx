@@ -559,7 +559,6 @@ export function EngagementsBoard() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         defaultFiscalYearEnd={defaultFiscalYearEnd}
-        groupOptions={groupOptions}
         presetCustomerId={createForCustomerId}
         onCreated={(row) => setRows((prev) => [row, ...prev])}
       />
@@ -581,7 +580,6 @@ export function EngagementsBoard() {
         row={detailRow}
         statuses={statuses}
         consultants={consultants}
-        groupOptions={groupOptions}
         checklistFields={checklistFields}
         userNames={userNames}
         open={detailId !== null}

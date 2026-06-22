@@ -36,26 +36,18 @@ type CustomerOption = {
   /** Customer's räkenskapsår end (effective SIE-or-manual date); MM-DD is used. */
   financialYearEnd: string | null
 }
-type ConsultantOption = { id: string; name: string; group: string | null; costCenter: string | null }
-
-const NONE = "none"
-
-// Teams that should NOT auto-fill the group (not board offices). Empty now —
-// "Added" is a valid board group, so an Added-team consultant fills group "Added".
-const NON_OFFICE_TEAMS = new Set<string>()
+type ConsultantOption = { id: string; name: string; costCenter: string | null }
 
 export function EngagementCreateDialog({
   open,
   onOpenChange,
   defaultFiscalYearEnd,
-  groupOptions,
   presetCustomerId,
   onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   defaultFiscalYearEnd: string
-  groupOptions: string[]
   presetCustomerId?: string
   onCreated: (row: EngagementBoardRow) => void
 }) {
@@ -65,7 +57,6 @@ export function EngagementCreateDialog({
   const [customerId, setCustomerId] = React.useState<string>("")
   const [consultantId, setConsultantId] = React.useState<string>("")
   const [coConsultantId, setCoConsultantId] = React.useState<string>("")
-  const [group, setGroup] = React.useState<string>(NONE)
   const [fiscalYearEnd, setFiscalYearEnd] = React.useState<string>(defaultFiscalYearEnd)
   const [creating, setCreating] = React.useState(false)
 
@@ -75,12 +66,9 @@ export function EngagementCreateDialog({
     let cancelled = false
     void (async () => {
       const supabase = createClient()
-      const [custRes, profRes, teamRes] = await Promise.all([
+      const [custRes, profRes] = await Promise.all([
         supabase.from("customers").select("id, name, office, fortnox_cost_center, financial_year_to").eq("status", "active").order("name").limit(1000),
-        // Fetch team_id only — profiles↔teams has two FKs (team_id + teams.lead_id),
-        // so an embedded teams(name) is ambiguous. Resolve names via a separate map.
-        supabase.from("profiles").select("id, full_name, email, team_id, fortnox_cost_center").eq("is_active", true).order("full_name").limit(500),
-        supabase.from("teams").select("id, name"),
+        supabase.from("profiles").select("id, full_name, email, fortnox_cost_center").eq("is_active", true).order("full_name").limit(500),
       ])
       if (cancelled) return
       setCustomers(
@@ -92,15 +80,10 @@ export function EngagementCreateDialog({
           financialYearEnd: c.financial_year_to,
         })),
       )
-      const teamName = new Map(
-        ((teamRes.data ?? []) as Array<{ id: string; name: string | null }>).map((t) => [t.id, t.name]),
-      )
       setConsultants(
-        ((profRes.data ?? []) as Array<{ id: string; full_name: string | null; email: string; team_id: string | null; fortnox_cost_center: string | null }>).map((p) => ({
+        ((profRes.data ?? []) as Array<{ id: string; full_name: string | null; email: string; fortnox_cost_center: string | null }>).map((p) => ({
           id: p.id,
           name: p.full_name ?? p.email,
-          // The consultant's team is the office/group on this board.
-          group: p.team_id ? teamName.get(p.team_id) ?? null : null,
           costCenter: p.fortnox_cost_center,
         })),
       )
@@ -147,23 +130,6 @@ export function EngagementCreateDialog({
     setFiscalYearEnd(fiscalYearEndForCycle(customerYearEnd, defaultFiscalYearEnd))
   }, [customerId, customers, defaultFiscalYearEnd])
 
-  // Default the group from the consultant's team, falling back to the
-  // customer's office. The selector is hidden on create (auto-set); it's
-  // editable later in the detail sheet.
-  React.useEffect(() => {
-    const rawGroup = consultants.find((c) => c.id === consultantId)?.group
-    // "Added" is an internal team, not a board office — don't let it become a
-    // group. Fall back to the customer's office in that case.
-    const consultantGroup =
-      rawGroup && rawGroup.trim() && !NON_OFFICE_TEAMS.has(rawGroup.trim().toLowerCase())
-        ? rawGroup
-        : null
-    const office = customers.find((c) => c.id === customerId)?.office
-    const next =
-      consultantGroup ?? (office && office.trim() ? office : null)
-    setGroup(next ?? NONE)
-  }, [customerId, consultantId, customers, consultants])
-
   async function handleCreate() {
     if (!customerId || !fiscalYearEnd) return
     setCreating(true)
@@ -176,7 +142,6 @@ export function EngagementCreateDialog({
         fiscal_year_end: fiscalYearEnd,
         consultant_id: consultantId || null,
         co_consultant_id: coConsultantId || null,
-        group_name: group === NONE ? null : group,
       } as never)
       .select("id")
       .single()
@@ -208,7 +173,6 @@ export function EngagementCreateDialog({
     setCustomerId("")
     setConsultantId("")
     setCoConsultantId("")
-    setGroup(NONE)
     onOpenChange(false)
   }
 
@@ -314,9 +278,9 @@ export function EngagementCreateDialog({
               </SelectContent>
             </Select>
           </div>
-          {/* Group is auto-derived from the consultant's team (fallback: the
-              customer's office) and set on create; it stays editable in the
-              engagement detail sheet, so no selector is shown here. */}
+          {/* No group selector: the engagement_board view derives a project's
+              group live from the consultant's current team (fallback: the
+              customer's office), so nothing is stored on create. */}
         </div>
 
         <DialogFooter>
