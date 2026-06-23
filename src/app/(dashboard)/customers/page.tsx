@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useRouter } from "next/navigation"
 import { type ColumnDef } from "@tanstack/react-table"
-import { Users, Tags, ChevronLeft, ChevronRight, Mail, BarChart3, Download } from "lucide-react"
+import { Users, Tags, Mail, BarChart3, Download } from "lucide-react"
 
 import { createClient } from "@/lib/supabase/client"
 import type { CustomerWithRelations, Profile, Segment } from "@/types/database"
@@ -400,8 +400,6 @@ export default function CustomersPage() {
   const [assigning, setAssigning] = React.useState(false)
   const clearSelectionRef = React.useRef<(() => void) | null>(null)
   const [searchQuery, setSearchQuery] = React.useState("")
-  const [pageIndex, setPageIndex] = React.useState(0)
-  const [pageSize, setPageSize] = React.useState(CUSTOMER_TABLE_PAGE_SIZE)
   const [filters, setFilters] = React.useState<CustomerFilterState>(EMPTY_FILTERS)
   const [overdueDialogCustomer, setOverdueDialogCustomer] = React.useState<CustomerWithRelations | null>(null)
   const [overdueInvoiceRows, setOverdueInvoiceRows] = React.useState<OverdueInvoiceRow[]>([])
@@ -484,25 +482,6 @@ export default function CustomersPage() {
     return applyFilters(result, filters)
   }, [customers, searchQuery, filters])
 
-  const pageCount = React.useMemo(
-    () => Math.max(1, Math.ceil(filteredCustomers.length / pageSize)),
-    [filteredCustomers.length, pageSize]
-  )
-
-  React.useEffect(() => {
-    setPageIndex((current) => {
-      if (current < 0) return 0
-      if (current >= pageCount) return pageCount - 1
-      return current
-    })
-  }, [pageCount])
-
-  const paginatedCustomers = React.useMemo(() => {
-    const from = pageIndex * pageSize
-    const to = from + pageSize
-    return filteredCustomers.slice(from, to)
-  }, [filteredCustomers, pageIndex, pageSize])
-
   const hasNonDefaultFilters =
     !(filters.statuses.length === 1 && filters.statuses[0] === "active") ||
     filters.segmentIds.length > 0 ||
@@ -526,7 +505,6 @@ export default function CustomersPage() {
           onClick: () => {
             setFilters(EMPTY_FILTERS)
             setSearchQuery("")
-            setPageIndex(0)
           },
         },
       }
@@ -730,45 +708,6 @@ export default function CustomersPage() {
     toast.success(t("customers.export.success", "Customer CSV exported"))
   }
 
-  const paginationControl = (
-    <div className="flex items-center gap-2">
-      <select
-        value={pageSize}
-        onChange={(event) => {
-          setPageSize(Number(event.target.value))
-          setPageIndex(0)
-        }}
-        className="h-9 rounded-md border border-input bg-background px-2 text-xs"
-        aria-label={t("customers.pagination.rowsPerPage", "Rows per page")}
-      >
-        <option value={15}>{t("customers.pagination.perPage15", "15 / page")}</option>
-        <option value={30}>{t("customers.pagination.perPage30", "30 / page")}</option>
-        <option value={50}>{t("customers.pagination.perPage50", "50 / page")}</option>
-      </select>
-      <span className="text-sm text-muted-foreground">
-        {pageIndex + 1} {t("customers.pagination.of", "of")} {pageCount}
-      </span>
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-9 w-9"
-        onClick={() => setPageIndex((current) => Math.max(current - 1, 0))}
-        disabled={pageIndex === 0}
-      >
-        <ChevronLeft className="size-4" />
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-9 w-9"
-        onClick={() => setPageIndex((current) => Math.min(current + 1, pageCount - 1))}
-        disabled={pageIndex >= pageCount - 1}
-      >
-        <ChevronRight className="size-4" />
-      </Button>
-    </div>
-  )
-
   const toolbar = (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <SearchInput
@@ -782,7 +721,6 @@ export default function CustomersPage() {
           <Download className="size-3.5" />
           {t("customers.export.csv", "Export CSV")}
         </Button>
-        {paginationControl}
         <CustomerFilters
           customers={customers}
           filters={filters}
@@ -802,10 +740,13 @@ export default function CustomersPage() {
 
       <DataTable
         columns={visibleColumns}
-        data={paginatedCustomers}
+        data={filteredCustomers}
         loading={loading}
-        pageSize={pageSize}
+        pageSize={CUSTOMER_TABLE_PAGE_SIZE}
+        pageSizeOptions={[15, 30, 50]}
+        getRowId={(customer) => customer.id}
         selectable
+        selectAllRows
         onSelectionChange={setSelectedCustomers}
         clearSelectionRef={clearSelectionRef}
         onRowNavigate={(customer) => router.push(`/customers/${customer.id}`)}

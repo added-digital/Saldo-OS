@@ -59,6 +59,18 @@ interface DataTableProps<TData, TValue> {
   pageSizeOptions?: number[]
   fixedColumnWidths?: Record<string, number>
   paginationExtra?: React.ReactNode
+  /**
+   * Stable row id. Without this, row selection is keyed by row index, so
+   * selections do not survive pagination/sorting changes. Pass e.g.
+   * `(row) => row.id` for any table whose selection must persist across pages.
+   */
+  getRowId?: (row: TData, index: number) => string
+  /**
+   * When true the header checkbox selects/clears EVERY row across all pages
+   * (not just the current page). Use for tables where "select all" should
+   * mean the whole filtered dataset, e.g. bulk actions over a paginated list.
+   */
+  selectAllRows?: boolean
 }
 
 function getColumnWidthPercent<TData, TValue>(
@@ -68,7 +80,7 @@ function getColumnWidthPercent<TData, TValue>(
   return `${(header.getSize() / totalSize) * 100}%`
 }
 
-function makeSelectColumn<TData>(): ColumnDef<TData, unknown> {
+function makeSelectColumn<TData>(selectAllRows = false): ColumnDef<TData, unknown> {
   return {
     id: "_select",
     size: SELECT_COL_SIZE,
@@ -80,10 +92,17 @@ function makeSelectColumn<TData>(): ColumnDef<TData, unknown> {
       <div className="flex items-center justify-center">
         <Checkbox
           checked={
-            table.getIsAllPageRowsSelected() ||
-            (table.getIsSomePageRowsSelected() && "indeterminate")
+            selectAllRows
+              ? table.getIsAllRowsSelected() ||
+                (table.getIsSomeRowsSelected() && "indeterminate")
+              : table.getIsAllPageRowsSelected() ||
+                (table.getIsSomePageRowsSelected() && "indeterminate")
           }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+          onCheckedChange={(value) =>
+            selectAllRows
+              ? table.toggleAllRowsSelected(!!value)
+              : table.toggleAllPageRowsSelected(!!value)
+          }
           aria-label="Select all"
         />
       </div>
@@ -135,6 +154,8 @@ function DataTable<TData, TValue>({
   pageSizeOptions,
   fixedColumnWidths,
   paginationExtra,
+  getRowId,
+  selectAllRows = false,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [sortingHydrated, setSortingHydrated] = React.useState(false)
@@ -145,17 +166,18 @@ function DataTable<TData, TValue>({
 
   const allColumns = React.useMemo(() => {
     const cols: ColumnDef<TData, TValue>[] = selectable
-      ? [makeSelectColumn<TData>() as ColumnDef<TData, TValue>, ...columns]
+      ? [makeSelectColumn<TData>(selectAllRows) as ColumnDef<TData, TValue>, ...columns]
       : [...columns]
     if (onRowNavigate) {
       cols.push(makeNavigateColumn<TData>() as ColumnDef<TData, TValue>)
     }
     return cols
-  }, [columns, selectable, onRowNavigate])
+  }, [columns, selectable, selectAllRows, onRowNavigate])
 
   const table = useReactTable({
     data,
     columns: allColumns,
+    getRowId,
     defaultColumn: {
       size: DEFAULT_COL_SIZE,
       minSize: DEFAULT_MIN_COL_WIDTH,

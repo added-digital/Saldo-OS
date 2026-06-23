@@ -389,7 +389,7 @@ export interface LicenseCustomerConfig {
 export interface MailTemplate {
   id: string
   name: string
-  template_type: "plain" | "plain_os" | "default" | "campaign"
+  template_type: "plain" | "plain_os" | "default" | "campaign" | "invoice_reminder"
   payload: Record<string, unknown>
   is_active: boolean
   created_by: string | null

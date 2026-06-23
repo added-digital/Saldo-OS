@@ -50,9 +50,15 @@ import {
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import type { MailTemplate } from "@/types/database"
+import { defaultInvoiceReminderCopy } from "@/lib/email/invoice-reminder"
 import { toast } from "sonner"
 
-type MailTemplateType = "plain" | "plain_os" | "default" | "campaign"
+type MailTemplateType =
+  | "plain"
+  | "plain_os"
+  | "default"
+  | "campaign"
+  | "invoice_reminder"
 // Kept for clarity at call sites — every built-in option is now also a valid
 // persisted template_type, so this is just an alias.
 type BuiltinTemplateType = MailTemplateType
@@ -122,7 +128,7 @@ function createDefaultEditorState(
 }
 
 function toTemplatePayload(state: TemplateEditorState): Record<string, unknown> {
-  if (state.templateType === "plain") {
+  if (state.templateType === "plain" || state.templateType === "invoice_reminder") {
     return {
       subject: state.subject,
       body: state.body,
@@ -258,6 +264,11 @@ export default function SettingsMailPage() {
       const plainState = { ...defaultState, templateType: "plain" as const }
       const plainOsState = { ...defaultState, templateType: "plain_os" as const }
       const campaignState = { ...defaultState, templateType: "campaign" as const }
+      const invoiceReminderState = {
+        ...defaultState,
+        templateType: "invoice_reminder" as const,
+        ...defaultInvoiceReminderCopy(),
+      }
 
       const definitions: Array<{
         id: BuiltinTemplateType
@@ -288,6 +299,12 @@ export default function SettingsMailPage() {
           name: t("mail.themes.campaign", "Campaign"),
           template: "campaign",
           payload: toTemplatePayload(campaignState),
+        },
+        {
+          id: "invoice_reminder",
+          name: t("mail.themes.invoiceReminder", "Fakturapåminnelse"),
+          template: "plain",
+          payload: toTemplatePayload(invoiceReminderState),
         },
       ]
 
@@ -385,7 +402,8 @@ export default function SettingsMailPage() {
   function openEditTemplate(template: MailTemplate) {
     setEditor(parseTemplatePayload(template, t))
     setEditorPreviewTemplate(
-      template.template_type === "plain"
+      template.template_type === "plain" ||
+        template.template_type === "invoice_reminder"
         ? "plain"
         : template.template_type === "campaign"
           ? "campaign"
@@ -418,6 +436,20 @@ export default function SettingsMailPage() {
       return
     }
 
+    if (templateId === "invoice_reminder") {
+      const next = {
+        ...createDefaultEditorState(t),
+        name: templateName,
+        templateType: "invoice_reminder" as const,
+        ...defaultInvoiceReminderCopy(),
+      }
+      setEditor(next)
+      setEditorPreviewTemplate("plain")
+      setEditingBuiltInName(templateName)
+      setEditorOpen(true)
+      return
+    }
+
     const next = {
       ...createDefaultEditorState(t),
       name: templateName,
@@ -444,7 +476,8 @@ export default function SettingsMailPage() {
     const persistedTemplateType: MailTemplateType =
       editor.templateType === "plain" ||
       editor.templateType === "plain_os" ||
-      editor.templateType === "campaign"
+      editor.templateType === "campaign" ||
+      editor.templateType === "invoice_reminder"
         ? editor.templateType
         : "default"
 
@@ -528,6 +561,8 @@ export default function SettingsMailPage() {
     if (type === "plain") return t("mail.themes.plain", "Plain")
     if (type === "plain_os") return t("mail.themes.plainOs", "Plain OS")
     if (type === "campaign") return t("mail.themes.campaign", "Campaign")
+    if (type === "invoice_reminder")
+      return t("mail.themes.invoiceReminder", "Fakturapåminnelse")
     return t("mail.themes.default", "Default")
   }
 
@@ -568,7 +603,8 @@ export default function SettingsMailPage() {
     })
 
     const apiTemplate =
-      template.template_type === "plain"
+      template.template_type === "plain" ||
+        template.template_type === "invoice_reminder"
         ? "plain"
         : template.template_type === "campaign"
           ? "campaign"
@@ -976,7 +1012,8 @@ export default function SettingsMailPage() {
                 />
               </div>
 
-              {editor.templateType === "plain" ? (
+              {editor.templateType === "plain" ||
+              editor.templateType === "invoice_reminder" ? (
                 <div className="space-y-2">
                   <Label htmlFor="template-body">{t("mail.send.body", "Body")}</Label>
                   <Textarea
@@ -1219,7 +1256,9 @@ export default function SettingsMailPage() {
                     ? t("mail.themes.plainOs", "Plain OS")
                     : pendingDeleteTemplate.template_type === "campaign"
                       ? t("mail.themes.campaign", "Campaign")
-                      : t("mail.themes.default", "Default")}
+                      : pendingDeleteTemplate.template_type === "invoice_reminder"
+                        ? t("mail.themes.invoiceReminder", "Fakturapåminnelse")
+                        : t("mail.themes.default", "Default")}
               </p>
             </div>
           ) : null}
