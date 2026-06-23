@@ -31,9 +31,25 @@ import { Textarea } from "@/components/ui/textarea"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
 import type { CustomerContact, MailTemplate, Segment } from "@/types/database"
+import {
+  defaultInvoiceReminderCopy,
+  fetchOverdueInvoicesByCustomer,
+  formatOverdueInvoiceBlock,
+  injectInvoiceBlock,
+  type OverdueInvoice,
+} from "@/lib/email/invoice-reminder"
 import { toast } from "sonner"
 
-type MailTemplateType = "plain" | "plain_os" | "default" | "campaign"
+type MailTemplateType = "plain" | "plain_os" | "default" | "campaign" | "invoice_reminder"
+
+/** Map an internal template type to the renderer the /api/email route expects. */
+function apiTemplateFor(
+  templateType: MailTemplateType,
+): "plain" | "content" | "campaign" {
+  if (templateType === "plain" || templateType === "invoice_reminder") return "plain"
+  if (templateType === "campaign") return "campaign"
+  return "content"
+}
 
 type MailRecipientCustomer = {
   id: string
@@ -192,7 +208,7 @@ function personalizePayload(
   customerName: string,
   companyName: string,
 ): Record<string, unknown> {
-  if (templateType === "plain") {
+  if (templateType === "plain" || templateType === "invoice_reminder") {
     return {
       subject: replaceTemplateTokens(String(payload.subject ?? ""), customerName, companyName),
       body: replaceTemplateTokens(String(payload.body ?? ""), customerName, companyName),
@@ -334,6 +350,14 @@ export default function MailPage() {
   const [plainForm, setPlainForm] = React.useState<PlainForm>(() => defaultPlainForm(t))
   const [plainOsForm, setPlainOsForm] = React.useState<PlainOsForm>(() => defaultPlainOsForm(t))
   const [templates, setTemplates] = React.useState<MailTemplate[]>([])
+  // Overdue invoices per selected customer, populated only while the
+  // Fakturapåminnelse (invoice_reminder) template is active. Drives both the
+  // recipient filter (only customers with overdue invoices are sent to) and the
+  // @fakturor injection.
+  const [overdueByCustomerId, setOverdueByCustomerId] = React.useState<
+    Map<string, OverdueInvoice[]>
+  >(new Map())
+  const [overdueLoading, setOverdueLoading] = React.useState(false)
   const [previewHtml, setPreviewHtml] = React.useState("")
   const [previewLoading, setPreviewLoading] = React.useState(false)
   const [sending, setSending] = React.useState(false)
@@ -433,6 +457,7 @@ export default function MailPage() {
       selectedTemplateValue === "plain" || selectedTemplateValue === "plain_os"
         || selectedTemplateValue === "default"
         || selectedTemplateValue === "campaign"
+        || selectedTemplateValue === "invoice_reminder"
         ? null
         : templates.find((template) => template.id === selectedTemplateValue) ?? null,
     [selectedTemplateValue, templates],
@@ -501,6 +526,36 @@ export default function MailPage() {
     return [...customerRecipients, ...contactRecipients, ...manualRecipients]
   }, [manualEmails, selectedContacts, selectedCustomers, t])
 
+  // When the Fakturapåminnelse template is active, the send is gated on overdue
+  // invoices: only customer recipients with at least one qualifying overdue
+  // invoice are eligible. Everyone else (no overdue invoices, or contacts/manual
+  // recipients that have no invoices to remind about) is excluded and surfaced
+  // so the user can see who was skipped.
+  const invoiceReminderActive = templateType === "invoice_reminder"
+
+  const hasOverdueInvoices = React.useCallback(
+    (recipient: ResolvedRecipient) =>
+      recipient.type === "customers" &&
+      (overdueByCustomerId.get(recipient.id)?.length ?? 0) > 0,
+    [overdueByCustomerId],
+  )
+
+  const eligibleInvoiceRecipients = React.useMemo(
+    () =>
+      invoiceReminderActive
+        ? selectedRecipients.filter((recipient) => hasOverdueInvoices(recipient))
+        : [],
+    [hasOverdueInvoices, invoiceReminderActive, selectedRecipients],
+  )
+
+  const excludedInvoiceRecipients = React.useMemo(
+    () =>
+      invoiceReminderActive
+        ? selectedRecipients.filter((recipient) => !hasOverdueInvoices(recipient))
+        : [],
+    [hasOverdueInvoices, invoiceReminderActive, selectedRecipients],
+  )
+
   // Dedupe-by-email feature: when one person is the primary contact for
   // multiple companies, the same email shows up multiple times in the
   // selection. The switch lets the user collapse those duplicates so each
@@ -528,10 +583,12 @@ export default function MailPage() {
   // dedupe is on, keep the first occurrence per email so a person who's
   // primary contact for 6 companies receives one email instead of 6.
   const effectiveRecipients = React.useMemo(() => {
-    if (!dedupeByEmail) return selectedRecipients
+    // Invoice reminders only go to customers with overdue invoices.
+    const base = invoiceReminderActive ? eligibleInvoiceRecipients : selectedRecipients
+    if (!dedupeByEmail) return base
     const seen = new Set<string>()
     const deduped: ResolvedRecipient[] = []
-    for (const recipient of selectedRecipients) {
+    for (const recipient of base) {
       const key = recipient.email?.trim().toLowerCase()
       if (!key) {
         // No email at all — keep as-is so the missing-email warning still
@@ -544,7 +601,7 @@ export default function MailPage() {
       deduped.push(recipient)
     }
     return deduped
-  }, [dedupeByEmail, selectedRecipients])
+  }, [dedupeByEmail, eligibleInvoiceRecipients, invoiceReminderActive, selectedRecipients])
 
   const sendableRecipientCount = React.useMemo(
     () => effectiveRecipients.filter((recipient) => (recipient.email?.trim() || "").length > 0).length,
@@ -1018,12 +1075,59 @@ export default function MailPage() {
       setTemplateType("campaign")
       return
     }
+    if (selectedTemplateValue === "invoice_reminder") {
+      // Fakturapåminnelse is a plain-text template; seed the plain form with
+      // the Swedish default copy (which includes the @fakturor token).
+      setPlainForm(defaultInvoiceReminderCopy())
+      setTemplateType("invoice_reminder")
+      return
+    }
 
     const selected = templates.find((template) => template.id === selectedTemplateValue)
     if (!selected) return
 
     setTemplateType(selected.template_type)
   }, [selectedTemplateValue, t, templates])
+
+  // Load overdue invoices for the selected customers whenever the invoice
+  // reminder template is active. Re-runs as the customer selection changes.
+  React.useEffect(() => {
+    if (templateType !== "invoice_reminder") {
+      return
+    }
+    if (selectedCustomers.length === 0) {
+      setOverdueByCustomerId(new Map())
+      setOverdueLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setOverdueLoading(true)
+    const supabase = createClient()
+    void fetchOverdueInvoicesByCustomer(
+      supabase,
+      selectedCustomers.map((customer) => ({
+        id: customer.id,
+        fortnox_customer_number: customer.fortnox_customer_number,
+      })),
+    )
+      .then((map) => {
+        if (cancelled) return
+        setOverdueByCustomerId(map)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setOverdueByCustomerId(new Map())
+      })
+      .finally(() => {
+        if (cancelled) return
+        setOverdueLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [templateType, selectedCustomers])
 
   const plainPayload = React.useMemo(
     () => ({
@@ -1051,7 +1155,10 @@ export default function MailPage() {
   const activePayload = React.useMemo(() => {
     if (selectedSavedTemplate) {
       const parsed = parseTemplatePayload(selectedSavedTemplate.payload)
-      if (selectedSavedTemplate.template_type === "plain") {
+      if (
+        selectedSavedTemplate.template_type === "plain" ||
+        selectedSavedTemplate.template_type === "invoice_reminder"
+      ) {
         return {
           subject: parsed.plain.subject ?? "",
           body: parsed.plain.body ?? "",
@@ -1071,8 +1178,47 @@ export default function MailPage() {
       }
     }
 
-    return templateType === "plain" ? plainPayload : plainOsPayload
+    return templateType === "plain" || templateType === "invoice_reminder"
+      ? plainPayload
+      : plainOsPayload
   }, [plainOsPayload, plainPayload, selectedSavedTemplate, templateType])
+
+  // Build the per-recipient data payload. For the invoice reminder this injects
+  // that customer's overdue invoices into the @fakturor token after the normal
+  // @customer / @company replacement.
+  const buildRecipientData = React.useCallback(
+    (recipient: ResolvedRecipient | null): Record<string, unknown> => {
+      const customerName = recipient
+        ? extractFirstName(recipient.customerName) ||
+          extractFirstName(recipient.name) ||
+          extractFirstName(recipient.companyName) ||
+          t("mail.send.fallbackCustomer", "Customer")
+        : t("mail.send.fallbackCustomer", "Customer")
+      const companyName =
+        recipient?.companyName || t("mail.send.fallbackCompany", "Company")
+
+      const base = personalizePayload(
+        activePayload,
+        templateType,
+        customerName,
+        companyName,
+      )
+
+      if (templateType === "invoice_reminder") {
+        const invoices = recipient
+          ? overdueByCustomerId.get(recipient.id) ?? []
+          : []
+        const block = formatOverdueInvoiceBlock(invoices)
+        return {
+          ...base,
+          body: injectInvoiceBlock(String(base.body ?? ""), block),
+        }
+      }
+
+      return base
+    },
+    [activePayload, overdueByCustomerId, t, templateType],
+  )
 
   React.useEffect(() => {
     const abortController = new AbortController()
@@ -1081,29 +1227,15 @@ export default function MailPage() {
       try {
         const previewRecipient = effectiveRecipients[previewCustomerIndex] ?? null
         const previewEmail = previewRecipient?.email?.trim() || "preview@example.com"
-        const previewCustomerName =
-          previewRecipient?.customerName || previewRecipient?.name || t("mail.send.fallbackCustomer", "Customer")
-        const previewCompanyName =
-          previewRecipient?.companyName || t("mail.send.fallbackCompany", "Company")
 
         const response = await fetch("/api/email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: [previewEmail],
-            template:
-              templateType === "plain"
-                ? "plain"
-                : templateType === "campaign"
-                  ? "campaign"
-                  : "content",
+            template: apiTemplateFor(templateType),
             mode: "preview",
-            data: personalizePayload(
-              activePayload,
-              templateType,
-              previewCustomerName,
-              previewCompanyName,
-            ),
+            data: buildRecipientData(previewRecipient),
           }),
           signal: abortController.signal,
         })
@@ -1129,7 +1261,7 @@ export default function MailPage() {
       abortController.abort()
       window.clearTimeout(timeout)
     }
-  }, [activePayload, effectiveRecipients, previewCustomerIndex, t, templateType])
+  }, [buildRecipientData, effectiveRecipients, previewCustomerIndex, templateType])
 
   async function handleSend() {
     if (effectiveRecipients.length === 0) {
@@ -1155,13 +1287,6 @@ export default function MailPage() {
       // One /api/email call per send action — server-side this becomes one
       // mail_send_batches row + N sent_emails children.
       const apiRecipients = recipients.map(({ recipient, email }) => {
-        const customerName =
-          extractFirstName(recipient.customerName) ||
-          extractFirstName(recipient.name) ||
-          extractFirstName(recipient.companyName) ||
-          t("mail.send.fallbackCustomer", "Customer")
-        const companyName =
-          recipient.companyName || t("mail.send.fallbackCompany", "Company")
         return {
           email,
           name: recipient.name,
@@ -1170,12 +1295,7 @@ export default function MailPage() {
             recipient.type === "customers" ? recipient.id : null,
           contact_id:
             recipient.type === "contacts" ? recipient.id : null,
-          data: personalizePayload(
-            activePayload,
-            templateType,
-            customerName,
-            companyName,
-          ),
+          data: buildRecipientData(recipient),
         }
       })
 
@@ -1183,12 +1303,7 @@ export default function MailPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          template:
-            templateType === "plain"
-              ? "plain"
-              : templateType === "campaign"
-                ? "campaign"
-                : "content",
+          template: apiTemplateFor(templateType),
           mode: "send",
           deliveryMode: "separate",
           data: activePayload,
@@ -1353,6 +1468,7 @@ export default function MailPage() {
                 <SelectItem value="default">{t("mail.themes.default", "Default")}</SelectItem>
                 <SelectItem value="plain_os">{t("mail.themes.plainOs", "Plain OS")}</SelectItem>
                 <SelectItem value="campaign">{t("mail.themes.campaign", "Campaign")}</SelectItem>
+                <SelectItem value="invoice_reminder">{t("mail.themes.invoiceReminder", "Fakturapåminnelse")}</SelectItem>
                 {templates.map((template) => (
                   <SelectItem key={template.id} value={template.id}>
                     {template.name}
@@ -1818,6 +1934,59 @@ export default function MailPage() {
               </div>
             ) : null}
 
+            {invoiceReminderActive ? (
+              <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-foreground">
+                    {t("mail.send.invoiceReminder.title", "Fakturapåminnelse")}
+                  </p>
+                  {overdueLoading ? (
+                    <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                  ) : null}
+                </div>
+                {overdueLoading ? (
+                  <p className="text-muted-foreground">
+                    {t(
+                      "mail.send.invoiceReminder.checking",
+                      "Kontrollerar förfallna fakturor…",
+                    )}
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-muted-foreground">
+                      {t(
+                        "mail.send.invoiceReminder.eligible",
+                        "@count kund(er) med förfallna fakturor (mer än 3 dagar) får påminnelsen. Använd @fakturor i texten för att infoga fakturorna.",
+                      ).replace("@count", String(eligibleInvoiceRecipients.length))}
+                    </p>
+                    {excludedInvoiceRecipients.length > 0 ? (
+                      <details className="text-muted-foreground">
+                        <summary className="cursor-pointer select-none">
+                          {t(
+                            "mail.send.invoiceReminder.excludedSummary",
+                            "@count exkluderade (inga förfallna fakturor)",
+                          ).replace(
+                            "@count",
+                            String(excludedInvoiceRecipients.length),
+                          )}
+                        </summary>
+                        <ul className="mt-1 max-h-32 list-disc space-y-0.5 overflow-y-auto pl-5">
+                          {excludedInvoiceRecipients.map((recipient) => (
+                            <li
+                              key={`${recipient.type}-${recipient.id}`}
+                              className="truncate"
+                            >
+                              {recipient.name}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
+
             <p className="text-xs text-muted-foreground">
               {t(
                 "mail.send.customerTokenHelp",
@@ -1848,7 +2017,7 @@ export default function MailPage() {
                 </Button>
               ) : null}
             </div>
-          ) : templateType === "plain" ? (
+          ) : templateType === "plain" || templateType === "invoice_reminder" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="mail-plain-subject">{t("settings.mail.subject", "Subject")}</Label>
