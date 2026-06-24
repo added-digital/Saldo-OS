@@ -64,8 +64,10 @@ export interface EngagementBoardRow {
   customer_setup: Record<string, ChecklistValue> | null
   created_at: string
   updated_at: string
-  /** Set when the engagement has been cleared (hidden) from the board. */
-  cleared_at: string | null
+  /** Set when the bokslut card has been cleared (hidden) from the board. */
+  bokslut_cleared_at: string | null
+  /** Set when the INK2 card has been cleared (hidden) from the board. */
+  ink2_cleared_at: string | null
 }
 
 export interface EngagementActivity {

@@ -22,7 +22,8 @@ type BoardRow = {
   ink2_status_label: string | null;
   deadline: string | null;
   is_overdue: boolean;
-  cleared_at: string | null;
+  bokslut_cleared_at: string | null;
+  ink2_cleared_at: string | null;
 };
 
 const norm = (s?: string | null) => (s ?? "").toLowerCase().trim();
@@ -41,12 +42,13 @@ export const getEngagements: ToolHandler<GetEngagementsInput> = async (
   const includeCleared = input.include_cleared ?? false;
   const limit = Math.min(Math.max(input.limit ?? 25, 1), 100);
 
+  const clearedField = workflow === "ink2" ? "ink2_cleared_at" : "bokslut_cleared_at";
   let query = supabase
     .from("engagement_board")
     .select(
-      "customer_name, org_number, fiscal_year_end, consultant_name, co_consultant_name, group_name, bokslut_status_label, ink2_status_label, deadline, is_overdue, cleared_at",
+      "customer_name, org_number, fiscal_year_end, consultant_name, co_consultant_name, group_name, bokslut_status_label, ink2_status_label, deadline, is_overdue, bokslut_cleared_at, ink2_cleared_at",
     );
-  if (!includeCleared) query = query.is("cleared_at", null);
+  if (!includeCleared) query = query.is(clearedField, null);
 
   const { data, error } = await query.limit(5000);
   if (error) return { error: error.message };
