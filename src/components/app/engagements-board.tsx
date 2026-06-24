@@ -73,6 +73,16 @@ function statusFieldsFor(workflow: EngagementWorkflow) {
       }
 }
 
+/** The cleared-flag column for a workflow — bokslut and INK2 clear independently. */
+function clearedFieldFor(workflow: EngagementWorkflow): "bokslut_cleared_at" | "ink2_cleared_at" {
+  return workflow === "bokslut" ? "bokslut_cleared_at" : "ink2_cleared_at"
+}
+
+/** This row's cleared timestamp for the active workflow (null = not cleared). */
+function clearedOf(row: EngagementBoardRow, workflow: EngagementWorkflow): string | null {
+  return row[clearedFieldFor(workflow)]
+}
+
 /** Set a status onto a row's denormalized board fields (optimistic update). */
 function applyStatus(
   row: EngagementBoardRow,
@@ -244,11 +254,11 @@ export function EngagementsBoard() {
           (filterGroup === ALL || r.group_name === filterGroup) &&
           (filterYear === ALL || r.fiscal_year_end === filterYear) &&
           (clearedMode === "show" ||
-            (clearedMode === "hide" && !r.cleared_at) ||
-            (clearedMode === "only" && !!r.cleared_at)) &&
+            (clearedMode === "hide" && !clearedOf(r, workflow)) ||
+            (clearedMode === "only" && !!clearedOf(r, workflow))) &&
           (customerQuery === "" || r.customer_name.toLowerCase().includes(customerQuery)),
       ),
-    [rows, filterConsultant, filterGroup, filterYear, clearedMode, customerQuery],
+    [rows, filterConsultant, filterGroup, filterYear, clearedMode, customerQuery, workflow],
   )
 
   const filteredRows = React.useMemo(
@@ -329,14 +339,15 @@ export function EngagementsBoard() {
     (id: string) => {
       const row = rowsRef.current.find((r) => r.id === id)
       if (!row) return
-      const next = row.cleared_at ? null : new Date().toISOString()
+      const field = clearedFieldFor(workflow)
+      const next = clearedOf(row, workflow) ? null : new Date().toISOString()
       const snapshot = rowsRef.current
-      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, cleared_at: next } : r)))
+      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: next } : r)))
       void (async () => {
         const supabase = createClient()
         const { error } = await supabase
           .from("engagements")
-          .update({ cleared_at: next } as never)
+          .update({ [field]: next } as never)
           .eq("id", id)
         if (error) {
           setRows(snapshot)
@@ -355,7 +366,7 @@ export function EngagementsBoard() {
         }
       })()
     },
-    [t],
+    [t, workflow],
   )
 
   async function moveEngagement(id: string, toStatusId: string | null) {
@@ -563,8 +574,8 @@ export function EngagementsBoard() {
                         key={row.id}
                         row={row}
                         dragging={draggingId === row.id}
-                        cleared={!!row.cleared_at}
-                        canClear={Boolean(isDone) || !!row.cleared_at}
+                        cleared={!!clearedOf(row, workflow)}
+                        canClear={Boolean(isDone) || !!clearedOf(row, workflow)}
                         onToggleCleared={handleToggleCleared}
                         clearLabels={clearLabels}
                         onDragStart={handleCardDragStart}
