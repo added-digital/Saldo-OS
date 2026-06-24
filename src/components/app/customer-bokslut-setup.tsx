@@ -302,7 +302,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder={t("customers.bokslut.month", "Month")} />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-h-60">
                       <SelectItem value="none">—</SelectItem>
                       {SV_MONTHS_FULL.map((name, i) => (
                         <SelectItem key={i} value={String(i + 1).padStart(2, "0")}>
@@ -321,7 +321,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder={t("customers.bokslut.day", "Day")} />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-h-60">
                       {Array.from({ length: daysInMonth }, (_, i) => String(i + 1).padStart(2, "0")).map((d) => (
                         <SelectItem key={d} value={d}>
                           {Number(d)}
