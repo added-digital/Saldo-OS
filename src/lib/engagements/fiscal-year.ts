@@ -28,3 +28,38 @@ export function fiscalYearEndForCycle(
   }
   return `${cycleYear}-${monthDay}`
 }
+
+/**
+ * Propose a deadline from a fiscal-year end: the year-end date shifted forward
+ * by `offsetMonths` months (e.g. an AB filing target). The day is clamped to
+ * the target month's last day so adding months to a 31st never rolls into the
+ * following month (2025-12-31 + 3 → 2026-03-31; a hypothetical +2 → 2026-02-28).
+ *
+ * This only *suggests* a deadline — the UI lets the user override it by hand.
+ *
+ * @param fiscalYearEnd  ISO date "YYYY-MM-DD" (the engagement's räkenskapsårsslut).
+ * @param offsetMonths   Whole months to add. Non-finite/negative → treated as 0.
+ * @returns ISO date "YYYY-MM-DD", or "" when the input date is missing/malformed.
+ */
+export function deadlineForFiscalYearEnd(
+  fiscalYearEnd: string | null | undefined,
+  offsetMonths: number,
+): string {
+  if (!fiscalYearEnd) return ""
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fiscalYearEnd)
+  if (!m) return ""
+  const months = Number.isFinite(offsetMonths) ? Math.max(0, Math.trunc(offsetMonths)) : 0
+  const year = Number(m[1])
+  const monthIdx = Number(m[2]) - 1
+  const day = Number(m[3])
+
+  // Work on the 1st to avoid JS month-overflow, then clamp the day.
+  const shifted = new Date(Date.UTC(year, monthIdx + months, 1))
+  const lastDay = new Date(
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, 0),
+  ).getUTCDate()
+  const yy = shifted.getUTCFullYear()
+  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0")
+  const dd = String(Math.min(day, lastDay)).padStart(2, "0")
+  return `${yy}-${mm}-${dd}`
+}

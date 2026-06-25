@@ -7,6 +7,7 @@ import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn, formatBytes } from "@/lib/utils"
+import { deadlineForFiscalYearEnd } from "@/lib/engagements/fiscal-year"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
 import type {
@@ -81,6 +82,38 @@ function fmtDateTime(value: string): string {
   return new Date(value).toLocaleString("sv-SE", { dateStyle: "medium", timeStyle: "short" })
 }
 
+// Stable, order-independent serialization of the checklist map for change
+// detection (object key order must not register as a change).
+function sortedSetup(setup: Record<string, ChecklistValue>): Record<string, ChecklistValue> {
+  const out: Record<string, ChecklistValue> = {}
+  for (const key of Object.keys(setup).sort()) out[key] = setup[key]
+  return out
+}
+
+// A signature of just the editable fields, so we can tell whether the sheet has
+// unsaved edits (current signature ≠ the row's saved baseline).
+function editableSignature(v: {
+  bokslutStatusId: string
+  ink2StatusId: string
+  coConsultantId: string
+  deadline: string
+  bokslutComment: string
+  nextYearNote: string
+  generalComment: string
+  setup: Record<string, ChecklistValue>
+}): string {
+  return JSON.stringify({
+    b: v.bokslutStatusId,
+    i: v.ink2StatusId,
+    c: v.coConsultantId,
+    d: v.deadline,
+    bc: v.bokslutComment,
+    ny: v.nextYearNote,
+    g: v.generalComment,
+    s: sortedSetup(v.setup),
+  })
+}
+
 function withStatus(
   row: EngagementBoardRow,
   workflow: "bokslut" | "ink2",
@@ -114,6 +147,7 @@ export function EngagementDetailSheet({
   statuses,
   consultants,
   checklistFields,
+  deadlineOffsetMonths,
   userNames,
   open,
   onOpenChange,
@@ -124,6 +158,7 @@ export function EngagementDetailSheet({
   statuses: EngagementStatus[]
   consultants: Array<{ id: string; name: string }>
   checklistFields: EngagementChecklistField[]
+  deadlineOffsetMonths: number
   userNames: Record<string, string>
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -171,6 +206,55 @@ export function EngagementDetailSheet({
 
   const yearFields = React.useMemo(() => checklistFields.filter((f) => f.scope === "engagement"), [checklistFields])
   const customerFields = React.useMemo(() => checklistFields.filter((f) => f.scope === "customer"), [checklistFields])
+
+  // Unsaved-changes guard: compare the live form against the row's saved
+  // baseline. If the user edited anything and tries to close, prompt first —
+  // same UX as the customer cards (common.unsavedChanges.* copy).
+  const [confirmClose, setConfirmClose] = React.useState(false)
+  const savedSignature = React.useMemo(
+    () =>
+      row
+        ? editableSignature({
+            bokslutStatusId: row.bokslut_status_id ?? NONE,
+            ink2StatusId: row.ink2_status_id ?? NONE,
+            coConsultantId: row.co_consultant_id ?? NONE,
+            deadline: row.deadline ?? "",
+            bokslutComment: row.bokslut_comment ?? "",
+            nextYearNote: row.next_year_note ?? "",
+            generalComment: row.general_comment ?? "",
+            setup: (row.setup ?? {}) as Record<string, ChecklistValue>,
+          })
+        : "",
+    [row],
+  )
+  const currentSignature = editableSignature({
+    bokslutStatusId,
+    ink2StatusId,
+    coConsultantId,
+    deadline,
+    bokslutComment,
+    nextYearNote,
+    generalComment,
+    setup: yearSetup,
+  })
+  const dirty = !!row && open && savedSignature !== currentSignature
+
+  // Intercept close attempts (X, overlay click, Escape). Save/Delete call
+  // onOpenChange(false) directly and so are never blocked by this guard.
+  const requestClose = React.useCallback(
+    (next: boolean) => {
+      if (next) {
+        onOpenChange(true)
+        return
+      }
+      if (dirty) {
+        setConfirmClose(true)
+        return
+      }
+      onOpenChange(false)
+    },
+    [dirty, onOpenChange],
+  )
 
   React.useEffect(() => {
     if (!row) return
@@ -394,7 +478,7 @@ export function EngagementDetailSheet({
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={requestClose}>
       <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader>
           <SheetTitle>{row.customer_name}</SheetTitle>
@@ -454,7 +538,17 @@ export function EngagementDetailSheet({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="eng-deadline">{t("engagements.detail.deadline", "Deadline")}</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="eng-deadline">{t("engagements.detail.deadline", "Deadline")}</Label>
+                <button
+                  type="button"
+                  className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  title={t("engagements.detail.deadlineAutoHint", "Set to fiscal year-end + {months} months").replace("{months}", String(deadlineOffsetMonths))}
+                  onClick={() => setDeadline(deadlineForFiscalYearEnd(row?.fiscal_year_end, deadlineOffsetMonths))}
+                >
+                  {t("engagements.detail.deadlineAuto", "Auto")}
+                </button>
+              </div>
               <Input id="eng-deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
             </div>
           </div>
@@ -620,6 +714,23 @@ export function EngagementDetailSheet({
           </Button>
         </div>
       </SheetContent>
+
+      <ConfirmDialog
+        open={confirmClose}
+        onOpenChange={setConfirmClose}
+        title={t("common.unsavedChanges.title", "Leave without saving?")}
+        description={t(
+          "common.unsavedChanges.description",
+          "You have unsaved changes. If you leave now, they will be lost.",
+        )}
+        confirmLabel={t("common.unsavedChanges.leave", "Leave without saving")}
+        cancelLabel={t("common.unsavedChanges.stay", "Stay")}
+        variant="destructive"
+        onConfirm={() => {
+          setConfirmClose(false)
+          onOpenChange(false)
+        }}
+      />
 
       <ConfirmDialog
         open={deleteOpen}

@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import type { EngagementBoardRow } from "@/types/engagement"
-import { fiscalYearEndForCycle } from "@/lib/engagements/fiscal-year"
+import { deadlineForFiscalYearEnd, fiscalYearEndForCycle } from "@/lib/engagements/fiscal-year"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -42,12 +42,14 @@ export function EngagementCreateDialog({
   open,
   onOpenChange,
   defaultFiscalYearEnd,
+  deadlineOffsetMonths,
   presetCustomerId,
   onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   defaultFiscalYearEnd: string
+  deadlineOffsetMonths: number
   presetCustomerId?: string
   onCreated: (row: EngagementBoardRow) => void
 }) {
@@ -58,6 +60,10 @@ export function EngagementCreateDialog({
   const [consultantId, setConsultantId] = React.useState<string>("")
   const [coConsultantId, setCoConsultantId] = React.useState<string>("")
   const [fiscalYearEnd, setFiscalYearEnd] = React.useState<string>(defaultFiscalYearEnd)
+  const [deadline, setDeadline] = React.useState<string>("")
+  // Tracks whether the user hand-edited the deadline. Until they do, it stays
+  // auto-synced to fiscal_year_end + offset; once touched we stop overwriting.
+  const [deadlineTouched, setDeadlineTouched] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
 
   // Lazy-load the option lists the first time the dialog opens.
@@ -97,8 +103,16 @@ export function EngagementCreateDialog({
     if (open) {
       setFiscalYearEnd(defaultFiscalYearEnd)
       setCustomerId(presetCustomerId ?? "")
+      setDeadlineTouched(false)
     }
   }, [open, defaultFiscalYearEnd, presetCustomerId])
+
+  // Auto-suggest the deadline as räkenskapsårsslut + offset months, kept in sync
+  // with the fiscal year until the user overrides it by hand.
+  React.useEffect(() => {
+    if (deadlineTouched) return
+    setDeadline(deadlineForFiscalYearEnd(fiscalYearEnd, deadlineOffsetMonths))
+  }, [fiscalYearEnd, deadlineOffsetMonths, deadlineTouched])
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null
 
@@ -142,6 +156,7 @@ export function EngagementCreateDialog({
         fiscal_year_end: fiscalYearEnd,
         consultant_id: consultantId || null,
         co_consultant_id: coConsultantId || null,
+        deadline: deadline || null,
       } as never)
       .select("id")
       .single()
@@ -259,6 +274,26 @@ export function EngagementCreateDialog({
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="eng-create-deadline">{t("engagements.create.deadline", "Deadline")}</Label>
+            <Input
+              id="eng-create-deadline"
+              type="date"
+              value={deadline}
+              onChange={(e) => {
+                setDeadlineTouched(true)
+                setDeadline(e.target.value)
+              }}
+              className="[&::-webkit-calendar-picker-indicator]:invert"
+            />
+            <p className="text-xs text-muted-foreground">
+              {t(
+                "engagements.create.deadlineHint",
+                "Auto-set to fiscal year-end + {months} months. Edit to override.",
+              ).replace("{months}", String(deadlineOffsetMonths))}
+            </p>
           </div>
 
           <div className="space-y-1.5">
