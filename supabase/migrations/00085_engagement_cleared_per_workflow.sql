@@ -32,8 +32,12 @@ CREATE INDEX IF NOT EXISTS idx_engagements_ink2_cleared_at
   ON engagements(ink2_cleared_at) WHERE ink2_cleared_at IS NOT NULL;
 
 -- Recreate the board view: expose both cleared flags instead of the single
--- cleared_at. Everything else matches 00083/00084 (live consultant + live team).
-CREATE OR REPLACE VIEW engagement_board
+-- cleared_at. CREATE OR REPLACE VIEW can only append columns — it refuses to
+-- rename an existing one (cleared_at -> bokslut_cleared_at), so we DROP + CREATE.
+-- Nothing else in the DB depends on this view (00069 also drops it the same
+-- way), so the drop is safe and needs no CASCADE.
+DROP VIEW IF EXISTS engagement_board;
+CREATE VIEW engagement_board
 WITH (security_invoker = on) AS
 SELECT
   e.id,

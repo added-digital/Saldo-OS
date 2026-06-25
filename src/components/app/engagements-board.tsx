@@ -83,6 +83,64 @@ function clearedOf(row: EngagementBoardRow, workflow: EngagementWorkflow): strin
   return row[clearedFieldFor(workflow)]
 }
 
+/** The manual-ordering column for a workflow. */
+function positionFieldFor(workflow: EngagementWorkflow): "bokslut_position" | "ink2_position" {
+  return workflow === "bokslut" ? "bokslut_position" : "ink2_position"
+}
+
+/** This row's manual position for the active workflow (null = never ordered). */
+function positionOf(row: EngagementBoardRow, workflow: EngagementWorkflow): number | null {
+  return row[positionFieldFor(workflow)]
+}
+
+/**
+ * Within-column ordering: manually-positioned cards first (ascending), then any
+ * never-ordered cards by recency (newest first). Stable id tiebreak so the order
+ * is deterministic across renders. Mirrors the read model's intent in 00086.
+ */
+function compareInColumn(
+  a: EngagementBoardRow,
+  b: EngagementBoardRow,
+  workflow: EngagementWorkflow,
+): number {
+  const pa = positionOf(a, workflow)
+  const pb = positionOf(b, workflow)
+  if (pa != null && pb != null && pa !== pb) return pa - pb
+  if (pa != null && pb == null) return -1
+  if (pa == null && pb != null) return 1
+  if (pa == null && pb == null) {
+    const byRecency = b.created_at.localeCompare(a.created_at)
+    if (byRecency !== 0) return byRecency
+  }
+  return a.id.localeCompare(b.id)
+}
+
+/**
+ * Read the live card DOM in a column to work out, for a given cursor Y:
+ *   • `lineIndex` — the gap the drop-guide line should sit in (0 = above the
+ *     first card … N = below the last), counting the cards as rendered.
+ *   • `beforeId`  — the card to drop AFTER (null = drop at top), skipping the
+ *     dragged card itself so hovering next to it doesn't anchor onto it.
+ * Both the visual guide and the actual drop derive from this, so they agree.
+ */
+function computeDropLine(
+  container: HTMLElement,
+  clientY: number,
+  draggedId: string | null,
+): { lineIndex: number; beforeId: string | null } {
+  const cardEls = Array.from(container.querySelectorAll<HTMLElement>("[data-card-id]"))
+  const ids = cardEls.map((el) => el.dataset.cardId ?? "")
+  let lineIndex = 0
+  for (const el of cardEls) {
+    const r = el.getBoundingClientRect()
+    if (clientY > r.top + r.height / 2) lineIndex += 1
+    else break
+  }
+  let beforeId = lineIndex > 0 ? ids[lineIndex - 1] : null
+  if (beforeId === draggedId) beforeId = lineIndex >= 2 ? ids[lineIndex - 2] : null
+  return { lineIndex, beforeId }
+}
+
 /** Set a status onto a row's denormalized board fields (optimistic update). */
 function applyStatus(
   row: EngagementBoardRow,
@@ -124,6 +182,7 @@ export function EngagementsBoard() {
   const [rows, setRows] = React.useState<EngagementBoardRow[]>([])
   const [consultants, setConsultants] = React.useState<Consultant[]>([])
   const [defaultFiscalYearEnd, setDefaultFiscalYearEnd] = React.useState("2025-12-31")
+  const [deadlineOffsetMonths, setDeadlineOffsetMonths] = React.useState(3)
   const [checklistFields, setChecklistFields] = React.useState<EngagementChecklistField[]>([])
 
   const [workflow, setWorkflow] = React.useState<EngagementWorkflow>("bokslut")
@@ -136,6 +195,9 @@ export function EngagementsBoard() {
 
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = React.useState<string | null>(null)
+  // Which gap the drop-guide line is drawn in: { colId, line } (line = index
+  // among the column's rendered cards). Null when not dragging over a column.
+  const [dropTarget, setDropTarget] = React.useState<{ colId: string; line: number } | null>(null)
   const [detailId, setDetailId] = React.useState<string | null>(null)
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createForCustomerId, setCreateForCustomerId] = React.useState<string | undefined>(undefined)
@@ -149,7 +211,7 @@ export function EngagementsBoard() {
         supabase.from("engagement_statuses").select("*").order("workflow").order("sort_order"),
         supabase.from("engagement_board").select("*"),
         supabase.from("profiles").select("id, full_name, email").eq("is_active", true).order("full_name").limit(500),
-        supabase.from("engagement_config").select("active_fiscal_year_end, checklist_fields").eq("id", 1).maybeSingle(),
+        supabase.from("engagement_config").select("active_fiscal_year_end, checklist_fields, deadline_offset_months").eq("id", 1).maybeSingle(),
       ])
       if (cancelled) return
       setStatuses((statusRes.data ?? []) as EngagementStatus[])
@@ -163,9 +225,11 @@ export function EngagementsBoard() {
       const cfg = configRes.data as {
         active_fiscal_year_end: string
         checklist_fields: EngagementChecklistField[] | null
+        deadline_offset_months: number | null
       } | null
       if (cfg?.active_fiscal_year_end) setDefaultFiscalYearEnd(cfg.active_fiscal_year_end)
       if (Array.isArray(cfg?.checklist_fields)) setChecklistFields(cfg.checklist_fields)
+      if (typeof cfg?.deadline_offset_months === "number") setDeadlineOffsetMonths(cfg.deadline_offset_months)
       setLoading(false)
     })()
     return () => {
@@ -304,6 +368,7 @@ export function EngagementsBoard() {
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(r)
     }
+    for (const list of map.values()) list.sort((a, b) => compareInColumn(a, b, workflow))
     return map
   }, [columns, filteredRows, workflow])
 
@@ -320,7 +385,19 @@ export function EngagementsBoard() {
   const handleCardDragEnd = React.useCallback(() => {
     setDraggingId(null)
     setDragOverCol(null)
+    setDropTarget(null)
   }, [])
+
+  // Where the dragged card currently lives (its column key for the active
+  // workflow) — drives whether a hover is a cross-column move (→ top) or an
+  // in-column reorder (→ cursor gap).
+  const draggedColumnKey = React.useCallback((): string | null => {
+    if (!draggingId) return null
+    const r = rows.find((x) => x.id === draggingId)
+    if (!r) return null
+    const sid = workflow === "bokslut" ? r.bokslut_status_id : r.ink2_status_id
+    return sid ?? NO_STATUS
+  }, [draggingId, rows, workflow])
   const overdueLabel = t("engagements.overdue", "Overdue")
   const clearLabels = React.useMemo(
     () => ({
@@ -369,35 +446,105 @@ export function EngagementsBoard() {
     [t, workflow],
   )
 
-  async function moveEngagement(id: string, toStatusId: string | null) {
-    const row = rows.find((r) => r.id === id)
-    if (!row) return
-    const currentId = workflow === "bokslut" ? row.bokslut_status_id : row.ink2_status_id
-    if (currentId === toStatusId) return
-
-    const snapshot = rows
-    const status = toStatusId ? statusById.get(toStatusId) ?? null : null
-    setRows((prev) => prev.map((r) => (r.id === id ? applyStatus(r, workflow, status) : r)))
-
-    const supabase = createClient()
-    const field = statusFieldsFor(workflow).id
-    const { error } = await supabase
-      .from("engagements")
-      .update({ [field]: toStatusId } as never)
-      .eq("id", id)
-
-    if (error) {
-      setRows(snapshot) // revert
-      toast.error(`${t("engagements.toast.error", "Couldn't update engagement")}: ${error.message}`)
-    }
-  }
-
-  function handleDrop(columnId: string) {
+  // Unified drop handler for both cross-column moves and within-column reorder.
+  //
+  // Rules (per the product spec):
+  //   • Dropping a card into a DIFFERENT column moves it there and places it at
+  //     the TOP of that column.
+  //   • Dropping within the SAME column re-orders it to where the cursor is, so
+  //     the team can arrange a column however they like.
+  //
+  // Implementation: we compute the destination column's new full id order
+  // (anchored to the neighbouring card under the cursor so active filters can't
+  // scramble hidden cards), optimistically apply both the status move and the
+  // new positions, then persist — the status change as a normal update (keeps
+  // the activity log) and the order via the atomic reorder_engagements RPC.
+  async function handleDrop(e: React.DragEvent<HTMLDivElement>, columnId: string) {
     const id = draggingId
     setDraggingId(null)
     setDragOverCol(null)
+    setDropTarget(null)
     if (!id) return
-    void moveEngagement(id, columnId === NO_STATUS ? null : columnId)
+
+    const dragged = rows.find((r) => r.id === id)
+    if (!dragged) return
+
+    const currentStatusId = workflow === "bokslut" ? dragged.bokslut_status_id : dragged.ink2_status_id
+    const currentColumn = currentStatusId ?? NO_STATUS
+    const crossColumn = currentColumn !== columnId
+    const toStatusId = columnId === NO_STATUS ? null : columnId
+
+    // Anchor the insert to a real neighbour id from what's actually rendered, so
+    // ordering is correct even when filters hide some cards. Cross-column drops
+    // always land at the very top (beforeId = null).
+    const beforeId = crossColumn
+      ? null
+      : computeDropLine(e.currentTarget, e.clientY, id).beforeId
+
+    // The destination column's existing cards (all rows, not just visible), in
+    // display order, excluding the dragged card.
+    const destExisting = rows
+      .filter((r) => r.id !== id && (workflow === "bokslut" ? r.bokslut_status_id : r.ink2_status_id) === toStatusId)
+      .sort((a, b) => compareInColumn(a, b, workflow))
+
+    const insertAt = beforeId
+      ? destExisting.findIndex((r) => r.id === beforeId) + 1
+      : 0
+    const newOrderIds = [
+      ...destExisting.slice(0, insertAt).map((r) => r.id),
+      id,
+      ...destExisting.slice(insertAt).map((r) => r.id),
+    ]
+
+    // No-op: same column and the order is unchanged — skip the round-trip.
+    if (!crossColumn) {
+      const currentOrder = rows
+        .filter((r) => (workflow === "bokslut" ? r.bokslut_status_id : r.ink2_status_id) === toStatusId)
+        .sort((a, b) => compareInColumn(a, b, workflow))
+        .map((r) => r.id)
+      if (currentOrder.length === newOrderIds.length && currentOrder.every((rid, i) => rid === newOrderIds[i])) {
+        return
+      }
+    }
+
+    const posField = positionFieldFor(workflow)
+    const positionById = new Map(newOrderIds.map((rid, i) => [rid, i + 1]))
+
+    const snapshot = rows
+    setRows((prev) =>
+      prev.map((r) => {
+        if (!positionById.has(r.id)) return r
+        let next = r
+        // Apply the status move to the dragged card only.
+        if (r.id === id && crossColumn) {
+          next = applyStatus(next, workflow, toStatusId ? statusById.get(toStatusId) ?? null : null)
+        }
+        return { ...next, [posField]: positionById.get(r.id)! }
+      }),
+    )
+
+    const supabase = createClient()
+    if (crossColumn) {
+      const field = statusFieldsFor(workflow).id
+      const { error } = await supabase
+        .from("engagements")
+        .update({ [field]: toStatusId } as never)
+        .eq("id", id)
+      if (error) {
+        setRows(snapshot)
+        toast.error(`${t("engagements.toast.error", "Couldn't update engagement")}: ${error.message}`)
+        return
+      }
+    }
+
+    const { error: reorderError } = await supabase.rpc("reorder_engagements" as never, {
+      p_workflow: workflow,
+      p_ids: newOrderIds,
+    } as never)
+    if (reorderError) {
+      setRows(snapshot)
+      toast.error(`${t("engagements.toast.error", "Couldn't update engagement")}: ${reorderError.message}`)
+    }
   }
 
   return (
@@ -537,16 +684,23 @@ export function EngagementsBoard() {
                 onDragOver={(e) => {
                   e.preventDefault()
                   setDragOverCol(col.id)
+                  const line = draggedColumnKey() === col.id
+                    ? computeDropLine(e.currentTarget, e.clientY, draggingId).lineIndex
+                    : 0 // cross-column drops always land at the top
+                  setDropTarget((cur) =>
+                    cur && cur.colId === col.id && cur.line === line ? cur : { colId: col.id, line },
+                  )
                 }}
                 onDragLeave={(e) => {
                   if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
                     setDragOverCol((cur) => (cur === col.id ? null : cur))
+                    setDropTarget((cur) => (cur?.colId === col.id ? null : cur))
                   }
                 }}
-                onDrop={() => handleDrop(col.id)}
+                onDrop={(e) => handleDrop(e, col.id)}
                 className={cn(
                   "flex w-[270px] shrink-0 flex-col rounded-lg border bg-muted/20 transition-colors",
-                  dragOverCol === col.id && "border-primary bg-primary/5",
+                  dragOverCol === col.id && "border-primary bg-primary/10 ring-2 ring-primary/40 ring-inset",
                   // Parked ("Ej aktuell"): set apart at the end of the pipeline —
                   // dashed, transparent, de-emphasized, with a gap before it.
                   col.parked && "ml-3 border-dashed bg-transparent opacity-70",
@@ -566,25 +720,31 @@ export function EngagementsBoard() {
                   </Badge>
                 </div>
                 <div className="flex min-h-[40px] flex-1 flex-col gap-2 overflow-y-auto p-2">
-                  {colRows.map((row) => {
-                    const isDone =
-                      workflow === "bokslut" ? row.bokslut_status_is_done : row.ink2_status_is_done
+                  {colRows.map((row, i) => {
+                    const showLine = dropTarget?.colId === col.id && dropTarget.line === i
                     return (
-                      <EngagementCard
-                        key={row.id}
-                        row={row}
-                        dragging={draggingId === row.id}
-                        cleared={!!clearedOf(row, workflow)}
-                        canClear={Boolean(isDone) || !!clearedOf(row, workflow)}
-                        onToggleCleared={handleToggleCleared}
-                        clearLabels={clearLabels}
-                        onDragStart={handleCardDragStart}
-                        onDragEnd={handleCardDragEnd}
-                        onClick={handleCardClick}
-                        overdueLabel={overdueLabel}
-                      />
+                      <React.Fragment key={row.id}>
+                        {showLine ? <DropLine /> : null}
+                        <EngagementCard
+                          row={row}
+                          dragging={draggingId === row.id}
+                          cleared={!!clearedOf(row, workflow)}
+                          // Clearing is allowed from ANY column (not just the
+                          // "done" stage) — a card can be cleared at any point.
+                          canClear
+                          onToggleCleared={handleToggleCleared}
+                          clearLabels={clearLabels}
+                          onDragStart={handleCardDragStart}
+                          onDragEnd={handleCardDragEnd}
+                          onClick={handleCardClick}
+                          overdueLabel={overdueLabel}
+                        />
+                      </React.Fragment>
                     )
                   })}
+                  {dropTarget?.colId === col.id && dropTarget.line === colRows.length ? (
+                    <DropLine />
+                  ) : null}
                 </div>
               </div>
             )
@@ -596,6 +756,7 @@ export function EngagementsBoard() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         defaultFiscalYearEnd={defaultFiscalYearEnd}
+        deadlineOffsetMonths={deadlineOffsetMonths}
         presetCustomerId={createForCustomerId}
         onCreated={(row) => setRows((prev) => [row, ...prev])}
       />
@@ -618,6 +779,7 @@ export function EngagementsBoard() {
         statuses={statuses}
         consultants={consultants}
         checklistFields={checklistFields}
+        deadlineOffsetMonths={deadlineOffsetMonths}
         userNames={userNames}
         open={detailId !== null}
         onOpenChange={(open) => {
@@ -860,6 +1022,16 @@ function MissingBokslutDialog({
   )
 }
 
+// The drop-position guide: a thin accented bar marking exactly where the card
+// will land. The dot on the left makes the (otherwise 2px) line easy to spot.
+function DropLine() {
+  return (
+    <div className="relative h-0.5 rounded-full bg-primary" aria-hidden>
+      <span className="absolute -left-0.5 top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-primary" />
+    </div>
+  )
+}
+
 const EngagementCard = React.memo(function EngagementCard({
   row,
   dragging,
@@ -886,6 +1058,7 @@ const EngagementCard = React.memo(function EngagementCard({
   return (
     <div
       draggable
+      data-card-id={row.id}
       onDragStart={() => onDragStart(row.id)}
       onDragEnd={onDragEnd}
       onClick={() => onClick(row.id)}

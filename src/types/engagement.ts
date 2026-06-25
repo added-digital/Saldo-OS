@@ -68,6 +68,10 @@ export interface EngagementBoardRow {
   bokslut_cleared_at: string | null
   /** Set when the INK2 card has been cleared (hidden) from the board. */
   ink2_cleared_at: string | null
+  /** Manual within-column ordering for the bokslut tab (null = never ordered). */
+  bokslut_position: number | null
+  /** Manual within-column ordering for the INK2 tab (null = never ordered). */
+  ink2_position: number | null
 }
 
 export interface EngagementActivity {
