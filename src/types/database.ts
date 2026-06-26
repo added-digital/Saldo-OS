@@ -90,6 +90,11 @@ export interface Customer {
   saldoavtal_date: string | null
   /** Agreed fixed monthly fee in SEK, if any. */
   fixed_monthly_price: number | null
+  /** Whether a year-end close (Bokslut) applies to this customer. Three-state:
+   *  null = not reviewed yet (still shows in the gap list), true = confirmed
+   *  relevant, false = not relevant (dropped from the "Without bokslut" gap list
+   *  and the bokslutsuppgifter section on the customer card is hidden). */
+  bokslut_relevant: boolean | null
   created_at: string
   updated_at: string
 }
@@ -554,7 +559,7 @@ export interface Database {
       }
       customers: {
         Row: Customer
-        Insert: Omit<Customer, "id" | "created_at" | "updated_at" | "bokslut_setup" | "needs_segmentation" | "saldoavtal_date" | "fixed_monthly_price">
+        Insert: Omit<Customer, "id" | "created_at" | "updated_at" | "bokslut_setup" | "needs_segmentation" | "saldoavtal_date" | "fixed_monthly_price" | "bokslut_relevant">
         Update: Partial<Omit<Customer, "id" | "created_at" | "updated_at">>
       }
       segments: {

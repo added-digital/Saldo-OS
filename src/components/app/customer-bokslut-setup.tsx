@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -36,12 +37,13 @@ function serializeSetup(
   date: string,
   price: string,
   financialYearManual: string,
+  bokslutRelevant: boolean,
 ): string {
   const sorted = Object.keys(setup)
     .sort()
     .map((k) => `${k}:${setup[k]}`)
     .join("|")
-  return `${sorted}~~${date}~~${price}~~${financialYearManual}`
+  return `${sorted}~~${date}~~${price}~~${financialYearManual}~~${bokslutRelevant}`
 }
 
 const SV_MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
@@ -73,6 +75,10 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
   const [fields, setFields] = React.useState<EngagementChecklistField[]>([])
   const [setup, setSetup] = React.useState<Record<string, ChecklistValue>>({})
   const [needsSegmentation, setNeedsSegmentation] = React.useState(false)
+  // Whether Bokslut applies to this customer at all. When false, the
+  // bokslutsuppgifter below are hidden and the customer drops off the
+  // "Without bokslut" gap list.
+  const [bokslutRelevant, setBokslutRelevant] = React.useState(true)
   const [saldoavtalDate, setSaldoavtalDate] = React.useState<string>("")
   const [fixedMonthlyPrice, setFixedMonthlyPrice] = React.useState<string>("")
   // Räkenskapsår end: _sie is read-only (sync-owned, authoritative); _manual is
@@ -89,11 +95,12 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
     date: string
     price: string
     financialYearManual: string
-  }>({ setup: {}, date: "", price: "", financialYearManual: "" })
+    bokslutRelevant: boolean
+  }>({ setup: {}, date: "", price: "", financialYearManual: "", bokslutRelevant: true })
 
   const currentSignature = React.useMemo(
-    () => serializeSetup(setup, saldoavtalDate, fixedMonthlyPrice, financialYearToManual),
-    [setup, saldoavtalDate, fixedMonthlyPrice, financialYearToManual],
+    () => serializeSetup(setup, saldoavtalDate, fixedMonthlyPrice, financialYearToManual, bokslutRelevant),
+    [setup, saldoavtalDate, fixedMonthlyPrice, financialYearToManual, bokslutRelevant],
   )
   const dirty = currentSignature !== snapshot
 
@@ -106,7 +113,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       const supabase = createClient()
       const [cfgRes, custRes] = await Promise.all([
         supabase.from("engagement_config").select("checklist_fields").eq("id", 1).maybeSingle(),
-        supabase.from("customers").select("bokslut_setup, needs_segmentation, saldoavtal_date, fixed_monthly_price, financial_year_to_sie, financial_year_to_manual").eq("id", customerId).maybeSingle(),
+        supabase.from("customers").select("bokslut_setup, needs_segmentation, bokslut_relevant, saldoavtal_date, fixed_monthly_price, financial_year_to_sie, financial_year_to_manual").eq("id", customerId).maybeSingle(),
       ])
       if (cancelled) return
       const cfg = cfgRes.data as { checklist_fields: EngagementChecklistField[] | null } | null
@@ -114,6 +121,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       const cust = custRes.data as {
         bokslut_setup: Record<string, ChecklistValue> | null
         needs_segmentation: boolean
+        bokslut_relevant: boolean | null
         saldoavtal_date: string | null
         fixed_monthly_price: number | null
         financial_year_to_sie: string | null
@@ -123,18 +131,22 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       const loadedDate = cust?.saldoavtal_date ?? ""
       const loadedPrice = cust?.fixed_monthly_price != null ? String(cust.fixed_monthly_price) : ""
       const loadedFyManual = cust?.financial_year_to_manual ?? ""
+      // Default to relevant when the column is null/missing.
+      const loadedRelevant = cust?.bokslut_relevant !== false
       setSetup(loadedSetup)
       setNeedsSegmentation(Boolean(cust?.needs_segmentation))
+      setBokslutRelevant(loadedRelevant)
       setSaldoavtalDate(loadedDate)
       setFixedMonthlyPrice(loadedPrice)
       setFinancialYearToSie(cust?.financial_year_to_sie ?? null)
       setFinancialYearToManual(loadedFyManual)
-      setSnapshot(serializeSetup(loadedSetup, loadedDate, loadedPrice, loadedFyManual))
+      setSnapshot(serializeSetup(loadedSetup, loadedDate, loadedPrice, loadedFyManual, loadedRelevant))
       savedRef.current = {
         setup: { ...loadedSetup },
         date: loadedDate,
         price: loadedPrice,
         financialYearManual: loadedFyManual,
+        bokslutRelevant: loadedRelevant,
       }
       setLoading(false)
     })()
@@ -177,6 +189,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       .update({
         bokslut_setup: setup,
         needs_segmentation: false,
+        bokslut_relevant: bokslutRelevant,
         saldoavtal_date: saldoavtalDate || null,
         fixed_monthly_price: priceNum != null && Number.isFinite(priceNum) ? priceNum : null,
         // Only the MANUAL column is written here; the _sie column is sync-owned.
@@ -203,8 +216,8 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
     setNeedsSegmentation(false)
     // Mark the just-saved values as the new clean baseline.
     const savedPrice = priceNum != null && Number.isFinite(priceNum) ? fixedMonthlyPrice : ""
-    savedRef.current = { setup: { ...setup }, date: saldoavtalDate, price: savedPrice, financialYearManual: financialYearToManual }
-    setSnapshot(serializeSetup(setup, saldoavtalDate, savedPrice, financialYearToManual))
+    savedRef.current = { setup: { ...setup }, date: saldoavtalDate, price: savedPrice, financialYearManual: financialYearToManual, bokslutRelevant }
+    setSnapshot(serializeSetup(setup, saldoavtalDate, savedPrice, financialYearToManual, bokslutRelevant))
     if (savedPrice !== fixedMonthlyPrice) setFixedMonthlyPrice(savedPrice)
     toast.success(t("customers.bokslut.saved", "Customer setup saved"))
   }
@@ -214,6 +227,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
     setSaldoavtalDate(savedRef.current.date)
     setFixedMonthlyPrice(savedRef.current.price)
     setFinancialYearToManual(savedRef.current.financialYearManual)
+    setBokslutRelevant(savedRef.current.bokslutRelevant)
   }
 
   if (loading) {
@@ -232,6 +246,37 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
         ) : null}
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Relevance toggle, directly under the title. When off, everything below
+            is hidden and the customer drops off the "Without bokslut" gap list. */}
+        <div className="flex items-center gap-3">
+          <Switch
+            id="bokslut-relevant"
+            checked={bokslutRelevant}
+            onCheckedChange={setBokslutRelevant}
+            className="cursor-pointer"
+          />
+          <div className="space-y-0.5">
+            <Label htmlFor="bokslut-relevant" className="cursor-pointer">
+              {t("customers.bokslut.relevantLabel", "Bokslut relevant")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                "customers.bokslut.relevantHint",
+                "Turn off if a year-end close isn't relevant for this customer.",
+              )}
+            </p>
+          </div>
+        </div>
+
+        {!bokslutRelevant ? (
+          <p className="text-sm text-muted-foreground">
+            {t(
+              "customers.bokslut.notRelevant",
+              "Bokslut is not relevant for this customer. The year-end details are hidden.",
+            )}
+          </p>
+        ) : (
+          <>
         {grouped.map((g) => (
           <div key={g.name} className="space-y-1.5">
             {g.name ? (
@@ -360,6 +405,8 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
             />
           </div>
         </div>
+          </>
+        )}
 
       </CardContent>
 

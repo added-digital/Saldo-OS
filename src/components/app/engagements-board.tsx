@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, ChevronDown } from "lucide-react"
+import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, ChevronDown, EyeOff, Eye, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -886,7 +886,7 @@ function ManagerFilter({
   )
 }
 
-type ActiveCustomer = { id: string; name: string; org_number: string | null; office: string | null }
+type ActiveCustomer = { id: string; name: string; org_number: string | null; office: string | null; bokslut_relevant: boolean | null }
 
 // Swedish org-number rule: the leading group digit 5 = aktiebolag (AB).
 // The 3rd digit ≥ 2 disambiguates from a personnummer (enskild firma) that
@@ -911,6 +911,10 @@ function MissingBokslutDialog({
   const { t } = useTranslation()
   const [customers, setCustomers] = React.useState<ActiveCustomer[] | null>(null)
   const [query, setQuery] = React.useState("")
+  // Which set to show: the gap list, or the ones marked not relevant.
+  const [view, setView] = React.useState<"missing" | "notRelevant">("missing")
+  // The row currently awaiting a hide confirmation (inline, no modal).
+  const [confirmingId, setConfirmingId] = React.useState<string | null>(null)
 
   // Lazy-load active customers the first time the dialog opens.
   React.useEffect(() => {
@@ -918,13 +922,20 @@ function MissingBokslutDialog({
     let cancelled = false
     void (async () => {
       const supabase = createClient()
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("customers")
-        .select("id, name, org_number, office")
+        .select("id, name, org_number, office, bokslut_relevant")
         .eq("status", "active")
         .order("name")
         .limit(5000)
       if (cancelled) return
+      if (error) {
+        // Surface the failure instead of silently rendering an empty list (which
+        // would misleadingly read as "every customer already has a bokslut").
+        console.error("Failed to load active customers for the bokslut gap list", error)
+        toast.error(error.message)
+        return
+      }
       setCustomers((data ?? []) as ActiveCustomer[])
     })()
     return () => {
@@ -933,26 +944,79 @@ function MissingBokslutDialog({
   }, [open, customers])
 
   // Only aktiebolag are relevant for the year-end close; exclude enskild firma,
-  // HB/KB and föreningar from the gap list.
+  // HB/KB and föreningar from the gap list. Also drop customers explicitly
+  // marked as not relevant for Bokslut on their customer card.
   const missing = React.useMemo(
     () =>
       (customers ?? []).filter(
-        (c) => !engagedCustomerIds.has(c.id) && isAktiebolag(c.org_number),
+        (c) =>
+          !engagedCustomerIds.has(c.id) &&
+          isAktiebolag(c.org_number) &&
+          c.bokslut_relevant !== false,
       ),
     [customers, engagedCustomerIds],
   )
+  // The customers explicitly opted out of bokslut, shown under the other tab so
+  // they can be reviewed and restored.
+  const notRelevant = React.useMemo(
+    () => (customers ?? []).filter((c) => c.bokslut_relevant === false),
+    [customers],
+  )
+  const source = view === "missing" ? missing : notRelevant
   const q = query.trim().toLowerCase()
   const filtered = React.useMemo(
     () =>
       q === ""
-        ? missing
-        : missing.filter(
+        ? source
+        : source.filter(
             (c) =>
               c.name.toLowerCase().includes(q) ||
               (c.org_number ?? "").toLowerCase().includes(q),
           ),
-    [missing, q],
+    [source, q],
   )
+
+  function switchView(next: "missing" | "notRelevant") {
+    setConfirmingId(null)
+    setView(next)
+  }
+
+  // Mark a customer as not relevant for bokslut (sets bokslut_relevant = false).
+  // Optimistically flips the local value so it moves to the "not relevant" tab.
+  async function markNotRelevant(c: ActiveCustomer) {
+    setConfirmingId(null)
+    const supabase = createClient()
+    const { error } = await supabase
+      .from("customers")
+      .update({ bokslut_relevant: false } as never)
+      .eq("id", c.id)
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+    setCustomers((prev) =>
+      (prev ?? []).map((x) => (x.id === c.id ? { ...x, bokslut_relevant: false } : x)),
+    )
+    toast.success(t("engagements.missing.markedNotRelevant", "Marked as not relevant for bokslut"))
+  }
+
+  // Put a customer back in the gap list by clearing the opt-out (back to "not
+  // reviewed yet" / null).
+  async function restoreRelevant(c: ActiveCustomer) {
+    const supabase = createClient()
+    const { error } = await supabase
+      .from("customers")
+      .update({ bokslut_relevant: null } as never)
+      .eq("id", c.id)
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+    setCustomers((prev) =>
+      (prev ?? []).map((x) => (x.id === c.id ? { ...x, bokslut_relevant: null } : x)),
+    )
+    toast.success(t("engagements.missing.restored", "Moved back to the bokslut list"))
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -962,7 +1026,7 @@ function MissingBokslutDialog({
             {t("engagements.missing.title", "Active customers without a bokslut")}
             {customers !== null ? (
               <Badge variant="outline" className="text-[11px]">
-                {missing.length}
+                {source.length}
               </Badge>
             ) : null}
           </DialogTitle>
@@ -981,6 +1045,36 @@ function MissingBokslutDialog({
           />
         </div>
 
+        {/* Switch between the gap list and the customers opted out of bokslut. */}
+        <div className="flex items-center gap-1 rounded-md border p-0.5">
+          <button
+            type="button"
+            onClick={() => switchView("missing")}
+            className={cn(
+              "flex-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors",
+              view === "missing"
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t("engagements.missing.tabMissing", "Without bokslut")}
+            {customers !== null ? ` (${missing.length})` : ""}
+          </button>
+          <button
+            type="button"
+            onClick={() => switchView("notRelevant")}
+            className={cn(
+              "flex-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors",
+              view === "notRelevant"
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t("engagements.missing.tabNotRelevant", "Not relevant")}
+            {customers !== null ? ` (${notRelevant.length})` : ""}
+          </button>
+        </div>
+
         <div className="min-h-0 flex-1 overflow-y-auto">
           {customers === null ? (
             <div className="space-y-2 py-2">
@@ -990,28 +1084,90 @@ function MissingBokslutDialog({
             </div>
           ) : filtered.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              {t("engagements.missing.none", "No active customers are missing a bokslut.")}
+              {view === "missing"
+                ? t("engagements.missing.none", "No active customers are missing a bokslut.")
+                : t("engagements.missing.noneNotRelevant", "No customers are marked as not relevant.")}
             </p>
           ) : (
             <ul className="divide-y">
               {filtered.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-3 py-2">
+                <li
+                  key={c.id}
+                  className={cn(
+                    "flex items-center justify-between gap-3 py-2",
+                    view === "notRelevant" && "text-muted-foreground",
+                  )}
+                >
                   <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {c.org_number ?? ""}
                     {c.office ? ` · ${c.office}` : ""}
                   </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="shrink-0"
-                    title={t("engagements.missing.create", "Create engagement")}
-                    onClick={() => onCreateForCustomer(c.id)}
-                  >
-                    <Plus className="size-4" />
-                    <span className="sr-only">{t("engagements.missing.create", "Create engagement")}</span>
-                  </Button>
+                  {view === "notRelevant" ? (
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        title={t("engagements.missing.restore", "Show in the bokslut list again")}
+                        onClick={() => void restoreRelevant(c)}
+                      >
+                        <Eye className="size-4" />
+                        <span className="sr-only">{t("engagements.missing.restore", "Show in the bokslut list again")}</span>
+                      </Button>
+                    </div>
+                  ) : confirmingId === c.id ? (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <span className="text-xs text-muted-foreground">
+                        {t("engagements.missing.confirmHide", "Not relevant?")}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="text-semantic-error"
+                        title={t("engagements.missing.confirmHideYes", "Confirm")}
+                        onClick={() => void markNotRelevant(c)}
+                      >
+                        <Check className="size-4" />
+                        <span className="sr-only">{t("engagements.missing.confirmHideYes", "Confirm")}</span>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        title={t("engagements.missing.confirmHideCancel", "Cancel")}
+                        onClick={() => setConfirmingId(null)}
+                      >
+                        <X className="size-4" />
+                        <span className="sr-only">{t("engagements.missing.confirmHideCancel", "Cancel")}</span>
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="text-muted-foreground"
+                        title={t("engagements.missing.markNotRelevant", "Not relevant for bokslut")}
+                        onClick={() => setConfirmingId(c.id)}
+                      >
+                        <EyeOff className="size-4" />
+                        <span className="sr-only">{t("engagements.missing.markNotRelevant", "Not relevant for bokslut")}</span>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        title={t("engagements.missing.create", "Create engagement")}
+                        onClick={() => onCreateForCustomer(c.id)}
+                      >
+                        <Plus className="size-4" />
+                        <span className="sr-only">{t("engagements.missing.create", "Create engagement")}</span>
+                      </Button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
