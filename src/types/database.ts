@@ -521,6 +521,35 @@ export interface SentEmail {
   updated_at: string
 }
 
+export type WebsiteLeadStatus = "new" | "contacted" | "archived" | "spam"
+export type WebsiteLeadNotificationStatus =
+  | "pending"
+  | "sent"
+  | "failed"
+  | "skipped"
+
+export interface WebsiteLead {
+  id: string
+  form_name: string
+  name: string
+  company: string
+  message: string
+  email: string | null
+  phone: string | null
+  page_path: string | null
+  submitted_at: string | null
+  recaptcha_score: number | null
+  meta: Record<string, unknown>
+  status: WebsiteLeadStatus
+  notification_status: WebsiteLeadNotificationStatus
+  notification_recipient: string | null
+  notification_error: string | null
+  idempotency_key: string | null
+  source_ip: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type EmailEventType = "open" | "click"
 
 export interface EmailEvent {
@@ -710,6 +739,25 @@ export interface Database {
         Row: ManagerTimeKpi
         Insert: Omit<ManagerTimeKpi, "id" | "created_at" | "updated_at">
         Update: Partial<Omit<ManagerTimeKpi, "id" | "created_at" | "updated_at">>
+      }
+      website_leads: {
+        Row: WebsiteLead
+        Insert: Omit<
+          WebsiteLead,
+          | "id"
+          | "created_at"
+          | "updated_at"
+          | "status"
+          | "notification_status"
+          | "meta"
+          | "form_name"
+        > & {
+          status?: WebsiteLeadStatus
+          notification_status?: WebsiteLeadNotificationStatus
+          meta?: Record<string, unknown>
+          form_name?: string
+        }
+        Update: Partial<Omit<WebsiteLead, "id" | "created_at" | "updated_at">>
       }
     }
   }

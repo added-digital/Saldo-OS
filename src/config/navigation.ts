@@ -9,6 +9,7 @@ import {
   Calculator,
   Target,
   ClipboardList,
+  Inbox,
   type LucideIcon,
 } from "lucide-react"
 
@@ -38,6 +39,8 @@ export const navigation: NavSection[] = [
     items: [
       { label: "Customers", href: "/customers", icon: Users, scope: "customers" },
       { label: "Contacts", href: "/contacts", icon: UserRound },
+      // Inbound website contact-form submissions (POST /api/leads/intake).
+      { label: "Leads", href: "/leads", icon: Inbox },
       // Bokslut + INK2 workflow board (replaces the Effektivitet Excel tracker).
       { label: "Bokslut", href: "/bokslut", icon: ClipboardList, scope: "customers" },
     ],
