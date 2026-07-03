@@ -28,23 +28,30 @@ export function SegmentationAlert() {
   const [items, setItems] = React.useState<PendingCustomer[]>([])
   const [open, setOpen] = React.useState(false)
 
-  React.useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const supabase = createClient()
-      const { data } = await supabase
-        .from("customers")
-        .select("id, name")
-        .eq("needs_segmentation", true)
-        .order("name")
-        .limit(FETCH_LIMIT)
-      if (cancelled) return
-      setItems((data ?? []) as PendingCustomer[])
-    })()
-    return () => {
-      cancelled = true
-    }
+  const fetchPending = React.useCallback(async () => {
+    const supabase = createClient()
+    const { data } = await supabase
+      .from("customers")
+      .select("id, name")
+      .eq("needs_segmentation", true)
+      .order("name")
+      .limit(FETCH_LIMIT)
+    setItems((data ?? []) as PendingCustomer[])
   }, [])
+
+  React.useEffect(() => {
+    void fetchPending()
+    // Refetch when a customer's segmentation is saved elsewhere (see
+    // customer-bokslut-setup.tsx), so the just-handled customer drops off the
+    // list without a page reload.
+    const onUpdated = () => {
+      void fetchPending()
+    }
+    window.addEventListener("saldo:segmentation-updated", onUpdated)
+    return () => {
+      window.removeEventListener("saldo:segmentation-updated", onUpdated)
+    }
+  }, [fetchPending])
 
   if (items.length === 0) return null
 

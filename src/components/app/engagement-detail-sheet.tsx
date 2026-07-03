@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ChevronDown, Download, Loader2, Paperclip, Trash2, Upload } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Download, Loader2, MessageSquare, Paperclip, Pencil, Send, Trash2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -16,10 +16,12 @@ import type {
   EngagementAttachment,
   EngagementBoardRow,
   EngagementChecklistField,
+  EngagementComment,
   EngagementStatus,
 } from "@/types/engagement"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/app/confirm-dialog"
+import { UserAvatar } from "@/components/app/user-avatar"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { MentionTextarea, extractMentionIds } from "@/components/app/mention-textarea"
@@ -166,7 +168,7 @@ export function EngagementDetailSheet({
   onDeleted: (id: string) => void
 }) {
   const { t } = useTranslation()
-  const { user } = useUser()
+  const { user, isAdmin } = useUser()
   // Mentions already present when the sheet opened — so we only notify on newly
   // added @-mentions, not every save.
   const initialMentionIdsRef = React.useRef<Set<string>>(new Set())
@@ -182,6 +184,17 @@ export function EngagementDetailSheet({
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
   const [activity, setActivity] = React.useState<EngagementActivity[]>([])
+
+  // Comments — a threaded feed (distinct posts, each with author + timestamp),
+  // shown in the column beside the form.
+  const [comments, setComments] = React.useState<EngagementComment[]>([])
+  const [newComment, setNewComment] = React.useState<string>("")
+  const [postingComment, setPostingComment] = React.useState(false)
+  const [editingCommentId, setEditingCommentId] = React.useState<string | null>(null)
+  const [editingBody, setEditingBody] = React.useState<string>("")
+  const [savingEdit, setSavingEdit] = React.useState(false)
+  const [deletingCommentId, setDeletingCommentId] = React.useState<string | null>(null)
+  const [commentsOpen, setCommentsOpen] = React.useState(true)
 
   // Attachments
   const [attachments, setAttachments] = React.useState<EngagementAttachment[]>([])
@@ -277,16 +290,18 @@ export function EngagementDetailSheet({
     let cancelled = false
     void (async () => {
       const supabase = createClient()
-      const [actRes, custRes, attRes] = await Promise.all([
+      const [actRes, custRes, attRes, comRes] = await Promise.all([
         supabase.from("engagement_activity").select("*").eq("engagement_id", row.id).order("created_at", { ascending: false }).limit(100),
         supabase.from("customers").select("bokslut_setup").eq("id", row.customer_id).maybeSingle(),
         supabase.from("engagement_attachments").select("*").eq("engagement_id", row.id).order("created_at", { ascending: false }),
+        supabase.from("engagement_comments").select("*").eq("engagement_id", row.id).order("created_at", { ascending: true }),
       ])
       if (cancelled) return
       setActivity((actRes.data ?? []) as EngagementActivity[])
       const cust = custRes.data as { bokslut_setup: Record<string, ChecklistValue> | null } | null
       setCustomerSetup(cust?.bokslut_setup ?? {})
       setAttachments((attRes.data ?? []) as EngagementAttachment[])
+      setComments((comRes.data ?? []) as EngagementComment[])
     })()
     return () => {
       cancelled = true
@@ -465,6 +480,82 @@ export function EngagementDetailSheet({
     toast.success(t("engagements.detail.attachmentsDeleted", "File removed"))
   }
 
+  // Notify newly @-mentioned consultants in a comment (excludes self).
+  async function notifyMentions(text: string) {
+    if (!row) return
+    const supabase = createClient()
+    const mentionedIds = extractMentionIds(text, consultants).filter((cid) => cid !== user?.id)
+    if (mentionedIds.length === 0) return
+    await supabase.rpc("create_engagement_mention_notifications" as never, {
+      p_engagement_id: row.id,
+      p_recipient_ids: mentionedIds,
+    } as never)
+  }
+
+  async function handlePostComment() {
+    if (!row) return
+    const body = newComment.trim()
+    if (!body) return
+    setPostingComment(true)
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from("engagement_comments")
+      .insert({ engagement_id: row.id, author_id: user?.id ?? null, body } as never)
+      .select("*")
+      .single()
+    setPostingComment(false)
+    if (error || !data) {
+      toast.error(`${t("engagements.detail.comments.error", "Couldn't post comment")}: ${error?.message ?? ""}`)
+      return
+    }
+    setComments((cur) => [...cur, data as EngagementComment])
+    setNewComment("")
+    await notifyMentions(body)
+  }
+
+  function handleStartEdit(c: EngagementComment) {
+    setEditingCommentId(c.id)
+    setEditingBody(c.body)
+  }
+
+  function handleCancelEdit() {
+    setEditingCommentId(null)
+    setEditingBody("")
+  }
+
+  async function handleSaveEdit(c: EngagementComment) {
+    const body = editingBody.trim()
+    if (!body) return
+    setSavingEdit(true)
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from("engagement_comments")
+      .update({ body } as never)
+      .eq("id", c.id)
+      .select("*")
+      .single()
+    setSavingEdit(false)
+    if (error || !data) {
+      toast.error(`${t("engagements.detail.comments.error", "Couldn't save comment")}: ${error?.message ?? ""}`)
+      return
+    }
+    setComments((cur) => cur.map((x) => (x.id === c.id ? (data as EngagementComment) : x)))
+    handleCancelEdit()
+    await notifyMentions(body)
+  }
+
+  async function handleDeleteComment(c: EngagementComment) {
+    setDeletingCommentId(c.id)
+    const supabase = createClient()
+    const { error } = await supabase.from("engagement_comments").delete().eq("id", c.id)
+    setDeletingCommentId(null)
+    if (error) {
+      toast.error(`${t("engagements.detail.comments.error", "Couldn't delete comment")}: ${error.message}`)
+      return
+    }
+    setComments((cur) => cur.filter((x) => x.id !== c.id))
+  }
+
   function renderActivityLine(a: EngagementActivity): string {
     const who = a.actor_id ? userNames[a.actor_id] ?? "—" : "System"
     if (a.type === "created") return `${who} ${t("engagements.activity.created", "created the engagement")}`
@@ -479,8 +570,8 @@ export function EngagementDetailSheet({
 
   return (
     <Sheet open={open} onOpenChange={requestClose}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md">
-        <SheetHeader>
+      <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-3xl">
+        <SheetHeader className="border-b pr-12">
           <SheetTitle>{row.customer_name}</SheetTitle>
           <SheetDescription>
             {row.org_number ? `${row.org_number} · ` : ""}
@@ -489,7 +580,8 @@ export function EngagementDetailSheet({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="flex flex-col gap-4 px-4 pb-6">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <div className="flex flex-col gap-4 px-4 pb-6 pt-4 lg:flex-1 lg:overflow-y-auto lg:border-r">
           <div className="grid grid-cols-1 gap-3">
             <div className="space-y-1.5">
               <Label>{t("engagements.detail.bokslutStatus", "Bokslut status")}</Label>
@@ -712,6 +804,187 @@ export function EngagementDetailSheet({
             <Trash2 className="size-4" />
             {t("engagements.detail.delete", "Delete engagement")}
           </Button>
+        </div>
+
+        {/* Comments — a threaded feed beside the form. Each post shows its
+            author and when it was made; authors can edit/delete their own
+            (admins can delete any). */}
+        <div
+          className={cn(
+            "flex w-full shrink-0 flex-col border-t lg:border-t-0 lg:overflow-hidden",
+            commentsOpen ? "lg:w-96" : "lg:w-12",
+          )}
+        >
+          {!commentsOpen ? (
+            <button
+              type="button"
+              onClick={() => setCommentsOpen(true)}
+              title={t("engagements.detail.comments.show", "Show comments")}
+              className="flex cursor-pointer items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground lg:h-full lg:flex-col lg:gap-3 lg:px-0 lg:py-4"
+            >
+              <MessageSquare className="size-4" />
+              <span className="lg:hidden">
+                {t("engagements.detail.comments.title", "Comments")}
+              </span>
+              {comments.length > 0 ? (
+                <Badge variant="outline" className="text-[11px]">
+                  {comments.length}
+                </Badge>
+              ) : null}
+            </button>
+          ) : (
+          <>
+          <div className="flex items-center gap-2 border-b px-4 py-3">
+            <MessageSquare className="size-4 text-muted-foreground" />
+            <span className="text-sm font-medium">
+              {t("engagements.detail.comments.title", "Comments")}
+            </span>
+            {comments.length > 0 ? (
+              <Badge variant="outline" className="text-[11px]">
+                {comments.length}
+              </Badge>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="ml-auto text-muted-foreground"
+              onClick={() => setCommentsOpen(false)}
+              title={t("engagements.detail.comments.hide", "Collapse comments")}
+            >
+              <ChevronRight className="size-4" />
+              <span className="sr-only">
+                {t("engagements.detail.comments.hide", "Collapse comments")}
+              </span>
+            </Button>
+          </div>
+
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3 lg:min-h-0">
+            {comments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {t("engagements.detail.comments.empty", "No comments yet.")}
+              </p>
+            ) : (
+              comments.map((c) => {
+                const authorName = c.author_id
+                  ? userNames[c.author_id] ??
+                    consultants.find((x) => x.id === c.author_id)?.name ??
+                    "—"
+                  : "—"
+                const canEdit = !!user?.id && c.author_id === user.id
+                const canDelete = canEdit || isAdmin
+                const edited = c.updated_at !== c.created_at
+                const isEditing = editingCommentId === c.id
+                return (
+                  <div key={c.id} className="group flex gap-2.5">
+                    <UserAvatar name={authorName} size="sm" className="mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="truncate text-sm font-medium">{authorName}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {fmtDateTime(c.created_at)}
+                          {edited ? ` · ${t("engagements.detail.comments.edited", "edited")}` : ""}
+                        </span>
+                      </div>
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <MentionTextarea
+                            id={`eng-comment-edit-${c.id}`}
+                            rows={2}
+                            people={consultants}
+                            value={editingBody}
+                            onChange={setEditingBody}
+                          />
+                          <div className="flex gap-2">
+                            <Button
+                              size="xs"
+                              onClick={() => handleSaveEdit(c)}
+                              disabled={savingEdit || !editingBody.trim()}
+                            >
+                              {savingEdit ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : (
+                                <Check className="size-3.5" />
+                              )}
+                              {t("common.save", "Save")}
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={handleCancelEdit}
+                              disabled={savingEdit}
+                            >
+                              <X className="size-3.5" />
+                              {t("common.cancel", "Cancel")}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="whitespace-pre-wrap break-words text-sm text-foreground">
+                            {c.body}
+                          </p>
+                          {canDelete ? (
+                            <div className="flex gap-3 pt-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                              {canEdit ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEdit(c)}
+                                  className="inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                                >
+                                  <Pencil className="size-3" />
+                                  {t("common.edit", "Edit")}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteComment(c)}
+                                disabled={deletingCommentId === c.id}
+                                className="inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-semantic-error"
+                              >
+                                {deletingCommentId === c.id ? (
+                                  <Loader2 className="size-3 animate-spin" />
+                                ) : (
+                                  <Trash2 className="size-3" />
+                                )}
+                                {t("common.delete", "Delete")}
+                              </button>
+                            </div>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+
+          <div className="space-y-2 border-t p-3">
+            <MentionTextarea
+              id="eng-new-comment"
+              rows={2}
+              people={consultants}
+              value={newComment}
+              onChange={setNewComment}
+            />
+            <Button
+              size="sm"
+              className="w-full"
+              onClick={handlePostComment}
+              disabled={postingComment || !newComment.trim()}
+            >
+              {postingComment ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Send className="size-4" />
+              )}
+              {t("engagements.detail.comments.post", "Post comment")}
+            </Button>
+          </div>
+          </>
+          )}
+        </div>
         </div>
       </SheetContent>
 

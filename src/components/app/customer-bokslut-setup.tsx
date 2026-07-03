@@ -214,6 +214,12 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       // Customer save already succeeded; surface the propagation issue only.
     }
     setNeedsSegmentation(false)
+    // Tell the top-bar segmentation alert to refetch — this customer just had
+    // its needs_segmentation flag cleared, so it should drop off that list
+    // without a full page reload.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("saldo:segmentation-updated"))
+    }
     // Mark the just-saved values as the new clean baseline.
     const savedPrice = priceNum != null && Number.isFinite(priceNum) ? fixedMonthlyPrice : ""
     savedRef.current = { setup: { ...setup }, date: saldoavtalDate, price: savedPrice, financialYearManual: financialYearToManual, bokslutRelevant }

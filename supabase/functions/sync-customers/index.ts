@@ -403,6 +403,79 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Duplicate detection: two Fortnox customers with the same org number
+      // (e.g. the company was set up twice in Fortnox) become two separate CRM
+      // customers, splitting invoices/contracts/turnover across them — which
+      // makes reports look empty for the "wrong" twin. We only WARN here: the
+      // durable fix is in Fortnox (merge/remove the duplicate), and the next
+      // sync would recreate anything we deleted, so we never auto-merge.
+      if (jobId) {
+        await updateSyncJob(supabase, jobId, {
+          current_step: "Checking for duplicate customers...",
+          progress: 99,
+        })
+      }
+
+      const customersByOrg = new Map<
+        string,
+        Array<{ id: string; name: string; fortnox_customer_number: string | null }>
+      >()
+      let dupScanOffset = 0
+      const dupScanPageSize = 1000
+      while (true) {
+        const { data: orgRows, error: orgScanError } = await supabase
+          .from("customers")
+          .select("id, name, org_number, fortnox_customer_number")
+          .not("org_number", "is", null)
+          .neq("org_number", "")
+          .order("id", { ascending: true })
+          .range(dupScanOffset, dupScanOffset + dupScanPageSize - 1)
+
+        if (orgScanError) {
+          console.error("Duplicate scan failed:", orgScanError.message)
+          break
+        }
+
+        const rows = (orgRows ?? []) as Array<{
+          id: string
+          name: string
+          org_number: string | null
+          fortnox_customer_number: string | null
+        }>
+        if (rows.length === 0) break
+
+        for (const row of rows) {
+          // Normalise to digits only so "556123-4567" and "5561234567" match.
+          const key = (row.org_number ?? "").replace(/\D/g, "")
+          if (!key) continue
+          const list = customersByOrg.get(key) ?? []
+          list.push({
+            id: row.id,
+            name: row.name,
+            fortnox_customer_number: row.fortnox_customer_number,
+          })
+          customersByOrg.set(key, list)
+        }
+
+        if (rows.length < dupScanPageSize) break
+        dupScanOffset += dupScanPageSize
+      }
+
+      const duplicateCustomers: Array<{
+        org_number: string
+        customers: Array<{ id: string; name: string; fortnox_customer_number: string | null }>
+      }> = []
+      for (const [org, list] of customersByOrg) {
+        if (list.length > 1) {
+          duplicateCustomers.push({ org_number: org, customers: list })
+          console.warn(
+            `Duplicate customers for org ${org}: ${list
+              .map((c) => `${c.name} (#${c.fortnox_customer_number ?? "—"})`)
+              .join(", ")} — merge in Fortnox.`,
+          )
+        }
+      }
+
       await supabase
         .from("fortnox_connection")
         .update({
@@ -444,6 +517,7 @@ Deno.serve(async (req) => {
             stale_invoices_removed: removedInvoices,
             stale_time_reports_removed: removedTimeReports,
             stale_contract_accruals_removed: removedContractAccruals,
+            duplicate_customers: duplicateCustomers,
           },
           batch_phase: null,
           dispatch_lock: false,

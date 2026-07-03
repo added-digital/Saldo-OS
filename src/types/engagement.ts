@@ -87,6 +87,15 @@ export interface EngagementActivity {
   created_at: string
 }
 
+export interface EngagementComment {
+  id: string
+  engagement_id: string
+  author_id: string | null
+  body: string
+  created_at: string
+  updated_at: string
+}
+
 export interface EngagementAttachment {
   id: string
   engagement_id: string
