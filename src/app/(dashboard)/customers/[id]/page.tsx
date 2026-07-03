@@ -6,7 +6,7 @@ import { use } from "react"
 import {
   ArrowLeft,
   Building2,
-  RefreshCw,
+  Plug,
   CircleCheck,
   Mail,
   Phone,
@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
+import { useUser } from "@/hooks/use-user"
 import {
   EditContactDialog,
   type ContactFields,
@@ -91,10 +92,11 @@ export default function CustomerDetailPage({
   >({})
   const [segments, setSegments] = React.useState<Segment[]>([])
   const [loading, setLoading] = React.useState(true)
-  const [syncingCustomer, setSyncingCustomer] = React.useState(false)
+  const [connectingSie, setConnectingSie] = React.useState(false)
+  const { isAdmin } = useUser()
   // Whether this customer has an active Fortnox SIE connection. null while
-  // loading. When connected, SIE keeps the customer fresh automatically, so
-  // the manual "Sync Customer" button is shown as "Connected" and disabled.
+  // loading. Drives the admin-only header button: "Connect" (starts the SIE
+  // OAuth flow) when not connected, "Connected" (disabled) when it is.
   const [sieConnected, setSieConnected] = React.useState<boolean | null>(null)
 
   const [dialogOpen, setDialogOpen] = React.useState(false)
@@ -603,34 +605,15 @@ export default function CustomerDetailPage({
     toast.success("Segment removed")
   }
 
-  async function handleSyncCustomer() {
-    setSyncingCustomer(true)
-
-    try {
-      const response = await fetch("/api/fortnox/sync-customer", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ customerId: id }),
-      })
-
-      const result = (await response.json().catch(() => ({}))) as {
-        error?: string
-        message?: string
-      }
-
-      if (!response.ok) {
-        toast.error(result.message ?? result.error ?? "Failed to sync customer")
-        setSyncingCustomer(false)
-        return
-      }
-
-      toast.success(result.message ?? "Customer synced")
-      await fetchData()
-    } finally {
-      setSyncingCustomer(false)
-    }
+  function handleConnectSie() {
+    // Shortcut into the SIE settings page with this customer pre-searched, so
+    // the admin lands with the row already filtered in and can hit Connect.
+    // Prefer the Fortnox customer number (unique); fall back to the name.
+    setConnectingSie(true)
+    const term = customer?.fortnox_customer_number ?? customer?.name ?? ""
+    window.location.assign(
+      `/settings/sie?search=${encodeURIComponent(term)}`,
+    )
   }
 
   if (loading) {
@@ -668,28 +651,32 @@ export default function CustomerDetailPage({
         <PageHeader title={customer.name}>
           <StatusBadge status={customer.status} />
         </PageHeader>
-        <div className="ml-auto">
-          {sieConnected ? (
-            // Connected to Fortnox SIE → synced automatically; no manual sync.
-            <Button
-              variant="outline"
-              disabled
-              title="This customer is connected to Fortnox SIE and syncs automatically."
-            >
-              <CircleCheck className="size-4 text-semantic-success" />
-              Connected
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              onClick={handleSyncCustomer}
-              disabled={syncingCustomer || sieConnected === null}
-            >
-              <RefreshCw className={syncingCustomer ? "size-4 animate-spin" : "size-4"} />
-              {syncingCustomer ? "Syncing..." : "Sync Customer"}
-            </Button>
-          )}
-        </div>
+        {/* Admin-only Fortnox SIE connection control. Non-admins see nothing. */}
+        {isAdmin && (
+          <div className="ml-auto">
+            {sieConnected ? (
+              // Already connected to Fortnox SIE → syncs automatically.
+              <Button
+                variant="outline"
+                disabled
+                title="This customer is connected to Fortnox SIE and syncs automatically."
+              >
+                <CircleCheck className="size-4 text-semantic-success" />
+                Connected
+              </Button>
+            ) : (
+              // Not connected → shortcut into the per-customer SIE OAuth flow.
+              <Button
+                variant="outline"
+                onClick={handleConnectSie}
+                disabled={connectingSie || sieConnected === null}
+              >
+                <Plug className="size-4" />
+                {connectingSie ? "Connecting..." : "Connect SIE"}
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">

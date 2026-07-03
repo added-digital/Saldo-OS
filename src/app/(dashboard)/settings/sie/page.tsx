@@ -116,6 +116,14 @@ export default function SettingsSiePage() {
     string | null
   >(null)
 
+  // Prefill the search box from a ?search= param (e.g. when arriving from a
+  // customer card's "Connect SIE" shortcut). Read from window.location rather
+  // than useSearchParams to avoid needing a Suspense boundary on this page.
+  React.useEffect(() => {
+    const term = new URLSearchParams(window.location.search).get("search")
+    if (term) setSearchQuery(term)
+  }, [])
+
   const loadRows = React.useCallback(async () => {
     const supabase = createClient()
 
