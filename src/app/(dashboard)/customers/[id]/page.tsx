@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Building2,
   RefreshCw,
+  CircleCheck,
   Mail,
   Phone,
   MapPin,
@@ -91,6 +92,10 @@ export default function CustomerDetailPage({
   const [segments, setSegments] = React.useState<Segment[]>([])
   const [loading, setLoading] = React.useState(true)
   const [syncingCustomer, setSyncingCustomer] = React.useState(false)
+  // Whether this customer has an active Fortnox SIE connection. null while
+  // loading. When connected, SIE keeps the customer fresh automatically, so
+  // the manual "Sync Customer" button is shown as "Connected" and disabled.
+  const [sieConnected, setSieConnected] = React.useState<boolean | null>(null)
 
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editingContact, setEditingContact] =
@@ -112,6 +117,14 @@ export default function CustomerDetailPage({
 
     const c = customerData as unknown as Customer | null
     setCustomer(c)
+
+    // Active SIE connection? Drives the "Sync Customer" vs "Connected" button.
+    const { count: sieCount } = await supabase
+      .from("sie_connections")
+      .select("id", { count: "exact", head: true })
+      .eq("customer_id", id)
+      .eq("connection_status", "active")
+    setSieConnected((sieCount ?? 0) > 0)
 
     if (c?.fortnox_cost_center) {
       const { data: managerData } = await supabase
@@ -656,10 +669,26 @@ export default function CustomerDetailPage({
           <StatusBadge status={customer.status} />
         </PageHeader>
         <div className="ml-auto">
-          <Button variant="outline" onClick={handleSyncCustomer} disabled={syncingCustomer}>
-            <RefreshCw className={syncingCustomer ? "size-4 animate-spin" : "size-4"} />
-            {syncingCustomer ? "Syncing..." : "Sync Customer"}
-          </Button>
+          {sieConnected ? (
+            // Connected to Fortnox SIE → synced automatically; no manual sync.
+            <Button
+              variant="outline"
+              disabled
+              title="This customer is connected to Fortnox SIE and syncs automatically."
+            >
+              <CircleCheck className="size-4 text-semantic-success" />
+              Connected
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={handleSyncCustomer}
+              disabled={syncingCustomer || sieConnected === null}
+            >
+              <RefreshCw className={syncingCustomer ? "size-4 animate-spin" : "size-4"} />
+              {syncingCustomer ? "Syncing..." : "Sync Customer"}
+            </Button>
+          )}
         </div>
       </div>
 
