@@ -19,8 +19,15 @@ import type {
   BolagsverketLookupResult,
 } from "./types"
 
+// Confirmed base + paths (from the Bolagsverket API collection):
+//   Base:  https://gw.api.bolagsverket.se/vardefulla-datamangder/v1
+//   GET  /isalive                 — health / token check
+//   POST /organisationer          — company base data (org.nr in body)
+//   POST /dokumentlista           — filed annual reports (org.nr in body)
+//   GET  /dokument/:dokumentId    — download one annual report (unused here)
 const API_BASE =
-  process.env.BOLAGSVERKET_API_BASE ?? "https://api.bolagsverket.se"
+  process.env.BOLAGSVERKET_API_BASE ??
+  "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1"
 
 /** Strip everything but digits so "556012-5790" and "5560125790" both work. */
 export function normalizeOrgNumber(orgNumber: string): string {
@@ -31,17 +38,28 @@ export function normalizeOrgNumber(orgNumber: string): string {
 // Live client
 // ---------------------------------------------------------------------
 export class LiveBolagsverketClient implements BolagsverketClient {
-  private async request<T>(path: string): Promise<{ status: number; body: T | null }> {
+  /** Low-level request. `body` (if given) is JSON-POSTed; otherwise GET. */
+  private async request<T>(
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: T | null }> {
     const token = await getAccessToken()
     const response = await fetch(`${API_BASE}${path}`, {
+      method: body === undefined ? "GET" : "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
+      body: body === undefined ? undefined : JSON.stringify(body),
     })
 
-    if (response.status === 404) {
-      return { status: 404, body: null }
+    if (response.status === 404 || response.status === 400) {
+      // 404 = unknown org. 400 = Bolagsverket rejected the identifier, e.g. a
+      // personnummer / sole trader (enskild firma) that isn't a company
+      // ("personnummer anges med 12 siffror"). Neither has company data for us,
+      // so treat both as a soft "no result" rather than a hard error.
+      return { status: response.status, body: null }
     }
     if (response.status === 429) {
       throw new Error("Rate limited by Bolagsverket (60/min). Retry after backoff.")
@@ -54,58 +72,139 @@ export class LiveBolagsverketClient implements BolagsverketClient {
     return { status: response.status, body: (await response.json()) as T }
   }
 
+  /**
+   * GET /isalive — health probe. Note: under the granted scope this endpoint
+   * returns 403 ("scope validation failed") even though /organisationer works,
+   * so treat a throw/non-2xx as "unknown", not a hard outage. Not used in the
+   * main flow.
+   */
+  async isAlive(): Promise<boolean> {
+    try {
+      const res = await this.request<unknown>("/isalive")
+      return res.status >= 200 && res.status < 300
+    } catch {
+      return false
+    }
+  }
+
   async lookupByOrgNumber(orgNumber: string): Promise<BolagsverketLookupResult> {
     const org = normalizeOrgNumber(orgNumber)
 
-    // TODO(creds): confirm exact paths against the devportal OpenAPI for the
-    // "Värdefulla Datamängder" API (ff8f9a91-1fdd-4705-8836-c1906581162f).
-    // Expected shape: one call for company base data, one for the document
-    // list (annual reports per accounting period). Endpoints below are
-    // placeholders to be verified — not yet live-tested.
-    const base = await this.request<Record<string, unknown>>(
-      `/vardefulla-datamangder/v1/organisationer/${org}`,
+    // Both endpoints take the org number in the POST body under
+    // `identitetsbeteckning` (confirmed against the live API).
+    const base = await this.request<OrganisationerResponse>(
+      "/organisationer",
+      requestBody(org),
     )
-    if (base.status === 404 || base.body === null) {
+    // Unknown org → 404, or 200 with an empty `organisationer` array.
+    if (base.status === 404 || !base.body?.organisationer?.length) {
       return { ok: false, reason: "not_found" }
     }
 
-    const documents = await this.request<Record<string, unknown>>(
-      `/vardefulla-datamangder/v1/organisationer/${org}/dokument`,
+    const documents = await this.request<DokumentlistaResponse>(
+      "/dokumentlista",
+      requestBody(org),
     )
 
-    const company = mapCompany(org, base.body, documents.body ?? {})
+    const company = mapCompany(org, base.body, documents.body ?? { dokument: [] })
     return { ok: true, company }
   }
 }
 
-/**
- * Map raw Bolagsverket payloads to our normalised BolagsverketCompany.
- * Field paths are TODO until we see a real response; kept isolated here so
- * confirming them later is a one-file change.
- */
+/** Request body for /organisationer and /dokumentlista (org.nr goes here). */
+function requestBody(org: string): Record<string, unknown> {
+  return { identitetsbeteckning: org }
+}
+
+// ---------------------------------------------------------------------
+// Raw API response shapes (only the fields we read)
+// ---------------------------------------------------------------------
+interface RawOrganisation {
+  organisationsidentitet?: { identitetsbeteckning?: string }
+  organisationsnamn?: {
+    organisationsnamnLista?: Array<{
+      namn?: string
+      organisationsnamntyp?: { kod?: string }
+    }>
+  }
+  organisationsform?: { kod?: string; klartext?: string }
+  juridiskForm?: { kod?: string; klartext?: string }
+  postadressOrganisation?: { postadress?: { postort?: string } }
+  verksamOrganisation?: { kod?: string }
+  avregistreradOrganisation?: unknown
+  organisationsdatum?: { registreringsdatum?: string }
+}
+interface OrganisationerResponse {
+  organisationer?: RawOrganisation[]
+}
+
+interface RawDokument {
+  dokumentId?: string
+  rapporteringsperiodFrom?: string
+  rapporteringsperiodTom?: string
+  registreringstidpunkt?: string
+}
+interface DokumentlistaResponse {
+  dokument?: RawDokument[]
+}
+
+/** Map the raw /organisationer + /dokumentlista payloads to our normalised shape. */
 function mapCompany(
   org: string,
-  base: Record<string, unknown>,
-  documents: Record<string, unknown>,
+  base: OrganisationerResponse,
+  documents: DokumentlistaResponse,
 ): BolagsverketCompany {
-  // TODO(creds): map real fields once a sample payload is available.
+  const o = base.organisationer?.[0]
+
+  // Prefer the registered company name (FORETAGSNAMN); fall back to the first.
+  const namnLista = o?.organisationsnamn?.organisationsnamnLista ?? []
+  const nameEntry =
+    namnLista.find((n) => n.organisationsnamntyp?.kod === "FORETAGSNAMN") ??
+    namnLista[0]
+
+  // Active unless explicitly deregistered; verksamOrganisation.kod "JA" = yes.
+  const deregistered = o?.avregistreradOrganisation != null
+  const status = deregistered
+    ? "avregistrerad"
+    : o?.verksamOrganisation?.kod === "JA"
+      ? "aktiv"
+      : (o?.verksamOrganisation?.kod ?? null)
+
   return {
-    orgNumber: org,
-    name: null,
-    legalForm: null,
-    registeredOffice: null,
-    status: null,
+    // Canonical org number as Bolagsverket holds it (source of truth).
+    orgNumber: o?.organisationsidentitet?.identitetsbeteckning ?? org,
+    name: nameEntry?.namn ?? null,
+    legalForm: o?.organisationsform?.klartext ?? o?.juridiskForm?.klartext ?? null,
+    // No dedicated "säte" field in this dataset; postort is the best proxy.
+    registeredOffice: o?.postadressOrganisation?.postadress?.postort ?? null,
+    status,
     financialYears: mapFinancialYears(documents),
-    raw: { base, documents },
+    raw: { organisation: o ?? null, dokumentlista: documents.dokument ?? [] },
   }
 }
 
+/**
+ * Derive räkenskapsår (accounting periods) from the filed annual reports.
+ * Each document in /dokumentlista is a registered annual report, so its
+ * presence means a report IS registered for that period. Bolagsverket only
+ * provides the period END (`rapporteringsperiodTom`), matching how the app
+ * already stores räkenskapsår (end-only). Newest first.
+ */
 function mapFinancialYears(
-  _documents: Record<string, unknown>,
+  documents: DokumentlistaResponse,
 ): BolagsverketCompany["financialYears"] {
-  // TODO(creds): derive accounting periods (räkenskapsperiod) from the
-  // document list. Newest first.
-  return []
+  return (documents.dokument ?? [])
+    .map((d) =>
+      d.rapporteringsperiodTom
+        ? {
+            from: d.rapporteringsperiodFrom ?? null,
+            to: d.rapporteringsperiodTom,
+            annualReportRegistered: true,
+          }
+        : null,
+    )
+    .filter((x): x is BolagsverketCompany["financialYears"][number] => x !== null)
+    .sort((a, b) => (a.to < b.to ? 1 : a.to > b.to ? -1 : 0))
 }
 
 // ---------------------------------------------------------------------
@@ -126,8 +225,9 @@ export class StubBolagsverketClient implements BolagsverketClient {
         registeredOffice: "Stockholm",
         status: "aktivt",
         financialYears: [
-          { from: "2024-07-01", to: "2025-06-30", annualReportRegistered: true },
-          { from: "2023-07-01", to: "2024-06-30", annualReportRegistered: true },
+          // Bolagsverket provides only the period END date (like the real API).
+          { from: null, to: "2025-12-31", annualReportRegistered: true },
+          { from: null, to: "2024-12-31", annualReportRegistered: true },
         ],
         raw: { stub: true, orgNumber: org },
       },

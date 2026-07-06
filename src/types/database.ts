@@ -80,6 +80,24 @@ export interface Customer {
   bolagsverket_company_data: Record<string, unknown> | null
   bolagsverket_board_data: Record<string, unknown> | null
   bolagsverket_updated_at: string | null
+  /** Canonical org number from Bolagsverket (reference; see enrich.ts). */
+  org_number_bv?: string | null
+  /** Outcome of the last Bolagsverket lookup (see migration 00092). */
+  bolagsverket_match_status?:
+    | "confirmed"
+    | "no_rakenskapsar"
+    | "name_mismatch"
+    | "not_found"
+    | "no_orgnr"
+    | null
+  /** True when Bolagsverket returned a different company — needs review. */
+  bolagsverket_name_mismatch?: boolean
+  /** Räkenskapsår from Bolagsverket (_to = latest filed period end; _from null). */
+  financial_year_from_bv?: string | null
+  financial_year_to_bv?: string | null
+  /** Effective räkenskapsår (generated: COALESCE bv → sie → manual). Read-only. */
+  financial_year_from?: string | null
+  financial_year_to?: string | null
   fortnox_raw: Record<string, unknown> | null
   last_synced_at: string | null
   /** Durable Bokslut tags (permissions, systems, agreements), keyed by field. */

@@ -37,6 +37,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/app/confirm-dialog"
 import { SieKpisCard, SieSyncCard } from "@/components/app/sie-sync-section"
+import { BolagsverketSyncCard } from "@/components/app/bolagsverket-sync-section"
 import { formatDateTime } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { toast } from "sonner"
@@ -314,6 +315,10 @@ export default function SyncPage() {
             it just walks the already-stored ledger and rewrites sie_kpis.
             Surfaced on /key-metrics. */}
         <SieKpisCard />
+        {/* Bolagsverket enrichment — browser-driven smart sweep of active
+            customers that are new or >30 days stale. Reuses the per-customer
+            refresh route; admin-only (card hides itself for non-admins). */}
+        <BolagsverketSyncCard />
       </div>
 
       <Card>

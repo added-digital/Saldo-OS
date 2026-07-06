@@ -8,6 +8,8 @@ import {
   Building2,
   Plug,
   CircleCheck,
+  RotateCw,
+  AlertTriangle,
   Mail,
   Phone,
   MapPin,
@@ -23,6 +25,7 @@ import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/hooks/use-user"
+import { useTranslation } from "@/hooks/use-translation"
 import {
   EditContactDialog,
   type ContactFields,
@@ -93,7 +96,9 @@ export default function CustomerDetailPage({
   const [segments, setSegments] = React.useState<Segment[]>([])
   const [loading, setLoading] = React.useState(true)
   const [connectingSie, setConnectingSie] = React.useState(false)
+  const [refreshingBv, setRefreshingBv] = React.useState(false)
   const { isAdmin } = useUser()
+  const { t } = useTranslation()
   // Whether this customer has an active Fortnox SIE connection. null while
   // loading. Drives the admin-only header button: "Connect" (starts the SIE
   // OAuth flow) when not connected, "Connected" (disabled) when it is.
@@ -616,6 +621,55 @@ export default function CustomerDetailPage({
     )
   }
 
+  async function handleRefreshBolagsverket() {
+    if (refreshingBv) return
+    setRefreshingBv(true)
+    try {
+      const response = await fetch("/api/bolagsverket/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId: id }),
+      })
+      const data = (await response.json().catch(() => ({}))) as {
+        ok?: boolean
+        result?: { status?: string }
+        error?: string
+        message?: string
+      }
+      if (!response.ok || !data.ok) {
+        toast.error(
+          data.message ??
+            data.error ??
+            t("customers.detail.bvFailed", "Bolagsverket refresh failed"),
+        )
+        return
+      }
+      const status = data.result?.status
+      if (status === "name_mismatch") {
+        toast.warning(
+          t("customers.detail.bvMismatch", "Bolagsverket found a different company — check the org number."),
+        )
+      } else if (status === "not_found") {
+        toast.warning(
+          t("customers.detail.bvNotFound", "Not found in Bolagsverket (individual, foreign, or wrong org number)."),
+        )
+      } else if (status === "no_orgnr") {
+        toast.warning(
+          t("customers.detail.bvNoOrgNr", "No org number on this customer to look up."),
+        )
+      } else if (status === "no_rakenskapsar") {
+        toast.success(
+          t("customers.detail.bvUpdatedNoReport", "Updated from Bolagsverket (no filed annual report yet)."),
+        )
+      } else {
+        toast.success(t("customers.detail.bvUpdated", "Updated from Bolagsverket."))
+      }
+      await fetchData()
+    } finally {
+      setRefreshingBv(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -651,18 +705,42 @@ export default function CustomerDetailPage({
         <PageHeader title={customer.name}>
           <StatusBadge status={customer.status} />
         </PageHeader>
-        {/* Admin-only Fortnox SIE connection control. Non-admins see nothing. */}
+        {/* Admin-only controls. Non-admins see nothing. */}
         {isAdmin && (
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {customer.bolagsverket_name_mismatch && (
+              <Badge
+                variant="outline"
+                className="border-semantic-warning/40 bg-semantic-warning/10 text-semantic-warning"
+                title={t("customers.detail.orgMismatchTooltip", "Bolagsverket returned a different company for this org number. Verify the org number is correct.")}
+              >
+                <AlertTriangle className="size-3" />
+                {t("customers.detail.orgMismatch", "Org number mismatch")}
+              </Badge>
+            )}
+
+            {/* Refresh this customer's org number + räkenskapsår from Bolagsverket. */}
+            <Button
+              variant="outline"
+              onClick={handleRefreshBolagsverket}
+              disabled={refreshingBv}
+              title={t("customers.detail.refreshBolagsverketTooltip", "Refresh org number and räkenskapsår from Bolagsverket")}
+            >
+              <RotateCw className={refreshingBv ? "size-4 animate-spin" : "size-4"} />
+              {refreshingBv
+                ? t("customers.detail.refreshing", "Refreshing…")
+                : t("customers.detail.refreshBolagsverket", "Refresh from Bolagsverket")}
+            </Button>
+
             {sieConnected ? (
               // Already connected to Fortnox SIE → syncs automatically.
               <Button
                 variant="outline"
                 disabled
-                title="This customer is connected to Fortnox SIE and syncs automatically."
+                title={t("customers.detail.sieConnectedTooltip", "This customer is connected to Fortnox SIE and syncs automatically.")}
               >
                 <CircleCheck className="size-4 text-semantic-success" />
-                Connected
+                {t("customers.detail.sieConnected", "SIE connected")}
               </Button>
             ) : (
               // Not connected → shortcut into the per-customer SIE OAuth flow.
@@ -672,7 +750,9 @@ export default function CustomerDetailPage({
                 disabled={connectingSie || sieConnected === null}
               >
                 <Plug className="size-4" />
-                {connectingSie ? "Connecting..." : "Connect SIE"}
+                {connectingSie
+                  ? t("customers.detail.connecting", "Connecting…")
+                  : t("customers.detail.connectSie", "Connect SIE")}
               </Button>
             )}
           </div>

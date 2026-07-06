@@ -43,3 +43,7 @@ next-env.d.ts
 # local utility scripts
 /scripts/
 .playwright-mcp/
+
+# Postman local-workspace files (not part of the app)
+.postman/
+postman/

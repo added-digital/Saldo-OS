@@ -81,8 +81,9 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
   const [bokslutRelevant, setBokslutRelevant] = React.useState(true)
   const [saldoavtalDate, setSaldoavtalDate] = React.useState<string>("")
   const [fixedMonthlyPrice, setFixedMonthlyPrice] = React.useState<string>("")
-  // Räkenskapsår end: _sie is read-only (sync-owned, authoritative); _manual is
-  // editable only when there's no SIE value.
+  // Räkenskapsår end sources, in priority order: _bv (Bolagsverket) and _sie
+  // are both read-only; _manual is editable only when neither is present.
+  const [financialYearToBv, setFinancialYearToBv] = React.useState<string | null>(null)
   const [financialYearToSie, setFinancialYearToSie] = React.useState<string | null>(null)
   const [financialYearToManual, setFinancialYearToManual] = React.useState<string>("")
   const [loading, setLoading] = React.useState(true)
@@ -113,7 +114,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       const supabase = createClient()
       const [cfgRes, custRes] = await Promise.all([
         supabase.from("engagement_config").select("checklist_fields").eq("id", 1).maybeSingle(),
-        supabase.from("customers").select("bokslut_setup, needs_segmentation, bokslut_relevant, saldoavtal_date, fixed_monthly_price, financial_year_to_sie, financial_year_to_manual").eq("id", customerId).maybeSingle(),
+        supabase.from("customers").select("bokslut_setup, needs_segmentation, bokslut_relevant, saldoavtal_date, fixed_monthly_price, financial_year_to_bv, financial_year_to_sie, financial_year_to_manual").eq("id", customerId).maybeSingle(),
       ])
       if (cancelled) return
       const cfg = cfgRes.data as { checklist_fields: EngagementChecklistField[] | null } | null
@@ -124,6 +125,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
         bokslut_relevant: boolean | null
         saldoavtal_date: string | null
         fixed_monthly_price: number | null
+        financial_year_to_bv: string | null
         financial_year_to_sie: string | null
         financial_year_to_manual: string | null
       } | null
@@ -138,6 +140,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
       setBokslutRelevant(loadedRelevant)
       setSaldoavtalDate(loadedDate)
       setFixedMonthlyPrice(loadedPrice)
+      setFinancialYearToBv(cust?.financial_year_to_bv ?? null)
       setFinancialYearToSie(cust?.financial_year_to_sie ?? null)
       setFinancialYearToManual(loadedFyManual)
       setSnapshot(serializeSetup(loadedSetup, loadedDate, loadedPrice, loadedFyManual, loadedRelevant))
@@ -319,15 +322,19 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
           <div className="flex items-center justify-between gap-2">
             <Label htmlFor="financial-year-end">{t("customers.bokslut.financialYear", "Financial year-end")}</Label>
             <Badge variant="outline" className="text-[11px]">
-              {financialYearToSie
-                ? t("customers.bokslut.financialYearFromSie", "From SIE")
-                : t("customers.bokslut.financialYearManual", "Manual")}
+              {financialYearToBv
+                ? t("customers.bokslut.financialYearFromBolagsverket", "From Bolagsverket")
+                : financialYearToSie
+                  ? t("customers.bokslut.financialYearFromSie", "From SIE")
+                  : t("customers.bokslut.financialYearManual", "Manual")}
             </Badge>
           </div>
-          {financialYearToSie ? (
-            // SIE-synced → read-only, shown as the recurring month-day pattern.
+          {financialYearToBv || financialYearToSie ? (
+            // Bolagsverket (preferred) or SIE → read-only, shown as the
+            // recurring month-day pattern. Precedence matches the DB:
+            // Bolagsverket → SIE → manual.
             <div className="flex h-9 w-full items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
-              {formatYearEnd(financialYearToSie)}
+              {formatYearEnd(financialYearToBv ?? financialYearToSie!)}
             </div>
           ) : (
             (() => {
@@ -385,7 +392,7 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
             })()
           )}
           <p className="text-xs text-muted-foreground">
-            {t("customers.bokslut.financialYearHint", "The recurring year-end. Synced from SIE when connected; otherwise enter it manually.")}
+            {t("customers.bokslut.financialYearHint", "The recurring year-end. From Bolagsverket when available, else SIE when connected; otherwise enter it manually.")}
           </p>
         </div>
 
