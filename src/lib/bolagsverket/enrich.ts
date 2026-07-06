@@ -35,27 +35,45 @@ export interface EnrichmentResult {
 }
 
 // --- name matching ---------------------------------------------------
-// Loose, and deliberately errs toward flagging: a false "mismatch" just asks a
-// human to glance, whereas a false "match" could silently trust a wrong org.nr.
+// Token-based and ORDER-INDEPENDENT so "TL Bergstedts fond" matches
+// "BERGSTEDTS FOND, T L". We drop legal-form words and single letters
+// (initials), then require a strong overlap of the remaining significant
+// words. Crucially, if EITHER name has no comparable tokens (e.g. Bolagsverket
+// returned no company name for a foundation), we do NOT flag — a blank name is
+// not evidence of a wrong org number.
 
-function normalizeName(n: string | null | undefined): string {
+// Legal forms + filler that shouldn't drive a match/mismatch decision.
+const STOPWORDS = new Set([
+  "ab", "aktiebolag", "hb", "kb", "kommanditbolag", "ekonomisk", "förening",
+  "ek", "för", "i", "konkurs", "the", "och",
+])
+
+function nameTokens(n: string | null | undefined): string[] {
   return (n ?? "")
     .toLowerCase()
-    .replace(/\b(ab|aktiebolag|hb|kb|ekonomisk förening|ek för|i konkurs)\b/g, "")
-    .replace(/[^a-z0-9åäö]/g, "")
-    .trim()
+    .replace(/[^a-z0-9åäö\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 2 && !STOPWORDS.has(t))
 }
 
 export function namesMatch(
   a: string | null | undefined,
   b: string | null | undefined,
 ): boolean {
-  const na = normalizeName(a)
-  const nb = normalizeName(b)
-  if (!na || !nb) return false
-  if (na === nb) return true
-  const [short, long] = na.length <= nb.length ? [na, nb] : [nb, na]
-  return short.length >= 4 && long.includes(short)
+  const ta = nameTokens(a)
+  const tb = nameTokens(b)
+  // Can't compare (one side blank) → don't flag.
+  if (ta.length === 0 || tb.length === 0) return true
+
+  const setA = new Set(ta)
+  const setB = new Set(tb)
+  const [small, large] = setA.size <= setB.size ? [setA, setB] : [setB, setA]
+  let overlap = 0
+  for (const tok of small) if (large.has(tok)) overlap += 1
+  // Match when at least 60% of the shorter name's significant words appear in
+  // the other — enough for word-order/abbreviation differences, but "TG3 Tech"
+  // vs "Fastighets Stentulpanen Stockholm" (0% overlap) still flags.
+  return overlap / small.size >= 0.6
 }
 
 // --- writer ----------------------------------------------------------

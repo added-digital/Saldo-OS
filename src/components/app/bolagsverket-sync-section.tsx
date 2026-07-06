@@ -47,7 +47,10 @@ type Tally = {
 
 function staleFilter() {
   const cutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString()
-  return `bolagsverket_updated_at.is.null,bolagsverket_updated_at.lt.${cutoff}`
+  // Never enriched, OR last checked > 30 days ago, OR currently flagged as a
+  // mismatch (so re-running re-evaluates flagged customers and clears any that
+  // now match — e.g. after a matching-logic fix or an org-number correction).
+  return `bolagsverket_updated_at.is.null,bolagsverket_updated_at.lt.${cutoff},bolagsverket_name_mismatch.is.true`
 }
 
 export function BolagsverketSyncCard() {
@@ -172,7 +175,7 @@ export function BolagsverketSyncCard() {
       ? t("settings.sync.bolagsverket.upToDate", "All active customers are up to date.")
       : t(
           "settings.sync.bolagsverket.description",
-          "Enrich new and out-of-date active customers' org number and räkenskapsår from Bolagsverket.",
+          "Updates org number and räkenskapsår from Bolagsverket for active customers that are new or haven't been checked in 30 days.",
         )
 
   const buttonLabel = running
