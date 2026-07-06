@@ -192,6 +192,10 @@ const dictionaries = {
     "settings.sync.bolagsverket.description": "Enrich new and out-of-date active customers' org number and räkenskapsår from Bolagsverket.",
     "settings.sync.bolagsverket.upToDate": "All active customers are up to date.",
     "settings.sync.bolagsverket.runningHint": "Keep this tab open until it finishes. You can re-run it anytime.",
+    "settings.sync.bolagsverketReview.title": "Bolagsverket — needs review",
+    "settings.sync.bolagsverketReview.description": "Bolagsverket returned a different company for these org numbers. Their data was left unchanged — verify the org number on each card.",
+    "settings.sync.bolagsverketReview.ours": "Ours",
+    "settings.sync.bolagsverketReview.bolagsverket": "Bolagsverket",
     "settings.sync.sie.title": "SIE Bookkeeping",
     "settings.sync.sie.description":
       "Sync general-ledger SIE exports for connected customers from their Fortnox tenants.",
@@ -1259,6 +1263,10 @@ const dictionaries = {
     "settings.sync.bolagsverket.description": "Berika nya och inaktuella aktiva kunders organisationsnummer och räkenskapsår från Bolagsverket.",
     "settings.sync.bolagsverket.upToDate": "Alla aktiva kunder är uppdaterade.",
     "settings.sync.bolagsverket.runningHint": "Håll fliken öppen tills den är klar. Du kan köra den igen när som helst.",
+    "settings.sync.bolagsverketReview.title": "Bolagsverket — behöver granskas",
+    "settings.sync.bolagsverketReview.description": "Bolagsverket returnerade ett annat företag för dessa organisationsnummer. Deras data lämnades oförändrad — kontrollera organisationsnumret på varje kort.",
+    "settings.sync.bolagsverketReview.ours": "Vårt",
+    "settings.sync.bolagsverketReview.bolagsverket": "Bolagsverket",
     "settings.sync.sie.title": "SIE-bokföring",
     "settings.sync.sie.description":
       "Synka SIE-utdrag (huvudbok) för anslutna kunders Fortnox-konton.",

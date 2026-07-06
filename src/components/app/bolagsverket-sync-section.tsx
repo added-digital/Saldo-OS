@@ -1,12 +1,19 @@
 "use client"
 
 import * as React from "react"
-import { Building2, Loader2, Play } from "lucide-react"
+import Link from "next/link"
+import { AlertTriangle, Building2, Loader2, Play } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
@@ -207,6 +214,115 @@ export function BolagsverketSyncCard() {
             {t("settings.sync.bolagsverket.runningHint", "Keep this tab open until it finishes. You can re-run it anytime.")}
           </p>
         )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Needs-review list — customers Bolagsverket flagged as a name mismatch
+// ---------------------------------------------------------------------
+
+interface ReviewRow {
+  id: string
+  name: string | null
+  org_number: string | null
+  org_number_bv: string | null
+  bolagsverket_company_data: Record<string, unknown> | null
+}
+
+// Dig the registered company name out of the stored raw payload so the admin
+// can see WHICH company that org number actually belongs to.
+interface RawCompanyData {
+  organisation?: {
+    organisationsnamn?: {
+      organisationsnamnLista?: Array<{
+        namn?: string
+        organisationsnamntyp?: { kod?: string }
+      }>
+    }
+  }
+}
+function bvNameFromRaw(raw: Record<string, unknown> | null): string | null {
+  const data = raw as RawCompanyData | null
+  const list = data?.organisation?.organisationsnamn?.organisationsnamnLista ?? []
+  const entry =
+    list.find((n) => n.organisationsnamntyp?.kod === "FORETAGSNAMN") ?? list[0]
+  return entry?.namn ?? null
+}
+
+/**
+ * Lists active customers where Bolagsverket returned a DIFFERENT company for
+ * the stored org number (bolagsverket_name_mismatch = true) — the "X to review"
+ * from a sweep, made clickable. Data on these was left untouched; a human
+ * verifies the org number. Hidden entirely when there's nothing to review.
+ */
+export function BolagsverketReviewCard() {
+  const { t } = useTranslation()
+  const { isAdmin } = useUser()
+  const [rows, setRows] = React.useState<ReviewRow[] | null>(null)
+
+  React.useEffect(() => {
+    const supabase = createClient()
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from("customers")
+        .select("id, name, org_number, org_number_bv, bolagsverket_company_data")
+        .eq("status", "active")
+        .eq("bolagsverket_name_mismatch", true)
+        .order("name", { ascending: true })
+      if (!cancelled) setRows((data ?? []) as unknown as ReviewRow[])
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Hide for non-admins and when there's nothing to review.
+  if (!isAdmin || !rows || rows.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="size-4 text-semantic-warning" />
+          <CardTitle className="text-base">
+            {t("settings.sync.bolagsverketReview.title", "Bolagsverket — needs review")}
+          </CardTitle>
+          <Badge
+            variant="outline"
+            className="border-semantic-warning/40 bg-semantic-warning/10 text-semantic-warning"
+          >
+            {rows.length}
+          </Badge>
+        </div>
+        <CardDescription>
+          {t(
+            "settings.sync.bolagsverketReview.description",
+            "Bolagsverket returned a different company for these org numbers. Their data was left unchanged — verify the org number on each card.",
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {rows.map((r) => {
+          const bvName = bvNameFromRaw(r.bolagsverket_company_data)
+          return (
+            <Link
+              key={r.id}
+              href={`/customers/${r.id}`}
+              className="flex flex-col gap-0.5 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-accent"
+            >
+              <span className="font-medium">{r.name ?? "—"}</span>
+              <span className="text-xs text-muted-foreground">
+                {t("settings.sync.bolagsverketReview.ours", "Ours")}: {r.org_number ?? "—"}
+                {"  ·  "}
+                {t("settings.sync.bolagsverketReview.bolagsverket", "Bolagsverket")}:{" "}
+                {bvName ? `${bvName} (${r.org_number_bv ?? "—"})` : (r.org_number_bv ?? "—")}
+              </span>
+            </Link>
+          )
+        })}
       </CardContent>
     </Card>
   )

@@ -37,7 +37,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/app/confirm-dialog"
 import { SieKpisCard, SieSyncCard } from "@/components/app/sie-sync-section"
-import { BolagsverketSyncCard } from "@/components/app/bolagsverket-sync-section"
+import { BolagsverketSyncCard, BolagsverketReviewCard } from "@/components/app/bolagsverket-sync-section"
 import { formatDateTime } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { toast } from "sonner"
@@ -320,6 +320,9 @@ export default function SyncPage() {
             refresh route; admin-only (card hides itself for non-admins). */}
         <BolagsverketSyncCard />
       </div>
+
+      {/* Bolagsverket mismatches to review (hidden when there are none). */}
+      <BolagsverketReviewCard />
 
       <Card>
         <CardHeader>
