@@ -55,6 +55,75 @@ const EMPTY_TALLY: Tally = {
   cards: 0,
 }
 
+// Bokslut stages that mean "sent-ish, waiting for Bolagsverket to register".
+// >= granskad (40) and < registrerad (70): granskad, bokslutsmöte/revisor,
+// skickad. Forgiving enough to catch a registration even if the consultant is
+// a step behind on the board.
+const AWAITING_MIN_SORT = 40
+
+// deno-lint-ignore no-explicit-any
+async function listActiveCustomerIds(supabase: any): Promise<string[]> {
+  const ids: string[] = []
+  let scanOffset = 0
+  const pageSize = 1000
+  while (true) {
+    const { data, error } = await supabase
+      .from("customers")
+      .select("id")
+      .eq("status", "active")
+      .order("id", { ascending: true })
+      .range(scanOffset, scanOffset + pageSize - 1)
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []) as Array<{ id: string }>
+    for (const r of rows) ids.push(r.id)
+    if (rows.length < pageSize) break
+    scanOffset += pageSize
+  }
+  return ids
+}
+
+// deno-lint-ignore no-explicit-any
+async function listPendingCustomerIds(supabase: any): Promise<string[]> {
+  // Which bokslut statuses count as "awaiting registration".
+  const { data: statusData } = await supabase
+    .from("engagement_statuses")
+    .select("id, key, sort_order, is_parked")
+    .eq("workflow", "bokslut")
+  const statuses = (statusData ?? []) as Array<{
+    id: string
+    key: string
+    sort_order: number
+    is_parked: boolean
+  }>
+  const registered = statuses.find((s) => s.key === "registrerad_bolagsverket")
+  const regSort = registered?.sort_order ?? 70
+  const awaitingIds = statuses
+    .filter(
+      (s) => !s.is_parked && s.sort_order >= AWAITING_MIN_SORT && s.sort_order < regSort,
+    )
+    .map((s) => s.id)
+  if (awaitingIds.length === 0) return []
+
+  // Customers with such a card that Bolagsverket hasn't confirmed yet.
+  const ids = new Set<string>()
+  let scanOffset = 0
+  const pageSize = 1000
+  while (true) {
+    const { data, error } = await supabase
+      .from("engagements")
+      .select("customer_id")
+      .in("bokslut_status_id", awaitingIds)
+      .is("annual_report_registered_bv_at", null)
+      .range(scanOffset, scanOffset + pageSize - 1)
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []) as Array<{ customer_id: string }>
+    for (const r of rows) ids.add(r.customer_id)
+    if (rows.length < pageSize) break
+    scanOffset += pageSize
+  }
+  return Array.from(ids)
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders() })
@@ -68,6 +137,11 @@ Deno.serve(async (req) => {
     jobId = body.job_id ?? null
     const offset: number = body.offset ?? 0
     const phase: string = body.phase ?? "list"
+    // "full" = every active customer (monthly safety net).
+    // "pending" = only customers with a bokslut card awaiting registration
+    // (nightly, cheap). Passed through by the dispatcher from payload.sync_mode.
+    const syncMode: string = body.sync_mode ?? "full"
+    const stepLabel = syncMode === "pending" ? "Bolagsverket (pending)" : "Bolagsverket"
 
     const appUrl = Deno.env.get("APP_BASE_URL")?.trim()
     const cronSecret = Deno.env.get("CRON_SECRET")?.trim()
@@ -84,22 +158,10 @@ Deno.serve(async (req) => {
         })
       }
 
-      const ids: string[] = []
-      let scanOffset = 0
-      const pageSize = 1000
-      while (true) {
-        const { data, error } = await supabase
-          .from("customers")
-          .select("id")
-          .eq("status", "active")
-          .order("id", { ascending: true })
-          .range(scanOffset, scanOffset + pageSize - 1)
-        if (error) throw new Error(error.message)
-        const rows = (data ?? []) as Array<{ id: string }>
-        for (const r of rows) ids.push(r.id)
-        if (rows.length < pageSize) break
-        scanOffset += pageSize
-      }
+      const ids =
+        syncMode === "pending"
+          ? await listPendingCustomerIds(supabase)
+          : await listActiveCustomerIds(supabase)
 
       if (jobId) {
         await updateSyncJob(supabase, jobId, {
@@ -108,7 +170,8 @@ Deno.serve(async (req) => {
           processed_items: 0,
           payload: {
             step_name: "bolagsverket",
-            step_label: "Bolagsverket",
+            step_label: stepLabel,
+            sync_mode: syncMode,
             customer_ids: ids,
             tally: EMPTY_TALLY,
           },
@@ -186,7 +249,8 @@ Deno.serve(async (req) => {
             : `Enriching customers (${processed}/${total})...`,
           payload: {
             step_name: "bolagsverket",
-            step_label: "Bolagsverket",
+            step_label: stepLabel,
+            sync_mode: syncMode,
             customer_ids: customerIds,
             tally,
           },
