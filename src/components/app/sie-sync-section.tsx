@@ -1,18 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { Calculator, Database, Loader2, Play } from "lucide-react"
+import { Calculator, Database, Play } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { SyncCardShell } from "@/components/app/sync-card-shell"
 import { useTranslation } from "@/hooks/use-translation"
 
 /**
@@ -145,35 +139,24 @@ export function SieSyncCard() {
   })()
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-sm font-medium">
-            <Database className="size-4 text-muted-foreground" />
-            {t("settings.sync.sie.title", "SIE Bookkeeping")}
-          </CardTitle>
-          {syncing && (
-            <Badge variant="secondary" className="font-normal">
-              <Loader2 className="mr-1 size-3 animate-spin" />
-              {t("common.running", "Running")}
-            </Badge>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-sm text-muted-foreground">{description}</p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
-          disabled={syncing || activeCount === 0 || activeCount == null}
-          onClick={handleSync}
-        >
-          <Play className="size-3" />
-          {syncButtonLabel}
-        </Button>
-      </CardContent>
-    </Card>
+    <SyncCardShell
+      icon={Database}
+      title={t("settings.sync.sie.title", "SIE Bookkeeping")}
+      description={description}
+      running={syncing}
+      runningLabel={t("common.running", "Running")}
+    >
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full"
+        disabled={syncing || activeCount === 0 || activeCount == null}
+        onClick={handleSync}
+      >
+        <Play className="size-3" />
+        {syncButtonLabel}
+      </Button>
+    </SyncCardShell>
   )
 }
 
@@ -300,34 +283,23 @@ export function SieKpisCard() {
   })()
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-sm font-medium">
-            <Calculator className="size-4 text-muted-foreground" />
-            {t("settings.sync.sieKpis.title", "SIE Nyckeltal")}
-          </CardTitle>
-          {generating && (
-            <Badge variant="secondary" className="font-normal">
-              <Loader2 className="mr-1 size-3 animate-spin" />
-              {t("common.running", "Running")}
-            </Badge>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-sm text-muted-foreground">{description}</p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
-          disabled={generating || importCount === 0 || importCount == null}
-          onClick={handleGenerate}
-        >
-          <Play className="size-3" />
-          {generateButtonLabel}
-        </Button>
-      </CardContent>
-    </Card>
+    <SyncCardShell
+      icon={Calculator}
+      title={t("settings.sync.sieKpis.title", "SIE Nyckeltal")}
+      description={description}
+      running={generating}
+      runningLabel={t("common.running", "Running")}
+    >
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full"
+        disabled={generating || importCount === 0 || importCount == null}
+        onClick={handleGenerate}
+      >
+        <Play className="size-3" />
+        {generateButtonLabel}
+      </Button>
+    </SyncCardShell>
   )
 }

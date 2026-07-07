@@ -9,9 +9,9 @@ import {
   Play,
   Users,
   Building2,
-  FileText,
-  Boxes,
-  Clock,
+  ReceiptText,
+  Package,
+  CalendarClock,
   FileSignature,
   Sigma,
   Trash2,
@@ -38,6 +38,7 @@ import { Badge } from "@/components/ui/badge"
 import { ConfirmDialog } from "@/components/app/confirm-dialog"
 import { SieKpisCard, SieSyncCard } from "@/components/app/sie-sync-section"
 import { BolagsverketSyncCard, BolagsverketReviewCard } from "@/components/app/bolagsverket-sync-section"
+import { SyncCardShell } from "@/components/app/sync-card-shell"
 import { formatDateTime } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { toast } from "sonner"
@@ -45,9 +46,9 @@ import { toast } from "sonner"
 const STEP_ICONS: Record<SyncStep, React.ElementType> = {
   customers: Building2,
   employees: Users,
-  invoices: FileText,
-  articles: Boxes,
-  "time-reports": Clock,
+  invoices: ReceiptText,
+  articles: Package,
+  "time-reports": CalendarClock,
   contracts: FileSignature,
   "generate-kpis": Sigma,
 }
@@ -241,68 +242,54 @@ export default function SyncPage() {
           const isRunning = runningJobs.length > 0
 
           return (
-            <Card key={step}>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2 text-sm font-medium">
-                      <Icon className="size-4 text-muted-foreground" />
-                      {t(STEP_LABEL_KEYS[step], STEP_LABELS[step])}
-                    </CardTitle>
-                    {isRunning && (
-                      <Badge variant="secondary" className="font-normal">
-                        <Loader2 className="mr-1 size-3 animate-spin" />
-                        {t("common.running", "Running")}
-                      </Badge>
-                    )}
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  {t(STEP_DESCRIPTION_KEYS[step], STEP_DESCRIPTIONS[step])}
-                </p>
-                {step === "invoices" ? (
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="flex-1"
-                      disabled={syncing || isRunning}
-                      onClick={() =>
-                        startSync([step], { syncMode: "skip_finalized" })
-                      }
-                    >
-                      <Play className="size-3" />
-                      {t("settings.sync.skipFinalized", "Skip Finalized")}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="flex-1"
-                      disabled={syncing || isRunning}
-                      onClick={() =>
-                        startSync([step], { syncMode: "enrich_all" })
-                      }
-                    >
-                      <Play className="size-3" />
-                      {t("settings.sync.enrichAll", "Enrich All")}
-                    </Button>
-                  </div>
-                ) : (
+            <SyncCardShell
+              key={step}
+              icon={Icon}
+              title={t(STEP_LABEL_KEYS[step], STEP_LABELS[step])}
+              description={t(STEP_DESCRIPTION_KEYS[step], STEP_DESCRIPTIONS[step])}
+              running={isRunning}
+              runningLabel={t("common.running", "Running")}
+            >
+              {step === "invoices" ? (
+                <div className="flex gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full"
+                    className="flex-1"
                     disabled={syncing || isRunning}
                     onClick={() =>
-                      startSync([step])
+                      startSync([step], { syncMode: "skip_finalized" })
                     }
                   >
                     <Play className="size-3" />
-                    {t("common.run", "Run")}
+                    {t("settings.sync.skipFinalized", "Skip Finalized")}
                   </Button>
-                )}
-              </CardContent>
-            </Card>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    disabled={syncing || isRunning}
+                    onClick={() =>
+                      startSync([step], { syncMode: "enrich_all" })
+                    }
+                  >
+                    <Play className="size-3" />
+                    {t("settings.sync.enrichAll", "Enrich All")}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  disabled={syncing || isRunning}
+                  onClick={() => startSync([step])}
+                >
+                  <Play className="size-3" />
+                  {t("common.run", "Run")}
+                </Button>
+              )}
+            </SyncCardShell>
           )
         })}
         {/* SIE Bookkeeping — slotted as another grid cell so the layout is

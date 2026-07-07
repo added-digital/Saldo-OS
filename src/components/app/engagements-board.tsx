@@ -1248,24 +1248,18 @@ const EngagementCard = React.memo(function EngagementCard({
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{row.customer_name}</p>
         {showVerified && row.annual_report_registered_bv_at ? (
-          <Badge
-            variant="secondary"
-            className="shrink-0 gap-1 border-semantic-success/40 bg-semantic-success/10 text-[10px] text-semantic-success"
+          <span
+            className="mt-0.5 shrink-0 text-semantic-success"
             title={`${verifiedLabels.tooltip} · ${new Date(row.annual_report_registered_bv_at).toLocaleDateString("sv-SE")}`}
+            aria-label={verifiedLabels.tooltip}
           >
-            <Landmark className="size-3" />
-            {verifiedLabels.badge}
-          </Badge>
+            <Landmark className="size-4" />
+          </span>
         ) : null}
         {cleared ? (
           <Badge variant="secondary" className="shrink-0 gap-1 text-[10px]">
             <CheckCircle2 className="size-3" />
             {clearLabels.badge}
-          </Badge>
-        ) : null}
-        {row.customer_setup?.holdingbolag === "yes" ? (
-          <Badge variant="outline" className="shrink-0 text-[10px]">
-            Holding
           </Badge>
         ) : null}
         {canClear ? (

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { AlertTriangle, Building2, Loader2, Play } from "lucide-react"
+import { AlertTriangle, Landmark, Play, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { SyncCardShell } from "@/components/app/sync-card-shell"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
 
@@ -58,6 +59,7 @@ export function BolagsverketSyncCard() {
   const { isAdmin } = useUser()
   const [pending, setPending] = React.useState<number | null>(null)
   const [running, setRunning] = React.useState(false)
+  const [startingAll, setStartingAll] = React.useState(false)
   const [progress, setProgress] = React.useState<{ done: number; total: number }>({
     done: 0,
     total: 0,
@@ -168,6 +170,35 @@ export function BolagsverketSyncCard() {
     }
   }
 
+  async function handleRunAll() {
+    if (startingAll) return
+    setStartingAll(true)
+    try {
+      const res = await fetch("/api/bolagsverket/sweep", { method: "POST" })
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean
+        error?: string
+        message?: string
+      }
+      if (!res.ok || !data.ok) {
+        toast.error(
+          data.message ??
+            data.error ??
+            t("settings.sync.bolagsverket.allFailed", "Couldn't start full sweep"),
+        )
+        return
+      }
+      toast.success(
+        t(
+          "settings.sync.bolagsverket.allStarted",
+          "Full sweep started — all active customers, running in the background (~30 min). Check Recent Sync Jobs.",
+        ),
+      )
+    } finally {
+      setStartingAll(false)
+    }
+  }
+
   if (!isAdmin) return null
 
   const description =
@@ -185,40 +216,53 @@ export function BolagsverketSyncCard() {
       : t("common.run", "Run")
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-sm font-medium">
-            <Building2 className="size-4 text-muted-foreground" />
-            {t("settings.sync.bolagsverket.title", "Bolagsverket")}
-          </CardTitle>
-          {running && (
-            <Badge variant="secondary" className="font-normal">
-              <Loader2 className="mr-1 size-3 animate-spin" />
-              {t("common.running", "Running")}
-            </Badge>
-          )}
+    <SyncCardShell
+      icon={Landmark}
+      title={t("settings.sync.bolagsverket.title", "Bolagsverket")}
+      description={description}
+      running={running}
+      runningLabel={t("common.running", "Running")}
+    >
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            disabled={running || pending === 0 || pending == null}
+            onClick={handleRun}
+            title={t(
+              "settings.sync.bolagsverket.runHint",
+              "Enrich only new or stale customers (runs in this tab).",
+            )}
+          >
+            <Play className="size-3" />
+            {buttonLabel}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            disabled={running || startingAll}
+            onClick={handleRunAll}
+            title={t(
+              "settings.sync.bolagsverket.runAllHint",
+              "Enrich all active customers in the background (~30 min).",
+            )}
+          >
+            <RefreshCw className={startingAll ? "size-3 animate-spin" : "size-3"} />
+            {startingAll
+              ? t("settings.sync.bolagsverket.allStarting", "Starting…")
+              : t("settings.sync.bolagsverket.runAll", "Run all")}
+          </Button>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-sm text-muted-foreground">{description}</p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
-          disabled={running || pending === 0 || pending == null}
-          onClick={handleRun}
-        >
-          <Play className="size-3" />
-          {buttonLabel}
-        </Button>
         {running && (
           <p className="text-xs text-muted-foreground">
             {t("settings.sync.bolagsverket.runningHint", "Keep this tab open until it finishes. You can re-run it anytime.")}
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </SyncCardShell>
   )
 }
 

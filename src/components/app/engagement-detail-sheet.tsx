@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { Check, ChevronDown, ChevronRight, Download, Loader2, MessageSquare, Paperclip, Pencil, Send, Trash2, Upload, X } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Download, Landmark, Loader2, MessageSquare, Paperclip, Pencil, Send, Trash2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -578,6 +578,17 @@ export function EngagementDetailSheet({
             {row.fiscal_year_end}
             {row.group_name ? ` · ${row.group_name}` : ""}
           </SheetDescription>
+          {row.annual_report_registered_bv_at ? (
+            <Badge
+              variant="secondary"
+              className="mt-1 w-fit gap-1.5 border-semantic-success/40 bg-semantic-success/10 text-semantic-success"
+            >
+              <Landmark className="size-3.5" />
+              {t("engagements.bvVerified.confirmed", "Registered with Bolagsverket")}
+              {" · "}
+              {new Date(row.annual_report_registered_bv_at).toLocaleDateString("sv-SE")}
+            </Badge>
+          ) : null}
         </SheetHeader>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
