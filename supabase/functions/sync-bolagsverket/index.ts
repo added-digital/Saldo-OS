@@ -55,12 +55,6 @@ const EMPTY_TALLY: Tally = {
   cards: 0,
 }
 
-// Bokslut stages that mean "sent-ish, waiting for Bolagsverket to register".
-// >= granskad (40) and < registrerad (70): granskad, bokslutsmöte/revisor,
-// skickad. Forgiving enough to catch a registration even if the consultant is
-// a step behind on the board.
-const AWAITING_MIN_SORT = 40
-
 // deno-lint-ignore no-explicit-any
 async function listActiveCustomerIds(supabase: any): Promise<string[]> {
   const ids: string[] = []
@@ -84,7 +78,11 @@ async function listActiveCustomerIds(supabase: any): Promise<string[]> {
 
 // deno-lint-ignore no-explicit-any
 async function listPendingCustomerIds(supabase: any): Promise<string[]> {
-  // Which bokslut statuses count as "awaiting registration".
+  // "Awaiting registration" = any bokslut card that isn't already registered
+  // and isn't parked ("Ej aktuell"), regardless of which column it sits in
+  // (Påbörjad, Granskad, Skickad, …). Cards with no bokslut status yet are
+  // included too. So a registration is caught even if the consultant hasn't
+  // moved the card along the board.
   const { data: statusData } = await supabase
     .from("engagement_statuses")
     .select("id, key, sort_order, is_parked")
@@ -98,13 +96,16 @@ async function listPendingCustomerIds(supabase: any): Promise<string[]> {
   const registered = statuses.find((s) => s.key === "registrerad_bolagsverket")
   const regSort = registered?.sort_order ?? 70
   const awaitingIds = statuses
-    .filter(
-      (s) => !s.is_parked && s.sort_order >= AWAITING_MIN_SORT && s.sort_order < regSort,
-    )
+    .filter((s) => !s.is_parked && s.sort_order < regSort)
     .map((s) => s.id)
-  if (awaitingIds.length === 0) return []
 
-  // Customers with such a card that Bolagsverket hasn't confirmed yet.
+  // Match cards in any of those statuses OR with no status set — as long as
+  // Bolagsverket hasn't confirmed them yet.
+  const statusFilter =
+    awaitingIds.length > 0
+      ? `bokslut_status_id.in.(${awaitingIds.join(",")}),bokslut_status_id.is.null`
+      : "bokslut_status_id.is.null"
+
   const ids = new Set<string>()
   let scanOffset = 0
   const pageSize = 1000
@@ -112,8 +113,8 @@ async function listPendingCustomerIds(supabase: any): Promise<string[]> {
     const { data, error } = await supabase
       .from("engagements")
       .select("customer_id")
-      .in("bokslut_status_id", awaitingIds)
       .is("annual_report_registered_bv_at", null)
+      .or(statusFilter)
       .range(scanOffset, scanOffset + pageSize - 1)
     if (error) throw new Error(error.message)
     const rows = (data ?? []) as Array<{ customer_id: string }>
