@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { getBolagsverketClient, normalizeOrgNumber } from "./index"
+import type { BolagsverketFinancialYear } from "./types"
 
 export type BolagsverketMatchStatus =
   | "confirmed"
@@ -32,6 +33,12 @@ export interface EnrichmentResult {
   bvName: string | null
   /** Latest räkenskapsår end date from Bolagsverket (null if none). */
   rakenskapsarTom: string | null
+  /**
+   * Number of bokslut cards auto-advanced to "Registrerad hos Bolagsverket"
+   * because Bolagsverket reports a registered annual report for their fiscal
+   * year. 0 unless the customer matched confirmed and had catching-up cards.
+   */
+  cardsMarkedRegistered: number
 }
 
 // --- name matching ---------------------------------------------------
@@ -76,6 +83,98 @@ export function namesMatch(
   return overlap / small.size >= 0.6
 }
 
+// --- annual-report → board sync --------------------------------------
+// Bolagsverket's /dokumentlista returns one entry per REGISTERED annual report,
+// so a fiscal-year end appearing there means "årsredovisning inlämnad och
+// registrerad". We reflect that on the bokslut board by auto-advancing the
+// matching card to the terminal "Registrerad hos Bolagsverket" stage.
+//
+// Rules (agreed with the team):
+//   • Forward-only. A card moves only when its current bokslut stage sits
+//     BEFORE "registrerad_bolagsverket" (or it has no stage yet). We never drag
+//     a card backwards.
+//   • Parked cards ("Ej aktuell") are left untouched — that's a human decision.
+//   • Only ever called on a CONFIRMED name match, so we don't act on a possibly
+//     wrong org number.
+// The engagement trigger stamps the change + logs it to the activity feed with
+// a null actor (system), and it fires only on a real change, so re-running the
+// refresh is idempotent — no duplicate moves or log spam.
+
+async function syncRegisteredAnnualReports(
+  supabase: SupabaseClient,
+  customerId: string,
+  financialYears: BolagsverketFinancialYear[],
+): Promise<number> {
+  const registeredEnds = Array.from(
+    new Set(
+      financialYears
+        .filter((fy) => fy.annualReportRegistered)
+        .map((fy) => fy.to),
+    ),
+  )
+  if (registeredEnds.length === 0) return 0
+
+  // Full bokslut stage order, so we can compare sort positions.
+  const { data: statusesData } = await supabase
+    .from("engagement_statuses")
+    .select("id, key, sort_order, is_parked")
+    .eq("workflow", "bokslut")
+  const statuses = (statusesData ?? []) as Array<{
+    id: string
+    key: string
+    sort_order: number
+    is_parked: boolean
+  }>
+  const registered = statuses.find((s) => s.key === "registrerad_bolagsverket")
+  if (!registered) return 0
+  const byId = new Map(statuses.map((s) => [s.id, s]))
+
+  // Candidate cards: this customer, fiscal year Bolagsverket reports registered.
+  const { data: engData } = await supabase
+    .from("engagements")
+    .select("id, bokslut_status_id, annual_report_registered_bv_at")
+    .eq("customer_id", customerId)
+    .in("fiscal_year_end", registeredEnds)
+  const engagements = (engData ?? []) as Array<{
+    id: string
+    bokslut_status_id: string | null
+    annual_report_registered_bv_at: string | null
+  }>
+
+  const now = new Date().toISOString()
+  let confirmed = 0
+  for (const e of engagements) {
+    const current = e.bokslut_status_id
+      ? byId.get(e.bokslut_status_id)
+      : undefined
+    if (current?.is_parked) continue // leave "Ej aktuell" alone
+
+    const update: {
+      bokslut_status_id?: string
+      annual_report_registered_bv_at?: string
+    } = {}
+
+    // Stamp the BV confirmation (drives the card's verified badge) once. Applies
+    // even to cards already sitting in "Registrerad" via a manual move — that's
+    // exactly the case we want to turn into a trusted, confirmed one.
+    const newlyConfirmed = !e.annual_report_registered_bv_at
+    if (newlyConfirmed) update.annual_report_registered_bv_at = now
+
+    // Forward-only auto-advance. Manual moves are never overridden backwards.
+    if (!current || current.sort_order < registered.sort_order) {
+      update.bokslut_status_id = registered.id
+    }
+
+    if (Object.keys(update).length === 0) continue
+    const { error } = await supabase
+      .from("engagements")
+      .update(update)
+      .eq("id", e.id)
+    if (!error && newlyConfirmed) confirmed += 1
+  }
+  return confirmed
+}
+
 // --- writer ----------------------------------------------------------
 
 interface CustomerRow {
@@ -106,7 +205,7 @@ export async function enrichCustomerFromBolagsverket(
         bolagsverket_updated_at: now,
       })
       .eq("id", customer.id)
-    return { customerId: customer.id, status: "no_orgnr", bvOrgNumber: null, bvName: null, rakenskapsarTom: null }
+    return { customerId: customer.id, status: "no_orgnr", bvOrgNumber: null, bvName: null, rakenskapsarTom: null, cardsMarkedRegistered: 0 }
   }
 
   const result = await getBolagsverketClient().lookupByOrgNumber(org)
@@ -121,7 +220,7 @@ export async function enrichCustomerFromBolagsverket(
         bolagsverket_updated_at: now,
       })
       .eq("id", customer.id)
-    return { customerId: customer.id, status: "not_found", bvOrgNumber: null, bvName: null, rakenskapsarTom: null }
+    return { customerId: customer.id, status: "not_found", bvOrgNumber: null, bvName: null, rakenskapsarTom: null, cardsMarkedRegistered: 0 }
   }
 
   const company = result.company
@@ -150,6 +249,7 @@ export async function enrichCustomerFromBolagsverket(
       bvOrgNumber: company.orgNumber,
       bvName: company.name,
       rakenskapsarTom: latestTom,
+      cardsMarkedRegistered: 0,
     }
   }
 
@@ -173,11 +273,20 @@ export async function enrichCustomerFromBolagsverket(
     })
     .eq("id", customer.id)
 
+  // Confirmed match → trust the filed-report data. Auto-advance any bokslut
+  // card whose fiscal year Bolagsverket now reports as registered.
+  const cardsMarkedRegistered = await syncRegisteredAnnualReports(
+    supabase,
+    customer.id,
+    company.financialYears,
+  )
+
   return {
     customerId: customer.id,
     status,
     bvOrgNumber: company.orgNumber,
     bvName: company.name,
     rakenskapsarTom: latestTom,
+    cardsMarkedRegistered,
   }
 }

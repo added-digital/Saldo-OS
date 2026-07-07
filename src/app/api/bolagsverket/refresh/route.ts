@@ -11,28 +11,38 @@ export const runtime = "nodejs"
  *
  * POST { customerId: string }
  *
- * Admin-only (matches the SIE flow's gating). Reads the customer, calls the
- * enrichment writer, and returns the outcome so the UI can toast + refetch.
- * The writer never overwrites the name and only flags name mismatches.
+ * Two callers:
+ *   • The admin UI (signed-in admin, cookie auth) — the per-customer refresh
+ *     button and the browser sweep card.
+ *   • The monthly server sweep (sync-bolagsverket edge function) — authenticates
+ *     with `Authorization: Bearer <CRON_SECRET>` instead of a cookie, so the
+ *     same tested enrichment path drives both. The writer never overwrites the
+ *     name and only flags name mismatches.
  */
 export async function POST(request: NextRequest) {
-  // 1. AuthN + AuthZ — signed-in admin only.
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 })
-  }
+  // 1. AuthN + AuthZ. Accept either a signed-in admin OR the cron secret.
+  const cronSecret = process.env.CRON_SECRET?.trim()
+  const isCron =
+    !!cronSecret && request.headers.get("authorization") === `Bearer ${cronSecret}`
 
-  const { data: profileData } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle()
-  const profile = profileData as { role?: string | null } | null
-  if (profile?.role !== "admin") {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 })
+  if (!isCron) {
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 })
+    }
+
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle()
+    const profile = profileData as { role?: string | null } | null
+    if (profile?.role !== "admin") {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 })
+    }
   }
 
   // 2. Validate input.
@@ -41,7 +51,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "missing_customer" }, { status: 400 })
   }
 
-  const { data: customer } = await supabase
+  // Read + write with the service-role client (works for both callers; the
+  // cron path has no cookie session to read through).
+  const admin = createAdminClient()
+  const { data: customer } = await admin
     .from("customers")
     .select("id, name, org_number")
     .eq("id", body.customerId)
@@ -52,7 +65,6 @@ export async function POST(request: NextRequest) {
 
   // 3. Enrich (service-role write; authz already checked above).
   try {
-    const admin = createAdminClient()
     const result = await enrichCustomerFromBolagsverket(admin, customer)
     return NextResponse.json({ ok: true, result })
   } catch (error) {

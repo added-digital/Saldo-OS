@@ -72,6 +72,12 @@ export interface EngagementBoardRow {
   bokslut_position: number | null
   /** Manual within-column ordering for the INK2 tab (null = never ordered). */
   ink2_position: number | null
+  /**
+   * When Bolagsverket confirmed this fiscal year's annual report is registered
+   * (null = not confirmed by Bolagsverket). Drives the card's verified badge —
+   * distinguishes a BV-confirmed "Registrerad" from a manual move.
+   */
+  annual_report_registered_bv_at: string | null
 }
 
 export interface EngagementActivity {

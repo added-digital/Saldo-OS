@@ -632,7 +632,7 @@ export default function CustomerDetailPage({
       })
       const data = (await response.json().catch(() => ({}))) as {
         ok?: boolean
-        result?: { status?: string }
+        result?: { status?: string; cardsMarkedRegistered?: number }
         error?: string
         message?: string
       }
@@ -663,6 +663,16 @@ export default function CustomerDetailPage({
         )
       } else {
         toast.success(t("customers.detail.bvUpdated", "Updated from Bolagsverket."))
+      }
+      // Surface any bokslut cards auto-moved to "Registrerad hos Bolagsverket".
+      const marked = data.result?.cardsMarkedRegistered ?? 0
+      if (marked > 0) {
+        toast.success(
+          t(
+            "customers.detail.bvCardsRegistered",
+            "{count} bokslut card(s) marked as registered with Bolagsverket.",
+          ).replace("{count}", String(marked)),
+        )
       }
       await fetchData()
     } finally {

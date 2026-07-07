@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, ChevronDown, EyeOff, Eye, X } from "lucide-react"
+import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, ChevronDown, EyeOff, Eye, X, Landmark } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -407,6 +407,18 @@ export function EngagementsBoard() {
     }),
     [t],
   )
+  // Trust badge for a Bolagsverket-confirmed registration. Only meaningful on
+  // the bokslut board (INK2 has no BV registration).
+  const verifiedLabels = React.useMemo(
+    () => ({
+      badge: t("engagements.bvVerified.badge", "Bolagsverket"),
+      tooltip: t(
+        "engagements.bvVerified.tooltip",
+        "Confirmed registered with Bolagsverket",
+      ),
+    }),
+    [t],
+  )
 
   // Toggle an engagement's cleared state (optimistic). rowsRef keeps the
   // handler stable so memoized cards don't re-render on every board update.
@@ -738,6 +750,8 @@ export function EngagementsBoard() {
                           onDragEnd={handleCardDragEnd}
                           onClick={handleCardClick}
                           overdueLabel={overdueLabel}
+                          verifiedLabels={verifiedLabels}
+                          showVerified={workflow === "bokslut"}
                         />
                       </React.Fragment>
                     )
@@ -1199,6 +1213,8 @@ const EngagementCard = React.memo(function EngagementCard({
   onDragEnd,
   onClick,
   overdueLabel,
+  verifiedLabels,
+  showVerified,
 }: {
   row: EngagementBoardRow
   dragging: boolean
@@ -1210,6 +1226,8 @@ const EngagementCard = React.memo(function EngagementCard({
   onDragEnd: () => void
   onClick: (id: string) => void
   overdueLabel: string
+  verifiedLabels: { badge: string; tooltip: string }
+  showVerified: boolean
 }) {
   return (
     <div
@@ -1229,6 +1247,16 @@ const EngagementCard = React.memo(function EngagementCard({
     >
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{row.customer_name}</p>
+        {showVerified && row.annual_report_registered_bv_at ? (
+          <Badge
+            variant="secondary"
+            className="shrink-0 gap-1 border-semantic-success/40 bg-semantic-success/10 text-[10px] text-semantic-success"
+            title={`${verifiedLabels.tooltip} · ${new Date(row.annual_report_registered_bv_at).toLocaleDateString("sv-SE")}`}
+          >
+            <Landmark className="size-3" />
+            {verifiedLabels.badge}
+          </Badge>
+        ) : null}
         {cleared ? (
           <Badge variant="secondary" className="shrink-0 gap-1 text-[10px]">
             <CheckCircle2 className="size-3" />
