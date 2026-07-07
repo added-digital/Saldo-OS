@@ -439,6 +439,8 @@ export interface FeedbackSubmission {
   capability: string | null
   page_url: string | null
   user_agent: string | null
+  // Storage paths (in the crm-files bucket) for screenshots the user attached.
+  attachment_paths: string[]
   status: FeedbackStatus
   created_at: string
   updated_at: string

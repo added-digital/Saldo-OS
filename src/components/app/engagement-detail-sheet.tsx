@@ -22,7 +22,7 @@ import type {
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/app/confirm-dialog"
 import { UserAvatar } from "@/components/app/user-avatar"
-import { Input } from "@/components/ui/input"
+import { DateInput } from "@/components/ui/date-input"
 import { Label } from "@/components/ui/label"
 import { MentionTextarea, extractMentionIds } from "@/components/app/mention-textarea"
 import { Badge } from "@/components/ui/badge"
@@ -641,7 +641,7 @@ export function EngagementDetailSheet({
                   {t("engagements.detail.deadlineAuto", "Auto")}
                 </button>
               </div>
-              <Input id="eng-deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+              <DateInput id="eng-deadline" value={deadline} onChange={setDeadline} />
             </div>
           </div>
 

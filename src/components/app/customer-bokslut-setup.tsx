@@ -13,6 +13,7 @@ import type { ChecklistValue, EngagementChecklistField } from "@/types/engagemen
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { DateInput } from "@/components/ui/date-input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -399,12 +400,10 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="saldoavtal-date">{t("customers.bokslut.saldoavtalDate", "Saldoavtal date")}</Label>
-            <Input
+            <DateInput
               id="saldoavtal-date"
-              type="date"
               value={saldoavtalDate}
-              onChange={(e) => setSaldoavtalDate(e.target.value)}
-              className="[&::-webkit-calendar-picker-indicator]:invert"
+              onChange={setSaldoavtalDate}
             />
           </div>
           <div className="space-y-1.5">

@@ -10,7 +10,7 @@ import { useTranslation } from "@/hooks/use-translation"
 import type { EngagementBoardRow } from "@/types/engagement"
 import { deadlineForFiscalYearEnd, fiscalYearEndForCycle } from "@/lib/engagements/fiscal-year"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { DateInput } from "@/components/ui/date-input"
 import { Label } from "@/components/ui/label"
 import {
   Dialog,
@@ -251,12 +251,10 @@ export function EngagementCreateDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="fiscal-year-end">{t("engagements.create.fiscalYear", "Fiscal year end")}</Label>
-              <Input
+              <DateInput
                 id="fiscal-year-end"
-                type="date"
                 value={fiscalYearEnd}
-                onChange={(e) => setFiscalYearEnd(e.target.value)}
-                className="[&::-webkit-calendar-picker-indicator]:invert"
+                onChange={setFiscalYearEnd}
               />
             </div>
             <div className="space-y-1.5">
@@ -278,15 +276,13 @@ export function EngagementCreateDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor="eng-create-deadline">{t("engagements.create.deadline", "Deadline")}</Label>
-            <Input
+            <DateInput
               id="eng-create-deadline"
-              type="date"
               value={deadline}
-              onChange={(e) => {
+              onChange={(next) => {
                 setDeadlineTouched(true)
-                setDeadline(e.target.value)
+                setDeadline(next)
               }}
-              className="[&::-webkit-calendar-picker-indicator]:invert"
             />
             <p className="text-xs text-muted-foreground">
               {t(
