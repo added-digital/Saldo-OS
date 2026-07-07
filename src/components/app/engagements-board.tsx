@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, ChevronDown, EyeOff, Eye, X, Landmark } from "lucide-react"
+import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -21,35 +21,40 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import {
-  Command,
-  CommandEmpty,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command"
 import { EngagementCreateDialog } from "@/components/app/engagement-create-dialog"
 import { EngagementDetailSheet } from "@/components/app/engagement-detail-sheet"
+import { EngagementFilters, ManagerFilter, type BvFilter } from "@/components/app/engagement-filters"
 
-const ALL = "all"
 const NO_STATUS = "none"
+const ALL = "all"
+
+/**
+ * Match a bokslut row against the Bolagsverket registration filter:
+ *   • sent             — reached "Skickad till Bolagsverket" or beyond, or BV-confirmed
+ *   • registered       — confirmed registered by Bolagsverket (badge)
+ *   • sent_unconfirmed — marked sent, but Bolagsverket hasn't confirmed yet
+ */
+function bvFilterMatches(r: EngagementBoardRow, mode: BvFilter): boolean {
+  if (mode === "all") return true
+  const confirmed = !!r.annual_report_registered_bv_at
+  const sent = r.bokslut_status_key === "skickad_bolagsverket"
+  const registeredCol = r.bokslut_status_key === "registrerad_bolagsverket"
+  switch (mode) {
+    case "registered":
+      return confirmed
+    case "sent_unconfirmed":
+      return sent && !confirmed
+    case "sent":
+      return confirmed || sent || registeredCol
+    default:
+      return true
+  }
+}
 
 type Consultant = { id: string; name: string }
 
@@ -188,9 +193,11 @@ export function EngagementsBoard() {
   const [workflow, setWorkflow] = React.useState<EngagementWorkflow>("bokslut")
   const [filterConsultant, setFilterConsultant] = React.useState<string>(ALL)
   const [filterGroup, setFilterGroup] = React.useState<string>(ALL)
-  const [filterYear, setFilterYear] = React.useState<string>(ALL)
+  const [years, setYears] = React.useState<string[]>([])
   const [filterCustomer, setFilterCustomer] = React.useState<string>("")
   const [filterOverdue, setFilterOverdue] = React.useState<boolean>(false)
+  // Bolagsverket registration filter (bokslut board only).
+  const [bvFilter, setBvFilter] = React.useState<BvFilter>("all")
   const [clearedMode, setClearedMode] = React.useState<"hide" | "show" | "only">("hide")
 
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
@@ -316,43 +323,64 @@ export function EngagementsBoard() {
             r.consultant_id === filterConsultant ||
             r.co_consultant_id === filterConsultant) &&
           (filterGroup === ALL || r.group_name === filterGroup) &&
-          (filterYear === ALL || r.fiscal_year_end === filterYear) &&
+          (years.length === 0 || years.includes(r.fiscal_year_end)) &&
           (clearedMode === "show" ||
             (clearedMode === "hide" && !clearedOf(r, workflow)) ||
             (clearedMode === "only" && !!clearedOf(r, workflow))) &&
           (customerQuery === "" || r.customer_name.toLowerCase().includes(customerQuery)),
       ),
-    [rows, filterConsultant, filterGroup, filterYear, clearedMode, customerQuery, workflow],
+    [rows, filterConsultant, filterGroup, years, clearedMode, customerQuery, workflow],
   )
 
-  const filteredRows = React.useMemo(
-    () => (filterOverdue ? scopedRows.filter((r) => r.is_overdue) : scopedRows),
-    [scopedRows, filterOverdue],
-  )
+  const filteredRows = React.useMemo(() => {
+    let list = filterOverdue ? scopedRows.filter((r) => r.is_overdue) : scopedRows
+    if (workflow === "bokslut" && bvFilter !== "all") {
+      list = list.filter((r) => bvFilterMatches(r, bvFilter))
+    }
+    return list
+  }, [scopedRows, filterOverdue, bvFilter, workflow])
 
   const overdueCount = React.useMemo(
     () => scopedRows.filter((r) => r.is_overdue).length,
     [scopedRows],
   )
 
+  // Only the filters that live inside the Filters popover (Bolagsverket, year,
+  // cleared). Consultant / team / overdue are their own toolbar controls.
+  const popoverFilterCount =
+    years.length +
+    (bvFilter !== "all" ? 1 : 0) +
+    (clearedMode !== "hide" ? 1 : 0)
+
   const filtersActive =
     filterConsultant !== ALL ||
     filterGroup !== ALL ||
-    filterYear !== ALL ||
     filterCustomer.trim() !== "" ||
     filterOverdue ||
-    clearedMode !== "hide"
+    popoverFilterCount > 0
 
   const resetFilters = React.useCallback(() => {
     React.startTransition(() => {
       setFilterConsultant(ALL)
       setFilterGroup(ALL)
-      setFilterYear(ALL)
+      setYears([])
       setFilterCustomer("")
       setFilterOverdue(false)
+      setBvFilter("all")
       setClearedMode("hide")
     })
   }, [])
+
+  const toggleFrom = React.useCallback(
+    (setter: React.Dispatch<React.SetStateAction<string[]>>, value: string) => {
+      React.startTransition(() =>
+        setter((prev) =>
+          prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value],
+        ),
+      )
+    },
+    [],
+  )
   // Customers that already have at least one engagement on the board.
   const engagedCustomerIds = React.useMemo(
     () => new Set(rows.map((r) => r.customer_id)),
@@ -620,6 +648,7 @@ export function EngagementsBoard() {
             type="button"
             size="sm"
             variant={filterOverdue ? "default" : "outline"}
+            className="h-8"
             onClick={() => React.startTransition(() => setFilterOverdue((v) => !v))}
             aria-pressed={filterOverdue}
           >
@@ -635,44 +664,33 @@ export function EngagementsBoard() {
             ) : null}
           </Button>
           <ManagerFilter
-            value={filterGroup}
-            onChange={(v) => React.startTransition(() => setFilterGroup(v))}
-            allLabel={t("reports.filters.allTeams", "All teams")}
-            searchPlaceholder={t("reports.filters.searchTeams", "Search teams...")}
-            options={groupOptions.map((g) => ({ id: g, name: g }))}
-          />
-          <ManagerFilter
             value={filterConsultant}
             onChange={(v) => React.startTransition(() => setFilterConsultant(v))}
             allLabel={t("reports.filters.allCustomerManagers", "All customer managers")}
             searchPlaceholder={t("reports.filters.searchCustomerManagers", "Search customer managers...")}
             options={consultantOptions}
           />
-          <FilterSelect
-            value={filterYear}
-            onChange={(v) => React.startTransition(() => setFilterYear(v))}
-            allLabel={t("engagements.filter.year", "Fiscal year")}
-            options={yearOptions.map((y) => ({ value: y, label: y }))}
+          <ManagerFilter
+            value={filterGroup}
+            onChange={(v) => React.startTransition(() => setFilterGroup(v))}
+            allLabel={t("reports.filters.allTeams", "All teams")}
+            searchPlaceholder={t("reports.filters.searchTeams", "Search teams...")}
+            options={groupOptions.map((g) => ({ id: g, name: g }))}
           />
-          <Select
-            value={clearedMode}
-            onValueChange={(v) => React.startTransition(() => setClearedMode(v as typeof clearedMode))}
-          >
-            <SelectTrigger size="sm" className="w-[150px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="hide">{t("engagements.filter.cleared.hide", "Hide cleared")}</SelectItem>
-              <SelectItem value="show">{t("engagements.filter.cleared.show", "Show cleared")}</SelectItem>
-              <SelectItem value="only">{t("engagements.filter.cleared.only", "Only cleared")}</SelectItem>
-            </SelectContent>
-          </Select>
-          {filtersActive ? (
-            <Button type="button" size="sm" variant="ghost" onClick={resetFilters}>
-              <RotateCcw className="size-4" />
-              {t("engagements.filter.reset", "Reset filters")}
-            </Button>
-          ) : null}
+          <EngagementFilters
+            t={t}
+            showBv={workflow === "bokslut"}
+            bv={bvFilter}
+            onBvChange={(v) => React.startTransition(() => setBvFilter(v))}
+            cleared={clearedMode}
+            onClearedChange={(v) => React.startTransition(() => setClearedMode(v))}
+            yearOptions={yearOptions}
+            years={years}
+            onToggleYear={(y) => toggleFrom(setYears, y)}
+            activeCount={popoverFilterCount}
+            onClearAll={resetFilters}
+            clearDisabled={!filtersActive}
+          />
         </div>
       </div>
 
@@ -810,93 +828,6 @@ export function EngagementsBoard() {
         }}
       />
     </div>
-  )
-}
-
-function FilterSelect({
-  value,
-  onChange,
-  allLabel,
-  options,
-}: {
-  value: string
-  onChange: (value: string) => void
-  allLabel: string
-  options: Array<{ value: string; label: string }>
-}) {
-  return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger size="sm" className="w-[150px]">
-        <SelectValue placeholder={allLabel} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={ALL}>{allLabel}</SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}
-
-// Searchable manager picker (Popover + Command), mirroring the Reports filter.
-function ManagerFilter({
-  value,
-  onChange,
-  options,
-  allLabel,
-  searchPlaceholder,
-}: {
-  value: string
-  onChange: (value: string) => void
-  options: Array<{ id: string; name: string }>
-  allLabel: string
-  searchPlaceholder: string
-}) {
-  const [open, setOpen] = React.useState(false)
-  const selected = options.find((o) => o.id === value) ?? null
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="w-[180px] justify-between font-normal">
-          <span className="truncate">{value === ALL ? allLabel : selected?.name ?? allLabel}</span>
-          <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-(--radix-popover-trigger-width) p-0" align="start">
-        <Command>
-          <CommandInput placeholder={searchPlaceholder} />
-          <CommandList>
-            <CommandItem
-              value={allLabel}
-              onSelect={() => {
-                onChange(ALL)
-                setOpen(false)
-              }}
-            >
-              <Check className={cn("size-4", value === ALL ? "opacity-100" : "opacity-0")} />
-              {allLabel}
-            </CommandItem>
-            <CommandEmpty>—</CommandEmpty>
-            {options.map((o) => (
-              <CommandItem
-                key={o.id}
-                value={o.name}
-                onSelect={() => {
-                  onChange(o.id)
-                  setOpen(false)
-                }}
-              >
-                <Check className={cn("size-4", value === o.id ? "opacity-100" : "opacity-0")} />
-                <span className="truncate">{o.name}</span>
-              </CommandItem>
-            ))}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
   )
 }
 

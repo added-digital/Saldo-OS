@@ -128,8 +128,9 @@ function FilterSection({
   defaultOpen = false,
   children,
 }: FilterSectionProps) {
+  const [open, setOpen] = React.useState(defaultOpen)
   return (
-    <Collapsible defaultOpen={defaultOpen} className="border-b last:border-b-0">
+    <Collapsible open={open} onOpenChange={setOpen} className="border-b last:border-b-0">
       <CollapsibleTrigger asChild>
         <Button
           variant="ghost"
@@ -143,7 +144,12 @@ function FilterSection({
               </Badge>
             ) : null}
           </div>
-          <ChevronDown className="size-4 text-muted-foreground transition-transform [[data-state=open]_&]:rotate-180" />
+          <ChevronDown
+            className={cn(
+              "size-4 text-muted-foreground transition-transform",
+              open && "rotate-180",
+            )}
+          />
         </Button>
       </CollapsibleTrigger>
       <CollapsibleContent className="px-4 pb-4">
