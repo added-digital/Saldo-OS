@@ -182,7 +182,30 @@ export function PricingResultsTable({
         </span>
       </div>
 
-      <div className="rounded-md border [&_[data-slot=table-container]]:!overflow-x-auto">
+      <div
+        className={cn(
+          "rounded-md border",
+          // Give the table its own bounded scroll area (both axes) so the
+          // header (vertical) and first column (horizontal) can stay pinned.
+          "[&_[data-slot=table-container]]:!overflow-auto",
+          "[&_[data-slot=table-container]]:max-h-[calc(100vh-18rem)]",
+          // Pin the column headers to the top of the scroll area. Borders on
+          // sticky cells get clipped, so use an inset box-shadow to draw the
+          // top + bottom divider lines that outline the pinned header row.
+          "[&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20",
+          "[&_thead_th]:bg-background",
+          "[&_thead_th]:shadow-[inset_0_1px_0_var(--color-border-default),inset_0_-1px_0_var(--color-border-default)]",
+          // Freeze the first column (company names) during horizontal scroll,
+          // with a right-edge divider (box-shadow, since the border gets clipped).
+          "[&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10",
+          "[&_tbody_td:first-child]:bg-background",
+          "[&_tbody_td:first-child]:shadow-[inset_-1px_0_0_var(--color-border-default)]",
+          // The top-left header cell overlaps both frozen regions — keep it on
+          // top, and give it both the header and right-edge dividers.
+          "[&_thead_th:first-child]:sticky [&_thead_th:first-child]:left-0 [&_thead_th:first-child]:z-30",
+          "[&_thead_th:first-child]:shadow-[inset_-1px_0_0_var(--color-border-default),inset_0_1px_0_var(--color-border-default),inset_0_-1px_0_var(--color-border-default)]",
+        )}
+      >
         <Table className="min-w-[1720px]">
           <TableHeader>
             <TableRow>
