@@ -10,7 +10,9 @@
     "script:create-primary-contacts": "tsx scripts/create-primary-contacts.ts",
     "script:check-i18n": "tsx scripts/check-i18n.ts",
     "script:test-fiscal-year": "tsx scripts/fiscal-year.test.ts",
-    "script:bolagsverket-backfill": "tsx scripts/bolagsverket-backfill.ts"
+    "script:bolagsverket-backfill": "tsx scripts/bolagsverket-backfill.ts",
+    "script:seed-license-config": "tsx scripts/seed-license-customer-config.ts",
+    "script:seed-license-comments": "tsx scripts/seed-license-comments.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
@@ -43,6 +45,7 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "voyageai": "^0.2.1",
+    "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {

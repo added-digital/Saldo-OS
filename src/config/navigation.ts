@@ -7,6 +7,7 @@ import {
   Settings,
   BarChart3,
   Calculator,
+  FileSpreadsheet,
   Target,
   ClipboardList,
   Inbox,
@@ -43,6 +44,9 @@ export const navigation: NavSection[] = [
       { label: "Leads", href: "/leads", icon: Inbox },
       // Bokslut + INK2 workflow board (replaces the Effektivitet Excel tracker).
       { label: "Bokslut", href: "/bokslut", icon: ClipboardList, scope: "customers" },
+      // Licensfakturering — Fortnox/Reda price & discount calculator (replaces
+      // the "Huvud excel" macro workbook). Admin-only.
+      { label: "Licenser", href: "/licenser", icon: FileSpreadsheet, minRole: "admin" },
     ],
   },
   {

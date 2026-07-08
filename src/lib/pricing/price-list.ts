@@ -77,6 +77,10 @@ export const PRICING_CONFIG = {
   redaArticleNumber: "99",
   /** Default price per Reda supplier-invoice scan (SEK ex VAT). */
   redaUnitPrice: 2.5,
+  /** Recurring price per aktieägare for the aktiebok/NVR service (SEK ex VAT). */
+  nvrUnitPrice: 15,
+  /** One-time NVR/aktiebok start fee, billed once when a client gets aktiebok. */
+  nvrStartFee: 3000,
   /** Day of month used as the invoice date. */
   invoiceDay: 16,
   /** Saldo's own Fortnox database number (excluded from most summary buckets). */

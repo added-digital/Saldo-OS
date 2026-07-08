@@ -46,6 +46,14 @@ export interface ClientPricingInput {
   extraLicenseCost?: number | null
   /** Reda cost = scans × unit price. (Col O) */
   redaCost?: number | null
+  /** Number of shareholders (aktieägare) from the NVR file. */
+  nvrShareholders?: number | null
+  /** True when the client has aktiebok as a service (present in NVR file). */
+  hasAktiebok?: boolean
+  /** Fixed NVR price override. undefined/null = per-shareholder; 0 = do not invoice NVR. */
+  nvrFixedPrice?: number | string | null
+  /** True once the one-time NVR start fee has already been billed. */
+  nvrStartFeeCharged?: boolean
 }
 
 export interface ClientPricingResult {
@@ -55,6 +63,12 @@ export interface ClientPricingResult {
   redaPrice: number
   /** Diff vs list price, I − L (Col J). */
   diffVsList: number
+  /** Recurring monthly NVR/aktiebok charge (shareholders × unit, or fixed). */
+  nvrRecurring: number
+  /** One-time NVR start fee due this run (0 once already billed). */
+  nvrStartFee: number
+  /** Total NVR charged this run = recurring + start fee. */
+  nvrPrice: number
   /** True when the row is flagged do-not-invoice. */
   notInvoiced: boolean
 }
@@ -93,14 +107,48 @@ export function calcRedaPrice(input: ClientPricingInput): number {
   return hasFixed ? num(h) : num(input.redaCost)
 }
 
+/**
+ * Whether the NVR/aktiebok service should be billed for this client this run:
+ * requires an invoiceable customer, presence in the NVR file, and not being
+ * explicitly suppressed via a fixed NVR price of 0.
+ */
+function nvrActive(input: ClientPricingInput): boolean {
+  if (isNotInvoiced(input.kundnr)) return false
+  if (!input.hasAktiebok) return false
+  const f = input.nvrFixedPrice
+  const hasFixed = f !== null && f !== undefined && String(f) !== ""
+  if (hasFixed && num(f) === 0) return false // 0 = do not invoice NVR
+  return true
+}
+
+/** Recurring monthly NVR charge: fixed override, else shareholders × unit price. */
+export function calcNvrRecurring(input: ClientPricingInput): number {
+  if (!nvrActive(input)) return 0
+  const f = input.nvrFixedPrice
+  const hasFixed = f !== null && f !== undefined && String(f) !== ""
+  if (hasFixed) return num(f)
+  return round2(num(input.nvrShareholders) * PRICING_CONFIG.nvrUnitPrice)
+}
+
+/** One-time NVR start fee — due only until it has been billed once. */
+export function calcNvrStartFee(input: ClientPricingInput): number {
+  if (!nvrActive(input)) return 0
+  return input.nvrStartFeeCharged ? 0 : PRICING_CONFIG.nvrStartFee
+}
+
 /** Compute all derived prices for one client row. */
 export function priceClient(input: ClientPricingInput): ClientPricingResult {
   const notInvoiced = isNotInvoiced(input.kundnr)
   const fortnoxPrice = calcFortnoxPrice(input)
+  const nvrRecurring = calcNvrRecurring(input)
+  const nvrStartFee = calcNvrStartFee(input)
   return {
     fortnoxPrice,
     redaPrice: calcRedaPrice(input),
     diffVsList: fortnoxPrice - num(input.listPrice),
+    nvrRecurring,
+    nvrStartFee,
+    nvrPrice: round2(nvrRecurring + nvrStartFee),
     notInvoiced,
   }
 }

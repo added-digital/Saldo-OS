@@ -253,7 +253,70 @@ export function parseRedaGrid(
 }
 
 // ---------------------------------------------------------------------------
-// Merge → per-client cost rows (L / M / N / O)
+// 4. NVR file (aktiebok / share register)
+// ---------------------------------------------------------------------------
+
+export interface NvrData {
+  /** databaseNumber (resolved) → total shareholders (aktieägare). */
+  shareholdersByDatabase: Map<string, number>
+  /** Databases present in the NVR file ⇒ they have aktiebok as a service. */
+  presentDatabases: Set<string>
+  totalShareholders: number
+  companyCount: number
+  unmatched: { name: string; orgNumber: string; shareholders: number }[]
+}
+
+/**
+ * Parse the NVR "group account companies" export (header:
+ * Namn | Organisationsnummer | Kundnummer | … | Aktieägare | …). Columns are
+ * located by header name (falling back to fixed positions) so the export's
+ * column order can drift without breaking. Each company is resolved to a Fortnox
+ * database by org number, then by lowercased name; presence in the file means
+ * the client has the aktiebok service. Unmatched companies are reported, not
+ * billed (unlike Reda, aktiebok is not defaulted onto Saldo).
+ */
+export function parseNvrGrid(
+  grid: Grid,
+  clientsByOrg: Map<string, string>,
+  clientsByName: Map<string, string>,
+): NvrData {
+  const header = (grid[0] ?? []).map((c) => str(c).toLowerCase())
+  const findIdx = (pred: (h: string) => boolean, fallback: number) => {
+    const i = header.findIndex(pred)
+    return i === -1 ? fallback : i
+  }
+  const nameIdx = findIdx((h) => h === "namn", 0)
+  const orgIdx = findIdx((h) => h.startsWith("organisationsnummer"), 1)
+  const shIdx = findIdx((h) => h.startsWith("aktieägare") || h.startsWith("aktieagare"), 8)
+
+  const shareholdersByDatabase = new Map<string, number>()
+  const presentDatabases = new Set<string>()
+  const unmatched: NvrData["unmatched"] = []
+  let totalShareholders = 0
+  let companyCount = 0
+
+  for (let r = 1; r < grid.length; r++) {
+    const name = str(grid[r]?.[nameIdx])
+    if (!name) continue
+    companyCount += 1
+    const org = normalizeOrgNumber(str(grid[r]?.[orgIdx]))
+    const shareholders = numCell(grid[r]?.[shIdx])
+    totalShareholders += shareholders
+
+    const db = (org && clientsByOrg.get(org)) || clientsByName.get(name.toLowerCase())
+    if (!db) {
+      unmatched.push({ name, orgNumber: org ?? str(grid[r]?.[orgIdx]), shareholders })
+      continue
+    }
+    presentDatabases.add(db)
+    shareholdersByDatabase.set(db, (shareholdersByDatabase.get(db) ?? 0) + shareholders)
+  }
+
+  return { shareholdersByDatabase, presentDatabases, totalShareholders, companyCount, unmatched }
+}
+
+// ---------------------------------------------------------------------------
+// Merge → per-client cost rows (L / M / N / O + NVR)
 // ---------------------------------------------------------------------------
 
 export interface ClientCostRow {
@@ -268,8 +331,14 @@ export interface ClientCostRow {
   extraLicenseCost: number
   /** O — Reda cost. */
   redaCost: number
+  /** Number of shareholders (aktieägare) from the NVR file. */
+  nvrShareholders: number
+  /** True when the client appears in the NVR file (has aktiebok as a service). */
+  hasAktiebok: boolean
   /** True when only present via the client list (no Fortnox license lines). */
   clientListOnly: boolean
+  /** True when the company is only in the NVR file (aktiebok-only, no Fortnox/kundlista). */
+  nvrOnly: boolean
 }
 
 export interface UnknownArticle {
@@ -282,6 +351,7 @@ export interface MergeResult {
   rows: ClientCostRow[]
   unknownArticles: UnknownArticle[]
   redaUnmatched: RedaData["unmatched"]
+  nvrUnmatched: NvrData["unmatched"]
   period: string
 }
 
@@ -300,6 +370,7 @@ export function mergeToClientCostRows(
   fortnox: FortnoxLicenseData,
   kundlista: KundlistaEntry[],
   reda: RedaData | null,
+  nvr: NvrData | null,
   priceList: PriceListEntry[] = STANDARD_PRICE_LIST,
   redaUnitPrice: number = PRICING_CONFIG.redaUnitPrice,
   saldoDatabaseNumber: string = PRICING_CONFIG.saldoDatabaseNumber,
@@ -358,7 +429,10 @@ export function mergeToClientCostRows(
       fixedCost: round2(fixedUnits * fortnox.fixedUnitPrice),
       extraLicenseCost: round2(extra),
       redaCost: round2(scans * redaUnitPrice),
+      nvrShareholders: nvr?.shareholdersByDatabase.get(db) ?? 0,
+      hasAktiebok: nvr?.presentDatabases.has(db) ?? false,
       clientListOnly: !info.hasLicenses,
+      nvrOnly: false,
     })
   }
 
@@ -369,10 +443,43 @@ export function mergeToClientCostRows(
     if (saldo) saldo.fixedCost = round2(saldo.fixedCost + remainderUnits * fortnox.fixedUnitPrice)
   }
 
+  // Aktiebok-only companies: present in the NVR file but not in Fortnox/kundlista.
+  // They become their own billable rows (no Fortnox/Reda figures), keyed by org,
+  // so a client who only buys aktiebok is still visible and invoiceable. Only
+  // companies with no usable org number remain in the unmatched notice.
+  const nvrUnresolved: NvrData["unmatched"] = []
+  const existingOrgs = new Set(
+    rows.map((r) => r.orgNumber.replace(/\D/g, "")).filter(Boolean),
+  )
+  const seenNvrOnly = new Set<string>()
+  for (const u of nvr?.unmatched ?? []) {
+    const orgDigits = u.orgNumber.replace(/\D/g, "")
+    if (!orgDigits) {
+      nvrUnresolved.push(u)
+      continue
+    }
+    if (existingOrgs.has(orgDigits) || seenNvrOnly.has(orgDigits)) continue
+    seenNvrOnly.add(orgDigits)
+    rows.push({
+      databaseNumber: `NVR:${orgDigits}`,
+      orgNumber: u.orgNumber,
+      name: u.name,
+      listPrice: 0,
+      fixedCost: 0,
+      extraLicenseCost: 0,
+      redaCost: 0,
+      nvrShareholders: u.shareholders,
+      hasAktiebok: true,
+      clientListOnly: false,
+      nvrOnly: true,
+    })
+  }
+
   return {
     rows,
     unknownArticles: [...unknown.values()],
     redaUnmatched: reda?.unmatched ?? [],
+    nvrUnmatched: nvrUnresolved,
     period: fortnox.period,
   }
 }
