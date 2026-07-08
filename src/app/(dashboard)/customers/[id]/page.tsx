@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { use } from "react"
 import {
   ArrowLeft,
@@ -16,6 +16,10 @@ import {
   ChevronDown,
   User,
   UserPlus,
+  Link2,
+  Plus,
+  Sparkles,
+  ClipboardCheck,
   Pencil,
   Trash2,
   Linkedin,
@@ -30,6 +34,11 @@ import {
   EditContactDialog,
   type ContactFields,
 } from "@/components/app/edit-contact-dialog"
+import {
+  LinkExistingContactDialog,
+  type LinkableContact,
+} from "@/components/app/link-contact-dialog"
+import { OnboardingDot } from "@/components/app/onboarding-dot"
 import type {
   Customer,
   CustomerContact,
@@ -44,6 +53,18 @@ import { StatusBadge } from "@/components/app/status-badge"
 import { UserAvatar } from "@/components/app/user-avatar"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 import {
   Card,
   CardContent,
@@ -81,7 +102,19 @@ export default function CustomerDetailPage({
 }) {
   const { id } = use(params)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { confirmNavigation } = useUnsavedChanges()
+
+  // Onboarding mode: highlights the key setup steps (segments, contacts,
+  // bokslut) and shows a bottom action bar. Auto-enabled when arriving from the
+  // "needs onboarding" top-bar list (?onboarding=1); also toggleable manually.
+  const [onboarding, setOnboarding] = React.useState(false)
+  const [markingOnboarded, setMarkingOnboarded] = React.useState(false)
+  const [exitConfirmOpen, setExitConfirmOpen] = React.useState(false)
+
+  React.useEffect(() => {
+    if (searchParams.get("onboarding") === "1") setOnboarding(true)
+  }, [searchParams])
   const [customer, setCustomer] = React.useState<Customer | null>(null)
   const [accountManager, setAccountManager] = React.useState<Profile | null>(
     null,
@@ -94,6 +127,10 @@ export default function CustomerDetailPage({
     Record<string, { customerName: string; contactId: string; contactName: string }>
   >({})
   const [segments, setSegments] = React.useState<Segment[]>([])
+  // "Add segment" picker on this customer card.
+  const [segmentPopoverOpen, setSegmentPopoverOpen] = React.useState(false)
+  const [allSegments, setAllSegments] = React.useState<Segment[]>([])
+  const [segmentSearch, setSegmentSearch] = React.useState("")
   const [loading, setLoading] = React.useState(true)
   const [connectingSie, setConnectingSie] = React.useState(false)
   const [refreshingBv, setRefreshingBv] = React.useState(false)
@@ -107,6 +144,12 @@ export default function CustomerDetailPage({
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editingContact, setEditingContact] =
     React.useState<ContactWithLink | null>(null)
+
+  // "Link existing contact" dialog: attach a contact already in the system to
+  // this customer, rather than creating a new one.
+  const [linkDialogOpen, setLinkDialogOpen] = React.useState(false)
+  const [linkCandidates, setLinkCandidates] = React.useState<LinkableContact[]>([])
+  const [linkLoading, setLinkLoading] = React.useState(false)
 
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
   const [deletingContact, setDeletingContact] =
@@ -274,6 +317,75 @@ export default function CustomerDetailPage({
   function openAddDialog() {
     setEditingContact(null)
     setDialogOpen(true)
+  }
+
+  // Open the "link existing" picker and load candidate contacts — everyone in
+  // the system who isn't already linked to this customer, annotated with the
+  // other companies they belong to (shown as suggestions).
+  async function openLinkDialog() {
+    setLinkDialogOpen(true)
+    setLinkLoading(true)
+    setLinkCandidates([])
+
+    const supabase = createClient()
+    const { data: contactRows } = await supabase
+      .from("customer_contacts")
+      .select("id, name, role, email")
+      .order("name")
+
+    const rows = (contactRows ?? []) as Array<
+      Pick<CustomerContact, "id" | "name" | "role" | "email">
+    >
+    const alreadyLinkedIds = new Set(contacts.map((c) => c.id))
+    const candidateRows = rows.filter((r) => !alreadyLinkedIds.has(r.id))
+    const candidateIds = candidateRows.map((r) => r.id)
+
+    const companiesByContact = new Map<string, Array<{ id: string; name: string }>>()
+    if (candidateIds.length > 0) {
+      const { data: linkRows } = await supabase
+        .from("customer_contact_links")
+        .select("contact_id, customer:customers(id, name)")
+        .in("contact_id", candidateIds)
+
+      for (const row of (linkRows ?? []) as unknown as Array<{
+        contact_id: string
+        customer: { id: string; name: string } | null
+      }>) {
+        if (!row.customer) continue
+        const existing = companiesByContact.get(row.contact_id) ?? []
+        existing.push(row.customer)
+        companiesByContact.set(row.contact_id, existing)
+      }
+    }
+
+    setLinkCandidates(
+      candidateRows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        role: r.role,
+        email: r.email,
+        linked_customers: companiesByContact.get(r.id) ?? [],
+      })),
+    )
+    setLinkLoading(false)
+  }
+
+  async function handleLinkExisting(contactId: string) {
+    const supabase = createClient()
+    const { error } = await supabase.from("customer_contact_links").insert({
+      customer_id: id,
+      contact_id: contactId,
+      is_primary: false,
+      relationship_label: null,
+    } as never)
+
+    if (error) {
+      toast.error(t("customers.detail.contactLinkFailed", "Failed to link contact"))
+      throw error
+    }
+
+    toast.success(t("customers.detail.contactLinked", "Contact linked"))
+    await fetchData()
   }
 
   function openEditDialog(contact: ContactWithLink) {
@@ -602,12 +714,114 @@ export default function CustomerDetailPage({
       .eq("segment_id", segmentId)
 
     if (error) {
-      toast.error("Failed to remove segment")
+      toast.error(t("customers.detail.segmentRemoveFailed", "Failed to remove segment"))
       return
     }
 
     setSegments((prev) => prev.filter((s) => s.id !== segmentId))
-    toast.success("Segment removed")
+    toast.success(t("customers.detail.segmentRemoved", "Segment removed"))
+  }
+
+  async function handleMarkOnboarded() {
+    setMarkingOnboarded(true)
+    const supabase = createClient()
+    const { error } = await supabase
+      .from("customers")
+      .update({ needs_segmentation: false } as never)
+      .eq("id", id)
+    setMarkingOnboarded(false)
+
+    if (error) {
+      toast.error(t("customers.onboarding.markFailed", "Failed to mark as onboarded"))
+      return
+    }
+
+    // Let the top-bar onboarding badge drop this customer without a reload.
+    window.dispatchEvent(new Event("saldo:segmentation-updated"))
+    setOnboarding(false)
+    toast.success(t("customers.onboarding.marked", "Marked as onboarded"))
+  }
+
+  function handleSaveKeepOnboarding() {
+    setOnboarding(false)
+    toast.success(t("customers.onboarding.savedKept", "Saved — still in onboarding"))
+  }
+
+  function handleBackNavigation() {
+    if (onboarding) {
+      setExitConfirmOpen(true)
+      return
+    }
+    confirmNavigation(() => router.push("/customers"))
+  }
+
+  // Load the full segment list when the picker opens, so we can offer the ones
+  // not yet assigned to this customer.
+  async function handleSegmentPopoverChange(open: boolean) {
+    setSegmentPopoverOpen(open)
+    if (!open) {
+      setSegmentSearch("")
+      return
+    }
+    const supabase = createClient()
+    const { data } = await supabase.from("segments").select("*").order("name")
+    setAllSegments((data ?? []) as unknown as Segment[])
+  }
+
+  async function handleAddSegment(segment: Segment) {
+    const supabase = createClient()
+    const { error } = await supabase
+      .from("customer_segments")
+      .upsert({ customer_id: id, segment_id: segment.id } as never, {
+        onConflict: "customer_id,segment_id",
+      })
+
+    if (error) {
+      toast.error(t("customers.detail.segmentAddFailed", "Failed to add segment"))
+      return
+    }
+
+    setSegments((prev) =>
+      prev.some((s) => s.id === segment.id) ? prev : [...prev, segment],
+    )
+    setSegmentPopoverOpen(false)
+    setSegmentSearch("")
+    toast.success(t("customers.detail.segmentAdded", "Segment added"))
+  }
+
+  // Create a brand-new segment (when the search matches none) and immediately
+  // assign it to this customer.
+  async function handleCreateSegment(name: string) {
+    const trimmed = name.trim()
+    if (!trimmed) return
+
+    const supabase = createClient()
+    const palette = [
+      "#3b82f6",
+      "#10b981",
+      "#f59e0b",
+      "#ef4444",
+      "#8b5cf6",
+      "#ec4899",
+      "#14b8a6",
+    ]
+    const color = palette[Math.floor(Math.random() * palette.length)]
+
+    const { data, error } = await supabase
+      .from("segments")
+      .insert({ name: trimmed, description: null, color } as never)
+      .select()
+      .single()
+
+    if (error || !data) {
+      toast.error(t("customers.detail.segmentCreateFailed", "Failed to create segment"))
+      return
+    }
+
+    const created = data as unknown as Segment
+    setAllSegments((prev) => [...prev, created])
+    toast.success(t("customers.detail.segmentCreated", "Segment created"))
+    await handleAddSegment(created)
   }
 
   function handleConnectSie() {
@@ -704,13 +918,9 @@ export default function CustomerDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => confirmNavigation(() => router.push("/customers"))}
-        >
+        <Button variant="ghost" size="icon" onClick={handleBackNavigation}>
           <ArrowLeft className="size-4" />
-          <span className="sr-only">Back</span>
+          <span className="sr-only">{t("customers.detail.back", "Back")}</span>
         </Button>
         <PageHeader title={customer.name}>
           <StatusBadge status={customer.status} />
@@ -772,7 +982,9 @@ export default function CustomerDetailPage({
       <div className="grid gap-6 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Contact Information</CardTitle>
+            <CardTitle className="text-base">
+              {t("customers.detail.contactInformation", "Contact Information")}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {customer.contact_name && (
@@ -780,7 +992,7 @@ export default function CustomerDetailPage({
                 <User className="size-4 text-muted-foreground" />
                 <div>
                   <p className="text-xs text-muted-foreground">
-                    Primary Contact
+                    {t("customers.detail.primaryContact", "Primary Contact")}
                   </p>
                   <p className="text-sm">{customer.contact_name}</p>
                 </div>
@@ -790,7 +1002,9 @@ export default function CustomerDetailPage({
               <div className="flex items-center gap-3">
                 <Building2 className="size-4 text-muted-foreground" />
                 <div>
-                  <p className="text-xs text-muted-foreground">Org Number</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("customers.detail.orgNumber", "Org Number")}
+                  </p>
                   <p className="text-sm">{customer.org_number}</p>
                 </div>
               </div>
@@ -799,7 +1013,9 @@ export default function CustomerDetailPage({
               <div className="flex items-center gap-3">
                 <Mail className="size-4 text-muted-foreground" />
                 <div>
-                  <p className="text-xs text-muted-foreground">Email</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("customers.detail.email", "Email")}
+                  </p>
                   <p className="text-sm">{customer.email}</p>
                 </div>
               </div>
@@ -808,7 +1024,9 @@ export default function CustomerDetailPage({
               <div className="flex items-center gap-3">
                 <Phone className="size-4 text-muted-foreground" />
                 <div>
-                  <p className="text-xs text-muted-foreground">Phone</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("customers.detail.phone", "Phone")}
+                  </p>
                   <p className="text-sm">{customer.phone}</p>
                 </div>
               </div>
@@ -817,7 +1035,9 @@ export default function CustomerDetailPage({
               <div className="flex items-center gap-3">
                 <MapPin className="size-4 text-muted-foreground" />
                 <div>
-                  <p className="text-xs text-muted-foreground">Address</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("customers.detail.address", "Address")}
+                  </p>
                   <p className="text-sm">
                     {[
                       customer.address_line1,
@@ -838,12 +1058,17 @@ export default function CustomerDetailPage({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Details</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base">
+              {t("customers.detail.detailsTitle", "Details")}
+              {onboarding ? <OnboardingDot /> : null}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {accountManager ? (
               <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground">Account Manager</p>
+                <p className="text-xs text-muted-foreground">
+                  {t("customers.detail.accountManager", "Account Manager")}
+                </p>
                 <div className="flex items-center gap-3 rounded-md border p-3">
                   <UserAvatar
                     name={accountManager.full_name}
@@ -862,13 +1087,86 @@ export default function CustomerDetailPage({
               </div>
             ) : (
               <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground">Account Manager</p>
-                <p className="text-sm text-muted-foreground">Unassigned</p>
+                <p className="text-xs text-muted-foreground">
+                  {t("customers.detail.accountManager", "Account Manager")}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {t("customers.detail.unassigned", "Unassigned")}
+                </p>
               </div>
             )}
 
             <div className="space-y-1.5">
-              <p className="text-xs text-muted-foreground">Segments</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">
+                  {t("customers.detail.segments", "Segments")}
+                </p>
+                <Popover
+                  open={segmentPopoverOpen}
+                  onOpenChange={handleSegmentPopoverChange}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="h-6 gap-1 px-1.5 text-xs text-muted-foreground"
+                    >
+                      <Plus className="size-3" />
+                      {t("customers.detail.addSegment", "Add")}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-56 p-0">
+                    <Command>
+                      <CommandInput
+                        value={segmentSearch}
+                        onValueChange={setSegmentSearch}
+                        placeholder={t("customers.detail.searchSegments", "Search segments...")}
+                      />
+                      <CommandList>
+                        <CommandEmpty>
+                          {t("customers.detail.noSegmentsFound", "No segments found.")}
+                        </CommandEmpty>
+                        {allSegments
+                          .filter(
+                            (s) => !segments.some((assigned) => assigned.id === s.id),
+                          )
+                          .map((segment) => (
+                            <CommandItem
+                              key={segment.id}
+                              value={segment.name}
+                              onSelect={() => handleAddSegment(segment)}
+                              className="gap-2"
+                            >
+                              <span
+                                className="size-2.5 shrink-0 rounded-full"
+                                style={{ backgroundColor: segment.color }}
+                              />
+                              <span className="truncate">{segment.name}</span>
+                            </CommandItem>
+                          ))}
+                        {segmentSearch.trim() &&
+                        !allSegments.some(
+                          (s) =>
+                            s.name.trim().toLowerCase() ===
+                            segmentSearch.trim().toLowerCase(),
+                        ) ? (
+                          <CommandItem
+                            value={`__create__${segmentSearch}`}
+                            onSelect={() => handleCreateSegment(segmentSearch)}
+                            className="gap-2"
+                          >
+                            <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate">
+                              {t("customers.detail.createSegment", "Create")} &quot;
+                              {segmentSearch.trim()}&quot;
+                            </span>
+                          </CommandItem>
+                        ) : null}
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </div>
               {segments.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {segments.map((segment) => (
@@ -894,7 +1192,9 @@ export default function CustomerDetailPage({
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">No segments</p>
+                <p className="text-sm text-muted-foreground">
+                  {t("customers.detail.noSegments", "No segments")}
+                </p>
               )}
             </div>
 
@@ -902,11 +1202,15 @@ export default function CustomerDetailPage({
 
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Fortnox #</span>
+                <span className="text-muted-foreground">
+                  {t("customers.detail.fortnoxNumber", "Fortnox #")}
+                </span>
                 <span>{customer.fortnox_customer_number ?? "—"}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Last Synced</span>
+                <span className="text-muted-foreground">
+                  {t("customers.detail.lastSynced", "Last Synced")}
+                </span>
                 <span>
                   {customer.last_synced_at
                     ? formatDate(customer.last_synced_at)
@@ -914,7 +1218,9 @@ export default function CustomerDetailPage({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Created</span>
+                <span className="text-muted-foreground">
+                  {t("customers.detail.created", "Created")}
+                </span>
                 <span>{formatDate(customer.created_at)}</span>
               </div>
             </div>
@@ -925,17 +1231,26 @@ export default function CustomerDetailPage({
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base">Contacts</CardTitle>
-            <Button variant="outline" size="sm" onClick={openAddDialog}>
-              <UserPlus className="size-4" />
-              Add Contact
-            </Button>
+            <CardTitle className="flex items-center gap-2 text-base">
+              {t("customers.detail.contactsTitle", "Contacts")}
+              {onboarding ? <OnboardingDot /> : null}
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={openLinkDialog}>
+                <Link2 className="size-4" />
+                {t("customers.detail.linkExisting", "Link existing")}
+              </Button>
+              <Button variant="outline" size="sm" onClick={openAddDialog}>
+                <UserPlus className="size-4" />
+                {t("customers.detail.addContact", "Add Contact")}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           {contacts.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No contacts added yet.
+              {t("customers.detail.noContacts", "No contacts added yet.")}
             </p>
           ) : (
             <div className="space-y-3">
@@ -958,7 +1273,7 @@ export default function CustomerDetailPage({
                         <p className="text-sm font-medium">{contact.name}</p>
                         {isPrimaryForCurrentCustomer ? (
                           <Badge variant="secondary" className="text-[11px] font-medium">
-                            Primary
+                            {t("customers.detail.primaryBadge", "Primary")}
                           </Badge>
                         ) : null}
                       </div>
@@ -1022,7 +1337,7 @@ export default function CustomerDetailPage({
                       onClick={() => openEditDialog(contact)}
                     >
                       <Pencil className="size-3.5" />
-                      <span className="sr-only">Edit</span>
+                      <span className="sr-only">{t("customers.detail.editContact", "Edit")}</span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -1031,7 +1346,7 @@ export default function CustomerDetailPage({
                       onClick={() => openDeleteDialog(contact)}
                     >
                       <Trash2 className="size-3.5" />
-                      <span className="sr-only">Delete</span>
+                      <span className="sr-only">{t("customers.detail.deleteContact", "Delete")}</span>
                     </Button>
                   </div>
                 </div>
@@ -1042,7 +1357,7 @@ export default function CustomerDetailPage({
         </CardContent>
       </Card>
 
-      <CustomerBokslutSetup customerId={customer.id} />
+      <CustomerBokslutSetup customerId={customer.id} highlight={onboarding} />
 
       {customer.fortnox_raw && (
         <Collapsible>
@@ -1050,7 +1365,7 @@ export default function CustomerDetailPage({
             <CollapsibleTrigger asChild>
               <CardHeader className="cursor-pointer">
                 <CardTitle className="flex items-center justify-between text-base">
-                  Fortnox Raw Data
+                  {t("customers.detail.fortnoxRawData", "Fortnox Raw Data")}
                   <ChevronDown className="size-4 text-muted-foreground transition-transform [[data-state=open]_&]:rotate-180" />
                 </CardTitle>
               </CardHeader>
@@ -1089,17 +1404,32 @@ export default function CustomerDetailPage({
         onSave={handleSaveContact}
       />
 
+      <LinkExistingContactDialog
+        open={linkDialogOpen}
+        onOpenChange={setLinkDialogOpen}
+        contacts={linkCandidates}
+        loading={linkLoading}
+        onLink={handleLinkExisting}
+      />
+
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Remove Contact</DialogTitle>
+            <DialogTitle>
+              {t("customers.detail.removeContactTitle", "Remove Contact")}
+            </DialogTitle>
             <DialogDescription>
-              Are you sure you want to remove{" "}
+              {t(
+                "customers.detail.removeContactConfirmPrefix",
+                "Are you sure you want to remove ",
+              )}
               <span className="font-medium text-foreground">
                 {deletingContact?.name}
-              </span>{" "}
-              from this customer? If this contact is not linked to any other
-              customers, they will be permanently deleted.
+              </span>
+              {t(
+                "customers.detail.removeContactConfirmSuffix",
+                " from this customer? If this contact is not linked to any other customers, they will be permanently deleted.",
+              )}
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">
@@ -1107,14 +1437,69 @@ export default function CustomerDetailPage({
               variant="outline"
               onClick={() => setDeleteDialogOpen(false)}
             >
-              Cancel
+              {t("customers.detail.cancel", "Cancel")}
             </Button>
             <Button
               variant="destructive"
               onClick={handleDelete}
               disabled={deleting}
             >
-              {deleting ? "Removing..." : "Remove Contact"}
+              {deleting
+                ? t("customers.detail.removing", "Removing...")
+                : t("customers.detail.removeContactTitle", "Remove Contact")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {onboarding ? (
+        <div className="fixed inset-x-0 bottom-4 z-50 mx-auto max-w-[700px] rounded-lg border bg-background/95 px-6 py-3 shadow-lg backdrop-blur supports-backdrop-filter:bg-background/80">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-4 text-semantic-success" />
+              <span className="text-sm font-medium">
+                {t("customers.onboarding.barLabel", "Onboarding")}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handleSaveKeepOnboarding}>
+                {t("customers.onboarding.saveKeep", "Save & keep in onboarding")}
+              </Button>
+              <Button size="sm" onClick={handleMarkOnboarded} disabled={markingOnboarded}>
+                <ClipboardCheck className="size-4" />
+                {markingOnboarded
+                  ? t("customers.onboarding.marking", "Saving…")
+                  : t("customers.onboarding.markDone", "Mark as onboarded")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <Dialog open={exitConfirmOpen} onOpenChange={setExitConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {t("customers.onboarding.leaveTitle", "Leave onboarding?")}
+            </DialogTitle>
+            <DialogDescription>
+              {t(
+                "customers.onboarding.leaveDescription",
+                "Your changes are saved. This customer will stay flagged for onboarding until you mark it as onboarded.",
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setExitConfirmOpen(false)}>
+              {t("customers.onboarding.stay", "Stay")}
+            </Button>
+            <Button
+              onClick={() => {
+                setExitConfirmOpen(false)
+                confirmNavigation(() => router.push("/customers"))
+              }}
+            >
+              {t("customers.onboarding.leave", "Leave")}
             </Button>
           </div>
         </DialogContent>

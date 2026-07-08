@@ -80,11 +80,14 @@ export function SegmentationAlert() {
           {items.map((c) => (
             <Link
               key={c.id}
-              href={`/customers/${c.id}`}
+              href={`/customers/${c.id}?onboarding=1`}
               onClick={() => setOpen(false)}
-              className="block truncate px-3 py-2 text-sm transition-colors hover:bg-muted"
+              className="group flex items-center justify-between gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted"
             >
-              {c.name}
+              <span className="truncate">{c.name}</span>
+              <span className="shrink-0 text-xs font-medium text-brand-primary opacity-0 transition-opacity group-hover:opacity-100">
+                {t("topbar.needsSegmentation.action", "Onboard")}
+              </span>
             </Link>
           ))}
         </div>

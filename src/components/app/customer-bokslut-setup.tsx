@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { DateInput } from "@/components/ui/date-input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { OnboardingDot } from "@/components/app/onboarding-dot"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -70,7 +71,13 @@ function formatYearEnd(iso: string | null): string {
  * This is the source of truth — the Bokslut board reads these read-only.
  * Saving also clears the customer's needs_segmentation flag.
  */
-export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
+export function CustomerBokslutSetup({
+  customerId,
+  highlight = false,
+}: {
+  customerId: string
+  highlight?: boolean
+}) {
   const { t } = useTranslation()
   const { collapsed } = useSidebar()
   const [fields, setFields] = React.useState<EngagementChecklistField[]>([])
@@ -248,7 +255,10 @@ export function CustomerBokslutSetup({ customerId }: { customerId: string }) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2">
-        <CardTitle className="text-base">{t("customers.bokslut.title", "Bokslut setup")}</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          {t("customers.bokslut.title", "Bokslut setup")}
+          {highlight ? <OnboardingDot /> : null}
+        </CardTitle>
         {needsSegmentation ? (
           <Badge variant="outline" className="border-semantic-warning/40 text-semantic-warning">
             {t("customers.bokslut.needsSegmentation", "Needs segmentation")}

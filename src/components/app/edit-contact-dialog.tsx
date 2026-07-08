@@ -3,6 +3,7 @@
 import * as React from "react"
 
 import type { Customer } from "@/types/database"
+import { useTranslation } from "@/hooks/use-translation"
 import { CustomerMultiSelect } from "@/components/app/customer-multi-select"
 import { Button } from "@/components/ui/button"
 import {
@@ -76,6 +77,7 @@ const EMPTY_FORM = {
 
 function EditContactDialog(props: EditContactDialogProps) {
   const { open, onOpenChange, customers } = props
+  const { t } = useTranslation()
 
   const [form, setForm] = React.useState(EMPTY_FORM)
   const [saving, setSaving] = React.useState(false)
@@ -174,21 +176,25 @@ function EditContactDialog(props: EditContactDialogProps) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {isAdding ? "Add Contact" : "Edit Contact"}
+            {isAdding
+              ? t("customers.contactDialog.addTitle", "Add Contact")
+              : t("customers.contactDialog.editTitle", "Edit Contact")}
           </DialogTitle>
           <DialogDescription>
             {isAdding
-              ? "Add a new contact person."
-              : "Update the contact details."}
+              ? t("customers.contactDialog.addDescription", "Add a new contact person.")
+              : t("customers.contactDialog.editDescription", "Update the contact details.")}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="contact-first-name">First Name</Label>
+              <Label htmlFor="contact-first-name">
+                {t("customers.contactDialog.firstName", "First Name")}
+              </Label>
               <Input
                 id="contact-first-name"
-                placeholder="First name"
+                placeholder={t("customers.contactDialog.firstNamePlaceholder", "First name")}
                 value={form.firstName}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, firstName: e.target.value }))
@@ -198,10 +204,12 @@ function EditContactDialog(props: EditContactDialogProps) {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="contact-last-name">Last Name</Label>
+              <Label htmlFor="contact-last-name">
+                {t("customers.contactDialog.lastName", "Last Name")}
+              </Label>
               <Input
                 id="contact-last-name"
-                placeholder="Last name"
+                placeholder={t("customers.contactDialog.lastNamePlaceholder", "Last name")}
                 value={form.lastName}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, lastName: e.target.value }))
@@ -209,10 +217,12 @@ function EditContactDialog(props: EditContactDialogProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="contact-role">Role</Label>
+              <Label htmlFor="contact-role">
+                {t("customers.contactDialog.role", "Role")}
+              </Label>
               <Input
                 id="contact-role"
-                placeholder="e.g. CEO, CFO"
+                placeholder={t("customers.contactDialog.rolePlaceholder", "e.g. CEO, CFO")}
                 value={form.role}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, role: e.target.value }))
@@ -222,11 +232,13 @@ function EditContactDialog(props: EditContactDialogProps) {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="contact-email">Email</Label>
+              <Label htmlFor="contact-email">
+                {t("customers.contactDialog.email", "Email")}
+              </Label>
               <Input
                 id="contact-email"
                 type="email"
-                placeholder="email@example.com"
+                placeholder={t("customers.contactDialog.emailPlaceholder", "email@example.com")}
                 value={form.email}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, email: e.target.value }))
@@ -234,11 +246,13 @@ function EditContactDialog(props: EditContactDialogProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="contact-phone">Phone</Label>
+              <Label htmlFor="contact-phone">
+                {t("customers.contactDialog.phone", "Phone")}
+              </Label>
               <Input
                 id="contact-phone"
                 type="tel"
-                placeholder="+46 70 123 45 67"
+                placeholder={t("customers.contactDialog.phonePlaceholder", "+46 70 123 45 67")}
                 value={form.phone}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, phone: e.target.value }))
@@ -247,10 +261,12 @@ function EditContactDialog(props: EditContactDialogProps) {
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="contact-linkedin">LinkedIn</Label>
+            <Label htmlFor="contact-linkedin">
+              {t("customers.contactDialog.linkedin", "LinkedIn")}
+            </Label>
             <Input
               id="contact-linkedin"
-              placeholder="https://linkedin.com/in/..."
+              placeholder={t("customers.contactDialog.linkedinPlaceholder", "https://linkedin.com/in/...")}
               value={form.linkedin}
               onChange={(e) =>
                 setForm((prev) => ({ ...prev, linkedin: e.target.value }))
@@ -258,10 +274,12 @@ function EditContactDialog(props: EditContactDialogProps) {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="contact-notes">Notes</Label>
+            <Label htmlFor="contact-notes">
+              {t("customers.contactDialog.notes", "Notes")}
+            </Label>
             <Input
               id="contact-notes"
-              placeholder="Additional notes..."
+              placeholder={t("customers.contactDialog.notesPlaceholder", "Additional notes...")}
               value={form.notes}
               onChange={(e) =>
                 setForm((prev) => ({ ...prev, notes: e.target.value }))
@@ -269,7 +287,7 @@ function EditContactDialog(props: EditContactDialogProps) {
             />
           </div>
           <div className="space-y-2">
-            <Label>Primary contact for</Label>
+            <Label>{t("customers.contactDialog.primaryFor", "Primary contact for")}</Label>
             <CustomerMultiSelect
               customers={customers}
               selectedIds={primaryCustomerIds}
@@ -277,7 +295,7 @@ function EditContactDialog(props: EditContactDialogProps) {
             />
           </div>
           <div className="space-y-2">
-            <Label>Contact for</Label>
+            <Label>{t("customers.contactDialog.contactFor", "Contact for")}</Label>
             <CustomerMultiSelect
               customers={customers}
               selectedIds={customerIds}
@@ -288,14 +306,20 @@ function EditContactDialog(props: EditContactDialogProps) {
             <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
               {primaryReplacementWarnings.map((warning) => (
                 <p key={`${warning.customerName}-${warning.contactId}`}>
-                  {warning.customerName}: primary contact relation with {warning.contactName} will be removed. If that contact has no relationships left, it will be deleted.
+                  {warning.customerName}:{" "}
+                  {t("customers.contactDialog.warningPrefix", "primary contact relation with")}{" "}
+                  {warning.contactName}{" "}
+                  {t(
+                    "customers.contactDialog.warningSuffix",
+                    "will be removed. If that contact has no relationships left, it will be deleted.",
+                  )}
                 </p>
               ))}
             </div>
           ) : null}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t("customers.contactDialog.cancel", "Cancel")}
             </Button>
             <Button
               onClick={handleSave}
@@ -305,10 +329,10 @@ function EditContactDialog(props: EditContactDialogProps) {
               }
             >
               {saving
-                ? "Saving..."
+                ? t("customers.contactDialog.saving", "Saving...")
                 : isAdding
-                  ? "Add Contact"
-                  : "Update Contact"}
+                  ? t("customers.contactDialog.add", "Add Contact")
+                  : t("customers.contactDialog.update", "Update Contact")}
             </Button>
           </div>
         </div>

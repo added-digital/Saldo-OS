@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Check, ChevronDown, X } from "lucide-react"
 
+import { useTranslation } from "@/hooks/use-translation"
 import { Button } from "@/components/ui/button"
 import {
   Command,
@@ -40,6 +41,7 @@ export function CustomerMultiSelect({
   onChange,
   lockedIds = [],
 }: CustomerMultiSelectProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
   const selectedCustomers = customers.filter((customer) => selectedIds.includes(customer.id))
   const lockedIdSet = new Set(lockedIds)
@@ -65,17 +67,17 @@ export function CustomerMultiSelect({
           <Button variant="outline" className="w-full justify-between font-normal">
             <span className="truncate">
               {selectedCustomers.length > 0
-                ? `${selectedCustomers.length} customer${selectedCustomers.length === 1 ? "" : "s"} selected`
-                : "Select customers"}
+                ? `${selectedCustomers.length} ${t("customers.multiSelect.selectedSuffix", "selected")}`
+                : t("customers.multiSelect.placeholder", "Select customers")}
             </span>
             <ChevronDown className="size-4 text-muted-foreground" />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-(--radix-popover-trigger-width) p-0" align="start">
           <Command filter={(commandValue, search) => prefixFilterScore(commandValue, search)}>
-            <CommandInput placeholder="Search customers..." />
+            <CommandInput placeholder={t("customers.multiSelect.searchPlaceholder", "Search customers...")} />
             <CommandList>
-              <CommandEmpty>No customers found.</CommandEmpty>
+              <CommandEmpty>{t("customers.multiSelect.empty", "No customers found.")}</CommandEmpty>
               {customers.map((customer) => {
                 const selected = selectedIds.includes(customer.id)
                 const locked = lockedIdSet.has(customer.id)
@@ -96,7 +98,7 @@ export function CustomerMultiSelect({
                         </span>
                       )}
                     </div>
-                    {locked && <span className="text-xs text-muted-foreground">Current</span>}
+                    {locked && <span className="text-xs text-muted-foreground">{t("customers.multiSelect.current", "Current")}</span>}
                   </CommandItem>
                 )
               })}
@@ -123,7 +125,7 @@ export function CustomerMultiSelect({
                     onClick={() => removeCustomer(customer.id)}
                   >
                     <X className="size-3" />
-                    <span className="sr-only">Remove {customer.name}</span>
+                    <span className="sr-only">{t("customers.multiSelect.remove", "Remove")} {customer.name}</span>
                   </button>
                 )}
               </span>
