@@ -204,6 +204,11 @@ export function PricingResultsTable({
           // top, and give it both the header and right-edge dividers.
           "[&_thead_th:first-child]:sticky [&_thead_th:first-child]:left-0 [&_thead_th:first-child]:z-30",
           "[&_thead_th:first-child]:shadow-[inset_-1px_0_0_var(--color-border-default),inset_0_1px_0_var(--color-border-default),inset_0_-1px_0_var(--color-border-default)]",
+          // Drop the static borders now drawn by the box-shadow dividers, else
+          // they double up: the header row's bottom border and the first
+          // column's right border.
+          "[&_thead_tr]:border-b-0",
+          "[&_thead_th:first-child]:border-r-0 [&_tbody_td:first-child]:border-r-0",
         )}
       >
         <Table className="min-w-[1720px]">
