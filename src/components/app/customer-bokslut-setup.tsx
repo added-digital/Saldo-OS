@@ -1,16 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
-import { useSidebar } from "@/components/layout/sidebar"
 import { useUnsavedChangesGuard } from "@/components/app/unsaved-changes"
 import type { ChecklistValue, EngagementChecklistField } from "@/types/engagement"
-import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { DateInput } from "@/components/ui/date-input"
@@ -71,15 +68,21 @@ function formatYearEnd(iso: string | null): string {
  * This is the source of truth — the Bokslut board reads these read-only.
  * Saving also clears the customer's needs_segmentation flag.
  */
-export function CustomerBokslutSetup({
-  customerId,
-  highlight = false,
-}: {
-  customerId: string
-  highlight?: boolean
-}) {
+export interface BokslutSetupHandle {
+  dirty: boolean
+  save: () => Promise<void>
+  discard: () => void
+}
+
+export const CustomerBokslutSetup = React.forwardRef<
+  BokslutSetupHandle,
+  {
+    customerId: string
+    highlight?: boolean
+    onDirtyChange?: (dirty: boolean) => void
+  }
+>(function CustomerBokslutSetup({ customerId, highlight = false, onDirtyChange }, ref) {
   const { t } = useTranslation()
-  const { collapsed } = useSidebar()
   const [fields, setFields] = React.useState<EngagementChecklistField[]>([])
   const [setup, setSetup] = React.useState<Record<string, ChecklistValue>>({})
   const [needsSegmentation, setNeedsSegmentation] = React.useState(false)
@@ -115,6 +118,18 @@ export function CustomerBokslutSetup({
 
   // Report unsaved changes to the app-wide navigation guard.
   useUnsavedChangesGuard(dirty, `bokslut-setup:${customerId}`)
+
+  // Let the parent (customer card) know whether we currently have unsaved
+  // changes, so it can step its onboarding bar out of the save bar's way.
+  React.useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
+
+  // The onboarding dot flags this card only while it's still untouched: no saved
+  // setup and not marked "not relevant". Editing (dirty) hands off to the amber
+  // unsaved-changes bar, and a saved setup clears it for good.
+  const bokslutConfigured = Object.keys(setup).length > 0 || !bokslutRelevant
+  const showOnboardingDot = highlight && !dirty && !bokslutConfigured
 
   React.useEffect(() => {
     let cancelled = false
@@ -247,6 +262,13 @@ export function CustomerBokslutSetup({
     setBokslutRelevant(savedRef.current.bokslutRelevant)
   }
 
+  // Let the customer card drive save/discard from its shared save bar.
+  React.useImperativeHandle(ref, () => ({
+    dirty,
+    save: handleSave,
+    discard: handleDiscard,
+  }))
+
   if (loading) {
     return <Skeleton className="h-40 w-full rounded-lg" />
   }
@@ -257,7 +279,7 @@ export function CustomerBokslutSetup({
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <CardTitle className="flex items-center gap-2 text-base">
           {t("customers.bokslut.title", "Bokslut setup")}
-          {highlight ? <OnboardingDot /> : null}
+          {showOnboardingDot ? <OnboardingDot /> : null}
         </CardTitle>
         {needsSegmentation ? (
           <Badge variant="outline" className="border-semantic-warning/40 text-semantic-warning">
@@ -432,43 +454,6 @@ export function CustomerBokslutSetup({
 
       </CardContent>
 
-      {/* Floating save bar — appears only when there are unsaved changes. */}
-      {dirty ? (
-        <div
-          className="pointer-events-none fixed bottom-6 right-0 z-40 flex justify-center px-4 transition-[left] duration-200"
-          style={{
-            left: collapsed
-              ? "var(--sidebar-width-collapsed)"
-              : "var(--sidebar-width)",
-          }}
-        >
-          <div className="pointer-events-auto flex items-center gap-3 rounded-lg border bg-background/95 py-2 pl-4 pr-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
-            <span className="flex items-center gap-2 text-sm font-medium">
-              <span className="relative flex size-2">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-semantic-warning opacity-60" />
-                <span className="relative inline-flex size-2 rounded-full bg-semantic-warning" />
-              </span>
-              {t("customers.bokslut.unsaved", "Unsaved changes")}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleDiscard}
-                disabled={saving}
-              >
-                {t("customers.bokslut.discard", "Discard")}
-              </Button>
-              <Button onClick={handleSave} disabled={saving} size="sm">
-                {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-                {saving
-                  ? t("customers.bokslut.saving", "Saving…")
-                  : t("customers.bokslut.save", "Save setup")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </Card>
   )
-}
+})

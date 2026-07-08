@@ -20,6 +20,7 @@ import {
   Plus,
   Sparkles,
   ClipboardCheck,
+  Loader2,
   Pencil,
   Trash2,
   Linkedin,
@@ -47,8 +48,15 @@ import type {
   Segment,
 } from "@/types/database"
 import { PageHeader } from "@/components/app/page-header"
-import { CustomerBokslutSetup } from "@/components/app/customer-bokslut-setup"
-import { useUnsavedChanges } from "@/components/app/unsaved-changes"
+import {
+  CustomerBokslutSetup,
+  type BokslutSetupHandle,
+} from "@/components/app/customer-bokslut-setup"
+import {
+  useUnsavedChanges,
+  useUnsavedChangesGuard,
+} from "@/components/app/unsaved-changes"
+import { useSidebar } from "@/components/layout/sidebar"
 import { StatusBadge } from "@/components/app/status-badge"
 import { UserAvatar } from "@/components/app/user-avatar"
 import { Button } from "@/components/ui/button"
@@ -109,8 +117,15 @@ export default function CustomerDetailPage({
   // bokslut) and shows a bottom action bar. Auto-enabled when arriving from the
   // "needs onboarding" top-bar list (?onboarding=1); also toggleable manually.
   const [onboarding, setOnboarding] = React.useState(false)
-  const [markingOnboarded, setMarkingOnboarded] = React.useState(false)
-  const [exitConfirmOpen, setExitConfirmOpen] = React.useState(false)
+  const [savingCard, setSavingCard] = React.useState(false)
+  // Bokslut card reports its unsaved state here and exposes save/discard so the
+  // shared card save bar can commit everything together.
+  const [bokslutDirty, setBokslutDirty] = React.useState(false)
+  const bokslutRef = React.useRef<BokslutSetupHandle>(null)
+  // Staged (not-yet-saved) segment assignments/removals for this customer.
+  const [pendingSegmentAdds, setPendingSegmentAdds] = React.useState<Segment[]>([])
+  const [pendingSegmentRemoveIds, setPendingSegmentRemoveIds] = React.useState<string[]>([])
+  const { collapsed } = useSidebar()
 
   React.useEffect(() => {
     if (searchParams.get("onboarding") === "1") setOnboarding(true)
@@ -313,6 +328,19 @@ export default function CustomerDetailPage({
       return a.name.localeCompare(b.name)
     })
   }, [contacts, id])
+
+  // Saved segments minus staged removals, plus staged additions.
+  const visibleSegments = React.useMemo(() => {
+    const kept = segments.filter((s) => !pendingSegmentRemoveIds.includes(s.id))
+    return [...kept, ...pendingSegmentAdds]
+  }, [segments, pendingSegmentAdds, pendingSegmentRemoveIds])
+
+  const segmentsDirty =
+    pendingSegmentAdds.length > 0 || pendingSegmentRemoveIds.length > 0
+  const cardDirty = segmentsDirty || bokslutDirty
+
+  // Warn on navigation while segment edits are staged (bokslut registers its own).
+  useUnsavedChangesGuard(segmentsDirty, `segments:${id}`)
 
   function openAddDialog() {
     setEditingContact(null)
@@ -704,93 +732,32 @@ export default function CustomerDetailPage({
     fetchData()
   }
 
-  async function handleRemoveSegment(segmentId: string) {
-    const supabase = createClient()
-
-    const { error } = await supabase
-      .from("customer_segments")
-      .delete()
-      .eq("customer_id", id)
-      .eq("segment_id", segmentId)
-
-    if (error) {
-      toast.error(t("customers.detail.segmentRemoveFailed", "Failed to remove segment"))
+  // Stage a segment removal (or cancel a staged add). Nothing hits the DB until
+  // the shared save bar's Save.
+  function stageRemoveSegment(segmentId: string) {
+    if (pendingSegmentAdds.some((s) => s.id === segmentId)) {
+      setPendingSegmentAdds((prev) => prev.filter((s) => s.id !== segmentId))
       return
     }
-
-    setSegments((prev) => prev.filter((s) => s.id !== segmentId))
-    toast.success(t("customers.detail.segmentRemoved", "Segment removed"))
-  }
-
-  async function handleMarkOnboarded() {
-    setMarkingOnboarded(true)
-    const supabase = createClient()
-    const { error } = await supabase
-      .from("customers")
-      .update({ needs_segmentation: false } as never)
-      .eq("id", id)
-    setMarkingOnboarded(false)
-
-    if (error) {
-      toast.error(t("customers.onboarding.markFailed", "Failed to mark as onboarded"))
-      return
-    }
-
-    // Let the top-bar onboarding badge drop this customer without a reload.
-    window.dispatchEvent(new Event("saldo:segmentation-updated"))
-    setOnboarding(false)
-    toast.success(t("customers.onboarding.marked", "Marked as onboarded"))
-  }
-
-  function handleSaveKeepOnboarding() {
-    setOnboarding(false)
-    toast.success(t("customers.onboarding.savedKept", "Saved — still in onboarding"))
-  }
-
-  function handleBackNavigation() {
-    if (onboarding) {
-      setExitConfirmOpen(true)
-      return
-    }
-    confirmNavigation(() => router.push("/customers"))
-  }
-
-  // Load the full segment list when the picker opens, so we can offer the ones
-  // not yet assigned to this customer.
-  async function handleSegmentPopoverChange(open: boolean) {
-    setSegmentPopoverOpen(open)
-    if (!open) {
-      setSegmentSearch("")
-      return
-    }
-    const supabase = createClient()
-    const { data } = await supabase.from("segments").select("*").order("name")
-    setAllSegments((data ?? []) as unknown as Segment[])
-  }
-
-  async function handleAddSegment(segment: Segment) {
-    const supabase = createClient()
-    const { error } = await supabase
-      .from("customer_segments")
-      .upsert({ customer_id: id, segment_id: segment.id } as never, {
-        onConflict: "customer_id,segment_id",
-      })
-
-    if (error) {
-      toast.error(t("customers.detail.segmentAddFailed", "Failed to add segment"))
-      return
-    }
-
-    setSegments((prev) =>
-      prev.some((s) => s.id === segment.id) ? prev : [...prev, segment],
+    setPendingSegmentRemoveIds((prev) =>
+      prev.includes(segmentId) ? prev : [...prev, segmentId],
     )
+  }
+
+  // Stage a segment assignment (or cancel a staged removal).
+  function stageAddSegment(segment: Segment) {
     setSegmentPopoverOpen(false)
     setSegmentSearch("")
-    toast.success(t("customers.detail.segmentAdded", "Segment added"))
+    if (pendingSegmentRemoveIds.includes(segment.id)) {
+      setPendingSegmentRemoveIds((prev) => prev.filter((sid) => sid !== segment.id))
+      return
+    }
+    if (segments.some((s) => s.id === segment.id)) return
+    if (pendingSegmentAdds.some((s) => s.id === segment.id)) return
+    setPendingSegmentAdds((prev) => [...prev, segment])
   }
 
-  // Create a brand-new segment (when the search matches none) and immediately
-  // assign it to this customer.
+  // Create a brand-new segment (when the search matches none), then stage it.
   async function handleCreateSegment(name: string) {
     const trimmed = name.trim()
     if (!trimmed) return
@@ -820,8 +787,105 @@ export default function CustomerDetailPage({
 
     const created = data as unknown as Segment
     setAllSegments((prev) => [...prev, created])
-    toast.success(t("customers.detail.segmentCreated", "Segment created"))
-    await handleAddSegment(created)
+    stageAddSegment(created)
+  }
+
+  // Commit staged segment adds/removals to the DB. Returns false on failure.
+  async function commitSegments(): Promise<boolean> {
+    const supabase = createClient()
+
+    if (pendingSegmentAdds.length > 0) {
+      const rows = pendingSegmentAdds.map((s) => ({
+        customer_id: id,
+        segment_id: s.id,
+      }))
+      const { error } = await supabase
+        .from("customer_segments")
+        .upsert(rows as never[], { onConflict: "customer_id,segment_id" })
+      if (error) {
+        toast.error(t("customers.detail.segmentAddFailed", "Failed to add segment"))
+        return false
+      }
+    }
+
+    if (pendingSegmentRemoveIds.length > 0) {
+      const { error } = await supabase
+        .from("customer_segments")
+        .delete()
+        .eq("customer_id", id)
+        .in("segment_id", pendingSegmentRemoveIds)
+      if (error) {
+        toast.error(t("customers.detail.segmentRemoveFailed", "Failed to remove segment"))
+        return false
+      }
+    }
+
+    setSegments((prev) => {
+      const kept = prev.filter((s) => !pendingSegmentRemoveIds.includes(s.id))
+      const added = pendingSegmentAdds.filter((s) => !kept.some((k) => k.id === s.id))
+      return [...kept, ...added]
+    })
+    setPendingSegmentAdds([])
+    setPendingSegmentRemoveIds([])
+    return true
+  }
+
+  // ---- Shared card save bar (bokslut + segments) --------------------------
+
+  async function handleSaveAll() {
+    setSavingCard(true)
+    const ok = await commitSegments()
+    if (ok && bokslutRef.current?.dirty) {
+      await bokslutRef.current.save()
+    }
+    setSavingCard(false)
+    if (ok) toast.success(t("customers.detail.changesSaved", "Changes saved"))
+  }
+
+  function handleDiscardAll() {
+    setPendingSegmentAdds([])
+    setPendingSegmentRemoveIds([])
+    bokslutRef.current?.discard()
+  }
+
+  async function handleMarkOnboarded() {
+    setSavingCard(true)
+    const ok = await commitSegments()
+    if (!ok) {
+      setSavingCard(false)
+      return
+    }
+    if (bokslutRef.current?.dirty) {
+      await bokslutRef.current.save()
+    }
+    const supabase = createClient()
+    const { error } = await supabase
+      .from("customers")
+      .update({ needs_segmentation: false } as never)
+      .eq("id", id)
+    setSavingCard(false)
+
+    if (error) {
+      toast.error(t("customers.onboarding.markFailed", "Failed to mark as onboarded"))
+      return
+    }
+
+    window.dispatchEvent(new Event("saldo:segmentation-updated"))
+    setOnboarding(false)
+    toast.success(t("customers.onboarding.marked", "Marked as onboarded"))
+  }
+
+  // Load the full segment list when the picker opens, so we can offer the ones
+  // not yet assigned to this customer.
+  async function handleSegmentPopoverChange(open: boolean) {
+    setSegmentPopoverOpen(open)
+    if (!open) {
+      setSegmentSearch("")
+      return
+    }
+    const supabase = createClient()
+    const { data } = await supabase.from("segments").select("*").order("name")
+    setAllSegments((data ?? []) as unknown as Segment[])
   }
 
   function handleConnectSie() {
@@ -918,7 +982,11 @@ export default function CustomerDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={handleBackNavigation}>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => confirmNavigation(() => router.push("/customers"))}
+        >
           <ArrowLeft className="size-4" />
           <span className="sr-only">{t("customers.detail.back", "Back")}</span>
         </Button>
@@ -1060,7 +1128,7 @@ export default function CustomerDetailPage({
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               {t("customers.detail.detailsTitle", "Details")}
-              {onboarding ? <OnboardingDot /> : null}
+              {onboarding && visibleSegments.length === 0 ? <OnboardingDot /> : null}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1128,13 +1196,13 @@ export default function CustomerDetailPage({
                         </CommandEmpty>
                         {allSegments
                           .filter(
-                            (s) => !segments.some((assigned) => assigned.id === s.id),
+                            (s) => !visibleSegments.some((assigned) => assigned.id === s.id),
                           )
                           .map((segment) => (
                             <CommandItem
                               key={segment.id}
                               value={segment.name}
-                              onSelect={() => handleAddSegment(segment)}
+                              onSelect={() => stageAddSegment(segment)}
                               className="gap-2"
                             >
                               <span
@@ -1167,9 +1235,9 @@ export default function CustomerDetailPage({
                   </PopoverContent>
                 </Popover>
               </div>
-              {segments.length > 0 ? (
+              {visibleSegments.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {segments.map((segment) => (
+                  {visibleSegments.map((segment) => (
                     <Badge
                       key={segment.id}
                       variant="outline"
@@ -1183,10 +1251,12 @@ export default function CustomerDetailPage({
                       <button
                         type="button"
                         className="ml-0.5 rounded-sm p-0.5 opacity-60 transition-opacity hover:opacity-100"
-                        onClick={() => handleRemoveSegment(segment.id)}
+                        onClick={() => stageRemoveSegment(segment.id)}
                       >
                         <X className="size-3" />
-                        <span className="sr-only">Remove {segment.name}</span>
+                        <span className="sr-only">
+                          {t("customers.multiSelect.remove", "Remove")} {segment.name}
+                        </span>
                       </button>
                     </Badge>
                   ))}
@@ -1233,7 +1303,7 @@ export default function CustomerDetailPage({
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-base">
               {t("customers.detail.contactsTitle", "Contacts")}
-              {onboarding ? <OnboardingDot /> : null}
+              {onboarding && contacts.length === 0 ? <OnboardingDot /> : null}
             </CardTitle>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={openLinkDialog}>
@@ -1357,7 +1427,12 @@ export default function CustomerDetailPage({
         </CardContent>
       </Card>
 
-      <CustomerBokslutSetup customerId={customer.id} highlight={onboarding} />
+      <CustomerBokslutSetup
+        ref={bokslutRef}
+        customerId={customer.id}
+        highlight={onboarding}
+        onDirtyChange={setBokslutDirty}
+      />
 
       {customer.fortnox_raw && (
         <Collapsible>
@@ -1452,58 +1527,65 @@ export default function CustomerDetailPage({
         </DialogContent>
       </Dialog>
 
-      {onboarding ? (
-        <div className="fixed inset-x-0 bottom-4 z-50 mx-auto max-w-[700px] rounded-lg border bg-background/95 px-6 py-3 shadow-lg backdrop-blur supports-backdrop-filter:bg-background/80">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="size-4 text-semantic-success" />
-              <span className="text-sm font-medium">
-                {t("customers.onboarding.barLabel", "Onboarding")}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={handleSaveKeepOnboarding}>
-                {t("customers.onboarding.saveKeep", "Save & keep in onboarding")}
-              </Button>
-              <Button size="sm" onClick={handleMarkOnboarded} disabled={markingOnboarded}>
-                <ClipboardCheck className="size-4" />
-                {markingOnboarded
-                  ? t("customers.onboarding.marking", "Saving…")
-                  : t("customers.onboarding.markDone", "Mark as onboarded")}
-              </Button>
+      {/* Shared card save bar — collects unsaved segment + bokslut changes, and
+          offers "Mark as onboarded" while in the onboarding flow. */}
+      {cardDirty || onboarding ? (
+        <div
+          className="pointer-events-none fixed bottom-6 right-0 z-40 flex justify-center px-4 transition-[left] duration-200"
+          style={{
+            left: collapsed
+              ? "var(--sidebar-width-collapsed)"
+              : "var(--sidebar-width)",
+          }}
+        >
+          <div className="pointer-events-auto flex items-center gap-3 rounded-lg border bg-background/95 py-2 pl-4 pr-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
+            <span className="flex items-center gap-2 text-sm font-medium">
+              {cardDirty ? (
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-semantic-warning opacity-60" />
+                  <span className="relative inline-flex size-2 rounded-full bg-semantic-warning" />
+                </span>
+              ) : (
+                <Sparkles className="size-4 text-semantic-success" />
+              )}
+              {cardDirty
+                ? t("customers.bokslut.unsaved", "Unsaved changes")
+                : t("customers.onboarding.barLabel", "Onboarding")}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {cardDirty ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleDiscardAll}
+                    disabled={savingCard}
+                  >
+                    {t("customers.bokslut.discard", "Discard")}
+                  </Button>
+                  <Button size="sm" onClick={handleSaveAll} disabled={savingCard}>
+                    {savingCard ? <Loader2 className="size-4 animate-spin" /> : null}
+                    {savingCard
+                      ? t("customers.bokslut.saving", "Saving…")
+                      : t("customers.bokslut.save", "Save setup")}
+                  </Button>
+                </>
+              ) : null}
+              {onboarding ? (
+                <Button
+                  size="sm"
+                  variant={cardDirty ? "outline" : "default"}
+                  onClick={handleMarkOnboarded}
+                  disabled={savingCard}
+                >
+                  <ClipboardCheck className="size-4" />
+                  {t("customers.onboarding.markDone", "Mark as onboarded")}
+                </Button>
+              ) : null}
             </div>
           </div>
         </div>
       ) : null}
-
-      <Dialog open={exitConfirmOpen} onOpenChange={setExitConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {t("customers.onboarding.leaveTitle", "Leave onboarding?")}
-            </DialogTitle>
-            <DialogDescription>
-              {t(
-                "customers.onboarding.leaveDescription",
-                "Your changes are saved. This customer will stay flagged for onboarding until you mark it as onboarded.",
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setExitConfirmOpen(false)}>
-              {t("customers.onboarding.stay", "Stay")}
-            </Button>
-            <Button
-              onClick={() => {
-                setExitConfirmOpen(false)
-                confirmNavigation(() => router.push("/customers"))
-              }}
-            >
-              {t("customers.onboarding.leave", "Leave")}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
