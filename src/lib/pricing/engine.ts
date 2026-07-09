@@ -52,8 +52,6 @@ export interface ClientPricingInput {
   hasAktiebok?: boolean
   /** Fixed NVR price override. undefined/null = per-shareholder; 0 = do not invoice NVR. */
   nvrFixedPrice?: number | string | null
-  /** True once the one-time NVR start fee has already been billed. */
-  nvrStartFeeCharged?: boolean
 }
 
 export interface ClientPricingResult {
@@ -65,9 +63,7 @@ export interface ClientPricingResult {
   diffVsList: number
   /** Recurring monthly NVR/aktiebok charge (shareholders × unit, or fixed). */
   nvrRecurring: number
-  /** One-time NVR start fee due this run (0 once already billed). */
-  nvrStartFee: number
-  /** Total NVR charged this run = recurring + start fee. */
+  /** Total NVR charged this run (= recurring). */
   nvrPrice: number
   /** True when the row is flagged do-not-invoice. */
   notInvoiced: boolean
@@ -130,25 +126,17 @@ export function calcNvrRecurring(input: ClientPricingInput): number {
   return round2(num(input.nvrShareholders) * PRICING_CONFIG.nvrUnitPrice)
 }
 
-/** One-time NVR start fee — due only until it has been billed once. */
-export function calcNvrStartFee(input: ClientPricingInput): number {
-  if (!nvrActive(input)) return 0
-  return input.nvrStartFeeCharged ? 0 : PRICING_CONFIG.nvrStartFee
-}
-
 /** Compute all derived prices for one client row. */
 export function priceClient(input: ClientPricingInput): ClientPricingResult {
   const notInvoiced = isNotInvoiced(input.kundnr)
   const fortnoxPrice = calcFortnoxPrice(input)
   const nvrRecurring = calcNvrRecurring(input)
-  const nvrStartFee = calcNvrStartFee(input)
   return {
     fortnoxPrice,
     redaPrice: calcRedaPrice(input),
     diffVsList: fortnoxPrice - num(input.listPrice),
     nvrRecurring,
-    nvrStartFee,
-    nvrPrice: round2(nvrRecurring + nvrStartFee),
+    nvrPrice: round2(nvrRecurring),
     notInvoiced,
   }
 }

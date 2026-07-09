@@ -210,7 +210,6 @@ export default function LicenserPage() {
       nvrShareholders: r.nvrShareholders,
       hasAktiebok: r.hasAktiebok,
       nvrFixedPrice: r.fixedPriceNvr,
-      nvrStartFeeCharged: !!r.nvrStartFeeChargedAt,
     })
     return {
       ...r,
@@ -218,7 +217,6 @@ export default function LicenserPage() {
       redaPrice: priced.redaPrice,
       diffVsList: priced.diffVsList,
       nvrRecurring: priced.nvrRecurring,
-      nvrStartFee: priced.nvrStartFee,
       nvrPrice: priced.nvrPrice,
       notInvoiced: priced.notInvoiced,
     }
@@ -250,7 +248,6 @@ export default function LicenserPage() {
             fixedPriceFortnox: row.fixedPriceFortnox,
             fixedPriceReda: row.fixedPriceReda,
             fixedPriceNvr: row.fixedPriceNvr,
-            nvrStartFeeChargedAt: row.nvrStartFeeChargedAt,
             comment: row.comment,
             status: row.status,
           }),

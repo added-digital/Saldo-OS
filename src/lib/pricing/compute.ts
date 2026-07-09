@@ -54,14 +54,11 @@ export interface PricedResultRow {
   redaCost: number
   nvrShareholders: number
   hasAktiebok: boolean
-  /** ISO timestamp the NVR start fee was billed, or null if still due. */
-  nvrStartFeeChargedAt: string | null
   /** Computed. */
   fortnoxPrice: number
   redaPrice: number
   diffVsList: number
   nvrRecurring: number
-  nvrStartFee: number
   nvrPrice: number
   notInvoiced: boolean
   clientListOnly: boolean
@@ -136,7 +133,6 @@ export function computePricing(inputs: ComputeInputs): PricingComputation {
     const fixedPriceFortnox = cfg?.fixedPriceFortnox ?? null
     const fixedPriceReda = cfg?.fixedPriceReda ?? null
     const fixedPriceNvr = cfg?.fixedPriceNvr ?? null
-    const nvrStartFeeChargedAt = cfg?.nvrStartFeeChargedAt ?? null
     const fortnoxCustomerNumber = cfg?.fortnoxCustomerNumber ?? null
 
     const priced = priceClient({
@@ -150,7 +146,6 @@ export function computePricing(inputs: ComputeInputs): PricingComputation {
       nvrShareholders: r.nvrShareholders,
       hasAktiebok: r.hasAktiebok,
       nvrFixedPrice: fixedPriceNvr,
-      nvrStartFeeCharged: !!nvrStartFeeChargedAt,
     })
 
     return {
@@ -170,12 +165,10 @@ export function computePricing(inputs: ComputeInputs): PricingComputation {
       redaCost: r.redaCost,
       nvrShareholders: r.nvrShareholders,
       hasAktiebok: r.hasAktiebok,
-      nvrStartFeeChargedAt,
       fortnoxPrice: priced.fortnoxPrice,
       redaPrice: priced.redaPrice,
       diffVsList: priced.diffVsList,
       nvrRecurring: priced.nvrRecurring,
-      nvrStartFee: priced.nvrStartFee,
       nvrPrice: priced.nvrPrice,
       notInvoiced: priced.notInvoiced,
       clientListOnly: r.clientListOnly,
@@ -223,7 +216,6 @@ export function summarizeRows(
   let totalRedaCost = 0
   let totalInvoicedNvr = 0
   let totalNvrRecurring = 0
-  let totalNvrStartFees = 0
   let nvrShareholders = 0
   let aktiebokCount = 0
 
@@ -237,7 +229,6 @@ export function summarizeRows(
     totalInvoicedReda += r.redaPrice
     totalInvoicedNvr += r.nvrPrice
     totalNvrRecurring += r.nvrRecurring
-    totalNvrStartFees += r.nvrStartFee
     if (r.nvrPrice > 0) {
       aktiebokCount += 1
       nvrShareholders += r.nvrShareholders
@@ -268,7 +259,6 @@ export function summarizeRows(
     // NVR / aktiebok (pure revenue — no cost basis in the source files).
     totalInvoicedNvr: round2(totalInvoicedNvr),
     totalNvrRecurring: round2(totalNvrRecurring),
-    totalNvrStartFees: round2(totalNvrStartFees),
     nvrShareholders,
     aktiebokCount,
   }

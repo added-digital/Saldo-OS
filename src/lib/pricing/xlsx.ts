@@ -52,7 +52,6 @@ export function computationToWorkbook(comp: PricingComputation): Uint8Array {
     ["NVR / Aktiebok", "Belopp (SEK)"],
     ["Fakturerat (kundpris)", SEK(s.totalInvoicedNvr)],
     ["Löpande (per aktieägare)", SEK(s.totalNvrRecurring)],
-    ["Startavgifter", SEK(s.totalNvrStartFees)],
     ["Aktieägare", s.nvrShareholders],
     ["Bolag med aktiebok", s.aktiebokCount],
   ]
@@ -76,7 +75,6 @@ export function computationToWorkbook(comp: PricingComputation): Uint8Array {
     "Kundpris Reda",
     "Aktieägare",
     "Kundpris NVR (löpande)",
-    "Startavgift NVR",
     "Kostnad fast",
     "Kostnad extra",
     "Kostnad Reda",
@@ -100,7 +98,6 @@ export function computationToWorkbook(comp: PricingComputation): Uint8Array {
     SEK(r.redaPrice),
     r.nvrShareholders,
     SEK(r.nvrRecurring),
-    SEK(r.nvrStartFee),
     SEK(r.fixedCost),
     SEK(r.extraLicenseCost),
     SEK(r.redaCost),
@@ -115,7 +112,7 @@ export function computationToWorkbook(comp: PricingComputation): Uint8Array {
   clientSheet["!cols"] = [
     { wch: 13 }, { wch: 13 }, { wch: 32 }, { wch: 14 }, { wch: 9 },
     { wch: 15 }, { wch: 13 }, { wch: 13 }, { wch: 11 }, { wch: 15 },
-    { wch: 14 }, { wch: 12 }, { wch: 11 }, { wch: 18 }, { wch: 14 },
+    { wch: 14 }, { wch: 12 }, { wch: 11 }, { wch: 18 },
     { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 },
     { wch: 20 }, { wch: 24 },
   ]

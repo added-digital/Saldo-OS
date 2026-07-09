@@ -23,7 +23,6 @@ interface SummaryLike {
   redaResult: number
   totalInvoicedNvr: number
   totalNvrRecurring: number
-  totalNvrStartFees: number
   nvrShareholders: number
   aktiebokCount: number
 }
@@ -137,7 +136,7 @@ export function PricingSummaryCards({
         <CardHeader>
           <CardTitle className="text-base">{t("pricing.summary.nvr", "NVR / Aktiebok")}</CardTitle>
           <CardDescription>
-            {t("pricing.summary.nvrDesc", "Aktiebok — pris per aktieägare + startavgift")}
+            {t("pricing.summary.nvrDesc", "Aktiebok — pris per aktieägare")}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -151,11 +150,6 @@ export function PricingSummaryCards({
             label={t("pricing.summary.nvrRecurring", "Löpande")}
             value={formatSek(summary.totalNvrRecurring)}
             sub={`${summary.nvrShareholders} ${t("pricing.summary.shareholders", "aktieägare")}`}
-            tone="muted"
-          />
-          <Stat
-            label={t("pricing.summary.nvrStartFees", "Startavgifter")}
-            value={formatSek(summary.totalNvrStartFees)}
             tone="muted"
           />
         </CardContent>

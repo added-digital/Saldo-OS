@@ -40,12 +40,10 @@ export interface EditableRow {
   redaCost: number
   nvrShareholders: number
   hasAktiebok: boolean
-  nvrStartFeeChargedAt: string | null
   fortnoxPrice: number
   redaPrice: number
   diffVsList: number
   nvrRecurring: number
-  nvrStartFee: number
   nvrPrice: number
   notInvoiced: boolean
   clientListOnly: boolean
@@ -77,7 +75,6 @@ type Patch = Partial<
     | "fixedPriceFortnox"
     | "fixedPriceReda"
     | "fixedPriceNvr"
-    | "nvrStartFeeChargedAt"
     | "comment"
     | "status"
   >
@@ -341,23 +338,6 @@ export function PricingResultsTable({
                       <div className="font-medium">{formatSek(r.nvrPrice)}</div>
                       <div className="text-[10px] text-muted-foreground">
                         {r.nvrShareholders} {t("pricing.table.shareholders", "ägare")}
-                        {r.nvrStartFee > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onEdit(r.databaseNumber, {
-                                nvrStartFeeChargedAt: new Date().toISOString(),
-                              })
-                            }
-                            title={t(
-                              "pricing.table.markStartFee",
-                              "Startavgift ingår — klicka för att markera som fakturerad",
-                            )}
-                            className="ml-1 rounded bg-[var(--color-warning)]/15 px-1 text-[var(--color-warning)] hover:bg-[var(--color-warning)]/25"
-                          >
-                            +{formatSek(r.nvrStartFee)}
-                          </button>
-                        ) : null}
                       </div>
                     </>
                   ) : (
