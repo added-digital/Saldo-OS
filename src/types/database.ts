@@ -409,6 +409,15 @@ export interface LicenseCustomerConfig {
   updated_at: string
 }
 
+/** Singleton ('latest') snapshot of the computed licensing result, shared read-only. */
+export interface LicenseCalculationResult {
+  id: string
+  period: string | null
+  payload: Record<string, unknown>
+  computed_by: string | null
+  computed_at: string
+}
+
 export interface MailTemplate {
   id: string
   name: string
@@ -744,6 +753,11 @@ export interface Database {
         Row: LicenseCustomerConfig
         Insert: Omit<LicenseCustomerConfig, "id" | "created_at" | "updated_at">
         Update: Partial<Omit<LicenseCustomerConfig, "id" | "created_at" | "updated_at">>
+      }
+      license_calculation_result: {
+        Row: LicenseCalculationResult
+        Insert: Omit<LicenseCalculationResult, "computed_at"> & { computed_at?: string }
+        Update: Partial<LicenseCalculationResult>
       }
       mail_templates: {
         Row: MailTemplate

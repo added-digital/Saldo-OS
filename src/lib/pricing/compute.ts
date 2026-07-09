@@ -19,6 +19,82 @@ import {
 } from "./parsers"
 import { PRICING_CONFIG, STANDARD_PRICE_LIST, type PriceListEntry } from "./price-list"
 
+/**
+ * One entry of the synced Fortnox customer register (the `customers` table):
+ * a Fortnox customer number and the company it belongs to.
+ */
+export interface FortnoxCustomerRef {
+  fortnoxCustomerNumber: string
+  name: string
+  orgNumber: string
+}
+
+export interface BillToResolution {
+  /** Company the kundnr actually invoices, or null when not resolvable. */
+  billToName: string | null
+  billToOrgNumber: string | null
+  /** True when the kundnr's registered company differs from the row's company. */
+  billToMismatch: boolean
+  /** True when a kundnr is set (invoiceable) but not found in the register. */
+  billToUnknown: boolean
+}
+
+const orgDigits = (s: string): string => (s ?? "").replace(/\D/g, "")
+
+/**
+ * Normalise a Fortnox customer number for matching: trim, and for purely numeric
+ * numbers drop leading zeros so "0855" and "855" compare equal. Non-numeric
+ * numbers are compared case-insensitively.
+ */
+const normCustomerNumber = (s: string | null | undefined): string => {
+  const t = (s ?? "").trim()
+  if (t === "") return ""
+  return /^\d+$/.test(t) ? String(parseInt(t, 10)) : t.toLowerCase()
+}
+
+/** Build a lookup: normalised Fortnox customer number → register entry. */
+export function buildCustomerRegister(
+  customers: FortnoxCustomerRef[],
+): Map<string, FortnoxCustomerRef> {
+  const m = new Map<string, FortnoxCustomerRef>()
+  for (const c of customers) {
+    const key = normCustomerNumber(c.fortnoxCustomerNumber)
+    if (key) m.set(key, c)
+  }
+  return m
+}
+
+/**
+ * Resolve which company a row's kundnr will actually invoice and whether that
+ * differs from the row's own company. Comparison is by org number (names vary).
+ * Returns an all-empty result for non-invoiced rows or rows without a kundnr.
+ */
+export function resolveBillTo(
+  rowOrgNumber: string,
+  kundnr: string | null | undefined,
+  notInvoiced: boolean,
+  registerByNumber: Map<string, FortnoxCustomerRef>,
+): BillToResolution {
+  const empty: BillToResolution = {
+    billToName: null,
+    billToOrgNumber: null,
+    billToMismatch: false,
+    billToUnknown: false,
+  }
+  const key = normCustomerNumber(kundnr)
+  if (notInvoiced || !key) return empty
+  const ref = registerByNumber.get(key)
+  if (!ref) return { ...empty, billToUnknown: true }
+  const rowOrg = orgDigits(rowOrgNumber)
+  const refOrg = orgDigits(ref.orgNumber)
+  return {
+    billToName: ref.name || null,
+    billToOrgNumber: ref.orgNumber || null,
+    billToMismatch: !!rowOrg && !!refOrg && rowOrg !== refOrg,
+    billToUnknown: false,
+  }
+}
+
 /** Saved per-client override (mirrors the `license_customer_config` table). */
 export interface CustomerConfig {
   orgNumber: string
@@ -61,6 +137,13 @@ export interface PricedResultRow {
   nvrRecurring: number
   nvrPrice: number
   notInvoiced: boolean
+  /** Which company the kundnr actually invoices (from the synced register). */
+  billToName: string | null
+  billToOrgNumber: string | null
+  /** True when the kundnr's registered company differs from this row's company. */
+  billToMismatch: boolean
+  /** True when a kundnr is set but not found in the Fortnox customer register. */
+  billToUnknown: boolean
   clientListOnly: boolean
   /** True when the company is only in the NVR file (aktiebok-only). */
   nvrOnly: boolean
@@ -87,6 +170,13 @@ export interface PricingComputation {
   }
 }
 
+/** The persisted, shareable snapshot of a computed result (no raw files). */
+export interface StoredCalculation {
+  period: string
+  rows: PricedResultRow[]
+  diagnostics: PricingComputation["diagnostics"]
+}
+
 export interface ComputeInputs {
   fortnoxGrid: Grid
   kundlistaCsv: string
@@ -94,6 +184,8 @@ export interface ComputeInputs {
   nvrGrid?: Grid | null
   priceList?: PriceListEntry[]
   customerConfigs?: CustomerConfig[]
+  /** Synced Fortnox customer register, for kundnr → bill-to company resolution. */
+  fortnoxCustomers?: FortnoxCustomerRef[]
   redaUnitPrice?: number
 }
 
@@ -127,6 +219,9 @@ export function computePricing(inputs: ComputeInputs): PricingComputation {
     if (key) configByOrg.set(key, c)
   }
 
+  // Fortnox customer register, for resolving where each kundnr actually invoices.
+  const customerRegister = buildCustomerRegister(inputs.fortnoxCustomers ?? [])
+
   const rows: PricedResultRow[] = merged.rows.map((r) => {
     const cfg = configByOrg.get(r.orgNumber.replace(/\D/g, ""))
     const discountPercent = cfg?.discountPercent ?? 0
@@ -147,6 +242,13 @@ export function computePricing(inputs: ComputeInputs): PricingComputation {
       hasAktiebok: r.hasAktiebok,
       nvrFixedPrice: fixedPriceNvr,
     })
+
+    const billTo = resolveBillTo(
+      r.orgNumber,
+      fortnoxCustomerNumber,
+      priced.notInvoiced,
+      customerRegister,
+    )
 
     return {
       databaseNumber: r.databaseNumber,
@@ -171,6 +273,7 @@ export function computePricing(inputs: ComputeInputs): PricingComputation {
       nvrRecurring: priced.nvrRecurring,
       nvrPrice: priced.nvrPrice,
       notInvoiced: priced.notInvoiced,
+      ...billTo,
       clientListOnly: r.clientListOnly,
       nvrOnly: r.nvrOnly,
       missingConfig: !cfg,

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/pricing/require-admin"
-import { loadCustomerConfigs, loadPriceList } from "@/lib/pricing/db"
+import {
+  loadCustomerConfigs,
+  loadFortnoxCustomers,
+  loadPriceList,
+  saveCalculationResult,
+} from "@/lib/pricing/db"
 import { computePricing } from "@/lib/pricing/compute"
 import { bufferToGrid } from "@/lib/pricing/xlsx"
 import { parseKundlistaCsv, PricingParseError } from "@/lib/pricing/parsers"
@@ -60,9 +65,10 @@ export async function POST(request: Request) {
       )
     }
 
-    const [priceList, customerConfigs] = await Promise.all([
+    const [priceList, customerConfigs, fortnoxCustomers] = await Promise.all([
       loadPriceList(admin),
       loadCustomerConfigs(admin),
+      loadFortnoxCustomers(admin),
     ])
 
     const computation = computePricing({
@@ -72,9 +78,28 @@ export async function POST(request: Request) {
       nvrGrid: nvrBuf ? bufferToGrid(nvrBuf) : null,
       priceList,
       customerConfigs,
+      fortnoxCustomers,
     })
 
-    return NextResponse.json({ ok: true, ...computation })
+    // Persist the computed snapshot so every logged-in user can view the result
+    // read-only. Best-effort: a storage failure must not fail the calculation.
+    try {
+      await saveCalculationResult(
+        admin,
+        {
+          period: computation.period,
+          rows: computation.rows,
+          diagnostics: computation.diagnostics,
+        },
+        guard.userId,
+      )
+    } catch (persistErr) {
+      console.error("[pricing/calculate] failed to persist shared result:", persistErr)
+    }
+
+    // The register is returned too so the client can re-check bill-to live as
+    // the user edits a kundnr, without another round-trip.
+    return NextResponse.json({ ok: true, ...computation, customerRegister: fortnoxCustomers })
   } catch (err) {
     if (err instanceof PricingParseError) {
       return NextResponse.json({ error: err.message }, { status: 422 })

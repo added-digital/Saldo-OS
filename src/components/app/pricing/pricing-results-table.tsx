@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Info,
   Loader2,
   Search,
 } from "lucide-react"
@@ -18,6 +19,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -46,6 +53,10 @@ export interface EditableRow {
   nvrRecurring: number
   nvrPrice: number
   notInvoiced: boolean
+  billToName: string | null
+  billToOrgNumber: string | null
+  billToMismatch: boolean
+  billToUnknown: boolean
   clientListOnly: boolean
   nvrOnly: boolean
   missingConfig: boolean
@@ -107,11 +118,14 @@ export function PricingResultsTable({
   onEdit,
   onSave,
   t,
+  readOnly = false,
 }: {
   rows: EditableRow[]
   onEdit: (databaseNumber: string, patch: Patch) => void
   onSave: (databaseNumber: string) => void
   t: (key: string, fallback: string) => string
+  /** When true, all per-client fields render as plain text (no editing/saving). */
+  readOnly?: boolean
 }) {
   const [query, setQuery] = React.useState("")
   const [onlyReview, setOnlyReview] = React.useState(false)
@@ -264,56 +278,108 @@ export function PricingResultsTable({
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Input
-                    value={r.fortnoxCustomerNumber ?? ""}
-                    onChange={(e) =>
-                      onEdit(r.databaseNumber, { fortnoxCustomerNumber: e.target.value || null })
-                    }
-                    placeholder={t("pricing.table.ejPlaceholder", "EJ")}
-                    className="h-8"
-                  />
+                  <div className="flex items-center gap-1">
+                    {readOnly ? (
+                      <span className="flex-1 tabular-nums">
+                        {r.fortnoxCustomerNumber || "—"}
+                      </span>
+                    ) : (
+                      <Input
+                        value={r.fortnoxCustomerNumber ?? ""}
+                        onChange={(e) =>
+                          onEdit(r.databaseNumber, { fortnoxCustomerNumber: e.target.value || null })
+                        }
+                        placeholder={t("pricing.table.ejPlaceholder", "EJ")}
+                        className="h-8"
+                      />
+                    )}
+                    {r.billToMismatch ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="shrink-0 text-[var(--color-info)]">
+                              <Info className="size-4" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[240px]">
+                            <p className="font-medium">
+                              {t("pricing.table.billsOther", "Faktureras annat bolag")}
+                            </p>
+                            <p>
+                              {r.billToName ?? "—"}
+                              {r.billToOrgNumber ? ` · ${r.billToOrgNumber}` : ""}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell>
-                  <Input
-                    inputMode="decimal"
-                    value={String(r.discountPercent ?? 0)}
-                    onChange={(e) =>
-                      onEdit(r.databaseNumber, { discountPercent: numOrNull(e.target.value) ?? 0 })
-                    }
-                    className="h-8 text-right"
-                  />
+                  {readOnly ? (
+                    <div className="text-right tabular-nums text-muted-foreground">
+                      {r.discountPercent ? `${r.discountPercent}%` : "—"}
+                    </div>
+                  ) : (
+                    <Input
+                      inputMode="decimal"
+                      value={String(r.discountPercent ?? 0)}
+                      onChange={(e) =>
+                        onEdit(r.databaseNumber, { discountPercent: numOrNull(e.target.value) ?? 0 })
+                      }
+                      className="h-8 text-right"
+                    />
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Input
-                    inputMode="decimal"
-                    value={r.fixedPriceFortnox == null ? "" : String(r.fixedPriceFortnox)}
-                    onChange={(e) =>
-                      onEdit(r.databaseNumber, { fixedPriceFortnox: numOrNull(e.target.value) })
-                    }
-                    className="h-8 text-right"
-                  />
+                  {readOnly ? (
+                    <div className="text-right tabular-nums text-muted-foreground">
+                      {r.fixedPriceFortnox == null ? "—" : formatSek(r.fixedPriceFortnox)}
+                    </div>
+                  ) : (
+                    <Input
+                      inputMode="decimal"
+                      value={r.fixedPriceFortnox == null ? "" : String(r.fixedPriceFortnox)}
+                      onChange={(e) =>
+                        onEdit(r.databaseNumber, { fixedPriceFortnox: numOrNull(e.target.value) })
+                      }
+                      className="h-8 text-right"
+                    />
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Input
-                    inputMode="decimal"
-                    value={r.fixedPriceReda == null ? "" : String(r.fixedPriceReda)}
-                    onChange={(e) =>
-                      onEdit(r.databaseNumber, { fixedPriceReda: numOrNull(e.target.value) })
-                    }
-                    className="h-8 text-right"
-                  />
+                  {readOnly ? (
+                    <div className="text-right tabular-nums text-muted-foreground">
+                      {r.fixedPriceReda == null ? "—" : formatSek(r.fixedPriceReda)}
+                    </div>
+                  ) : (
+                    <Input
+                      inputMode="decimal"
+                      value={r.fixedPriceReda == null ? "" : String(r.fixedPriceReda)}
+                      onChange={(e) =>
+                        onEdit(r.databaseNumber, { fixedPriceReda: numOrNull(e.target.value) })
+                      }
+                      className="h-8 text-right"
+                    />
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Input
-                    inputMode="decimal"
-                    value={r.fixedPriceNvr == null ? "" : String(r.fixedPriceNvr)}
-                    onChange={(e) =>
-                      onEdit(r.databaseNumber, { fixedPriceNvr: numOrNull(e.target.value) })
-                    }
-                    className="h-8 text-right"
-                    disabled={!r.hasAktiebok}
-                    placeholder={r.hasAktiebok ? undefined : "—"}
-                  />
+                  {readOnly ? (
+                    <div className="text-right tabular-nums text-muted-foreground">
+                      {r.fixedPriceNvr == null ? "—" : formatSek(r.fixedPriceNvr)}
+                    </div>
+                  ) : (
+                    <Input
+                      inputMode="decimal"
+                      value={r.fixedPriceNvr == null ? "" : String(r.fixedPriceNvr)}
+                      onChange={(e) =>
+                        onEdit(r.databaseNumber, { fixedPriceNvr: numOrNull(e.target.value) })
+                      }
+                      className="h-8 text-right"
+                      disabled={!r.hasAktiebok}
+                      placeholder={r.hasAktiebok ? undefined : "—"}
+                    />
+                  )}
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatSek(r.listPrice)}
@@ -362,31 +428,39 @@ export function PricingResultsTable({
                   {formatSek(netOf(r))}
                 </TableCell>
                 <TableCell>
-                  <select
-                    value={r.status ?? ""}
-                    onChange={(e) => onEdit(r.databaseNumber, { status: e.target.value || null })}
-                    className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
-                  >
-                    <option value="">—</option>
-                    {(STATUS_OPTIONS as readonly string[]).includes(r.status ?? "")
-                      ? null
-                      : r.status
-                        ? <option value={r.status}>{r.status}</option>
-                        : null}
-                    {STATUS_OPTIONS.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
+                  {readOnly ? (
+                    <span className="text-xs text-muted-foreground">{r.status || "—"}</span>
+                  ) : (
+                    <select
+                      value={r.status ?? ""}
+                      onChange={(e) => onEdit(r.databaseNumber, { status: e.target.value || null })}
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                    >
+                      <option value="">—</option>
+                      {(STATUS_OPTIONS as readonly string[]).includes(r.status ?? "")
+                        ? null
+                        : r.status
+                          ? <option value={r.status}>{r.status}</option>
+                          : null}
+                      {STATUS_OPTIONS.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Input
-                    value={r.comment ?? ""}
-                    onChange={(e) => onEdit(r.databaseNumber, { comment: e.target.value || null })}
-                    placeholder={t("pricing.table.commentPlaceholder", "Kommentar…")}
-                    className="h-8 min-w-[180px]"
-                  />
+                  {readOnly ? (
+                    <span className="text-xs text-muted-foreground">{r.comment || "—"}</span>
+                  ) : (
+                    <Input
+                      value={r.comment ?? ""}
+                      onChange={(e) => onEdit(r.databaseNumber, { comment: e.target.value || null })}
+                      placeholder={t("pricing.table.commentPlaceholder", "Kommentar…")}
+                      className="h-8 min-w-[180px]"
+                    />
+                  )}
                 </TableCell>
                 <TableCell>
                   {r.dirty ? (

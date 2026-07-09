@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import {
   Inbox,
-  Search,
   Building2,
   Clock,
   ChevronRight,
@@ -14,29 +13,24 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import type { WebsiteLead, WebsiteLeadStatus } from "@/types/database";
 import { AddLeadDialog } from "@/components/app/add-lead-dialog";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
 import { EmptyState } from "@/components/app/empty-state";
+import { SearchInput } from "@/components/app/search-input";
+import {
+  LeadFilters,
+  applyLeadFilters,
+  EMPTY_LEAD_FILTERS,
+  type LeadFilterState,
+} from "@/components/app/lead-filters";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { useUser } from "@/hooks/use-user";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCachedData } from "@/hooks/use-cached-data";
-
-const STATUS_OPTIONS: WebsiteLeadStatus[] = [
-  "new",
-  "contacted",
-  "offer_sent",
-  "won",
-  "lost",
-  "archived",
-  "spam",
-];
 
 const STATUS_LABEL: Record<WebsiteLeadStatus, string> = {
   new: "New",
@@ -80,9 +74,7 @@ export default function LeadsPage() {
   const { user } = useUser();
   const { t } = useTranslation();
   const [search, setSearch] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState<
-    WebsiteLeadStatus | "all"
-  >("all");
+  const [filters, setFilters] = React.useState<LeadFilterState>(EMPTY_LEAD_FILTERS);
   const [addOpen, setAddOpen] = React.useState(false);
   const [deleteTarget, setDeleteTarget] = React.useState<WebsiteLead | null>(
     null,
@@ -142,10 +134,7 @@ export default function LeadsPage() {
   const leads = React.useMemo(() => data?.leads ?? [], [data]);
 
   const filteredLeads = React.useMemo(() => {
-    let result = leads;
-    if (statusFilter !== "all") {
-      result = result.filter((lead) => lead.status === statusFilter);
-    }
+    let result = applyLeadFilters(leads, filters);
     if (search) {
       const query = search.toLowerCase();
       result = result.filter((lead) =>
@@ -162,79 +151,34 @@ export default function LeadsPage() {
       );
     }
     return result;
-  }, [leads, statusFilter, search]);
+  }, [leads, filters, search]);
 
   const newCount = React.useMemo(
     () => leads.filter((lead) => lead.status === "new").length,
     [leads],
   );
 
-  const statusCounts = React.useMemo(() => {
-    const counts = {} as Record<WebsiteLeadStatus, number>;
-    for (const status of STATUS_OPTIONS) counts[status] = 0;
-    for (const lead of leads) {
-      if (lead.status in counts) counts[lead.status] += 1;
-    }
-    return counts;
-  }, [leads]);
-
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative w-full max-w-md">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={t("leads.searchPlaceholder", "Search leads...")}
-            className="pl-9"
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder={t("leads.searchPlaceholder", "Search leads...")}
+          className="w-full lg:max-w-sm"
+        />
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <LeadFilters
+            leads={leads}
+            filters={filters}
+            onFiltersChange={setFilters}
+            t={t}
           />
-        </div>
-        <div className="ml-auto">
           <Button size="sm" onClick={() => setAddOpen(true)}>
             <Plus className="size-4" />
             {t("leads.add.button", "Add lead")}
           </Button>
         </div>
-      </div>
-
-      <div
-        className="flex flex-wrap items-center gap-1.5"
-        role="tablist"
-        aria-label={t("leads.filter.label", "Filter by status")}
-      >
-        {(["all", ...STATUS_OPTIONS] as const).map((status) => {
-          const active = statusFilter === status;
-          const count =
-            status === "all" ? leads.length : statusCounts[status];
-          return (
-            <button
-              key={status}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setStatusFilter(status)}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors",
-                active
-                  ? "border-transparent bg-primary text-primary-foreground"
-                  : "border-border text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-              )}
-            >
-              {status === "all"
-                ? t("leads.filter.all", "All statuses")
-                : t(`leads.status.${status}`, STATUS_LABEL[status])}
-              <span
-                className={cn(
-                  "rounded-full px-1.5 text-xs tabular-nums",
-                  active ? "bg-primary-foreground/20" : "bg-muted",
-                )}
-              >
-                {count}
-              </span>
-            </button>
-          );
-        })}
       </div>
 
       <AddLeadDialog

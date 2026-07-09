@@ -26,16 +26,23 @@ import {
   type EditableRow,
 } from "@/components/app/pricing/pricing-results-table"
 import { priceClient } from "@/lib/pricing/engine"
-import { summarizeRows, type PricedResultRow } from "@/lib/pricing/compute"
+import {
+  buildCustomerRegister,
+  resolveBillTo,
+  summarizeRows,
+  type FortnoxCustomerRef,
+  type PricedResultRow,
+} from "@/lib/pricing/compute"
 
 // Bump the version whenever the cached result shape changes so stale caches
 // (e.g. from before the NVR line existed) are discarded instead of crashing.
-const RESULT_STORAGE_KEY = "saldo.licenser.result.v4"
+const RESULT_STORAGE_KEY = "saldo.licenser.result.v5"
 
 interface CalcResponse {
   ok: true
   period: string
   rows: PricedResultRow[]
+  customerRegister: FortnoxCustomerRef[]
   summary: ReturnType<typeof summarizeRows>
   diagnostics: {
     unknownArticles: { articleNo: string; name: string; unitPaidPrice: number }[]
@@ -122,25 +129,36 @@ export default function LicenserPage() {
 
   const [period, setPeriod] = React.useState("")
   const [rows, setRows] = React.useState<EditableRow[]>([])
+  const [register, setRegister] = React.useState<FortnoxCustomerRef[]>([])
   const [diagnostics, setDiagnostics] = React.useState<CalcResponse["diagnostics"] | null>(null)
 
   const summary = React.useMemo(() => summarizeRows(rows as PricedResultRow[]), [rows])
+  const customerRegister = React.useMemo(() => buildCustomerRegister(register), [register])
   const hasResult = rows.length > 0
 
   // Persist the computed result across page refreshes (files can't be restored,
   // but the results/period/diagnostics can) so a reload doesn't wipe the work.
   const [hydrated, setHydrated] = React.useState(false)
+  const [loadingShared, setLoadingShared] = React.useState(true)
   React.useEffect(() => {
+    // Only admins keep a local working copy; non-admins always read the shared
+    // snapshot from the server.
+    if (!isAdmin) {
+      setHydrated(true)
+      return
+    }
     try {
       const raw = sessionStorage.getItem(RESULT_STORAGE_KEY)
       if (raw) {
         const saved = JSON.parse(raw) as {
           period?: string
           rows?: EditableRow[]
+          register?: FortnoxCustomerRef[]
           diagnostics?: CalcResponse["diagnostics"] | null
         }
         if (saved.rows?.length) {
           setRows(saved.rows.map((r) => ({ ...r, saving: false })))
+          setRegister(saved.register ?? [])
           setPeriod(saved.period ?? "")
           setDiagnostics(saved.diagnostics ?? null)
         }
@@ -149,15 +167,50 @@ export default function LicenserPage() {
       /* ignore malformed cache */
     }
     setHydrated(true)
-  }, [])
+  }, [isAdmin])
+
+  // Everyone loads the shared snapshot. Admins keep their local working copy if
+  // they already have one; non-admins always show the shared result read-only.
+  React.useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch("/api/pricing/result", { cache: "no-store" })
+        const json = (await res.json().catch(() => null)) as {
+          result?: {
+            period?: string
+            rows?: EditableRow[]
+            diagnostics?: CalcResponse["diagnostics"] | null
+          } | null
+        } | null
+        const stored = json?.result
+        if (!cancelled && stored?.rows?.length) {
+          setRows((prev) =>
+            prev.length && isAdmin
+              ? prev
+              : stored.rows!.map((r) => ({ ...r, dirty: false, saving: false })),
+          )
+          setPeriod((prev) => (prev ? prev : stored.period ?? ""))
+          setDiagnostics((prev) => (prev ? prev : stored.diagnostics ?? null))
+        }
+      } catch {
+        /* ignore — no shared result yet */
+      } finally {
+        if (!cancelled) setLoadingShared(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isAdmin])
 
   React.useEffect(() => {
-    if (!hydrated) return
+    if (!hydrated || !isAdmin) return
     try {
       if (rows.length) {
         sessionStorage.setItem(
           RESULT_STORAGE_KEY,
-          JSON.stringify({ period, rows, diagnostics }),
+          JSON.stringify({ period, rows, register, diagnostics }),
         )
       } else {
         sessionStorage.removeItem(RESULT_STORAGE_KEY)
@@ -165,7 +218,7 @@ export default function LicenserPage() {
     } catch {
       /* storage full or unavailable — non-fatal */
     }
-  }, [hydrated, rows, period, diagnostics])
+  }, [hydrated, isAdmin, rows, period, register, diagnostics])
 
   async function handleCalculate() {
     if (!fortnox || !kundlista) {
@@ -187,6 +240,7 @@ export default function LicenserPage() {
       }
       setPeriod(json.period)
       setRows(json.rows.map((r) => ({ ...r, dirty: false, saving: false })))
+      setRegister(json.customerRegister ?? [])
       setDiagnostics(json.diagnostics)
       toast.success(
         t("pricing.ok.calc", "Beräkning klar") + (json.period ? ` — ${json.period}` : ""),
@@ -198,29 +252,40 @@ export default function LicenserPage() {
     }
   }
 
-  const recalcRow = React.useCallback((r: EditableRow): EditableRow => {
-    const priced = priceClient({
-      kundnr: r.fortnoxCustomerNumber,
-      discountPct: r.discountPercent,
-      fixedPrice: r.fixedPriceFortnox,
-      redaFixedPrice: r.fixedPriceReda,
-      listPrice: r.listPrice,
-      extraLicenseCost: r.extraLicenseCost,
-      redaCost: r.redaCost,
-      nvrShareholders: r.nvrShareholders,
-      hasAktiebok: r.hasAktiebok,
-      nvrFixedPrice: r.fixedPriceNvr,
-    })
-    return {
-      ...r,
-      fortnoxPrice: priced.fortnoxPrice,
-      redaPrice: priced.redaPrice,
-      diffVsList: priced.diffVsList,
-      nvrRecurring: priced.nvrRecurring,
-      nvrPrice: priced.nvrPrice,
-      notInvoiced: priced.notInvoiced,
-    }
-  }, [])
+  const recalcRow = React.useCallback(
+    (r: EditableRow): EditableRow => {
+      const priced = priceClient({
+        kundnr: r.fortnoxCustomerNumber,
+        discountPct: r.discountPercent,
+        fixedPrice: r.fixedPriceFortnox,
+        redaFixedPrice: r.fixedPriceReda,
+        listPrice: r.listPrice,
+        extraLicenseCost: r.extraLicenseCost,
+        redaCost: r.redaCost,
+        nvrShareholders: r.nvrShareholders,
+        hasAktiebok: r.hasAktiebok,
+        nvrFixedPrice: r.fixedPriceNvr,
+      })
+      // Re-check bill-to live so editing the kundnr updates the flag immediately.
+      const billTo = resolveBillTo(
+        r.orgNumber,
+        r.fortnoxCustomerNumber,
+        priced.notInvoiced,
+        customerRegister,
+      )
+      return {
+        ...r,
+        fortnoxPrice: priced.fortnoxPrice,
+        redaPrice: priced.redaPrice,
+        diffVsList: priced.diffVsList,
+        nvrRecurring: priced.nvrRecurring,
+        nvrPrice: priced.nvrPrice,
+        notInvoiced: priced.notInvoiced,
+        ...billTo,
+      }
+    },
+    [customerRegister],
+  )
 
   const handleEdit = React.useCallback(
     (db: string, patch: Partial<EditableRow>) => {
@@ -253,18 +318,26 @@ export default function LicenserPage() {
           }),
         })
         if (!res.ok) throw new Error()
-        setRows((prev) =>
-          prev.map((r) =>
+        let nextRows: EditableRow[] = []
+        setRows((prev) => {
+          nextRows = prev.map((r) =>
             r.databaseNumber === db ? { ...r, dirty: false, saving: false, missingConfig: false } : r,
-          ),
-        )
+          )
+          return nextRows
+        })
+        // Keep the shared snapshot fresh after an edit (best-effort).
+        void fetch("/api/pricing/result", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ period, rows: nextRows, diagnostics }),
+        }).catch(() => {})
         toast.success(t("pricing.ok.saved", "Sparat"))
       } catch {
         setRows((prev) => prev.map((r) => (r.databaseNumber === db ? { ...r, saving: false } : r)))
         toast.error(t("pricing.err.save", "Kunde inte spara"))
       }
     },
-    [rows, t],
+    [rows, period, diagnostics, t],
   )
 
   async function handleExportExcel() {
@@ -296,6 +369,7 @@ export default function LicenserPage() {
     setReda(null)
     setNvr(null)
     setRows([])
+    setRegister([])
     setPeriod("")
     setDiagnostics(null)
     try {
@@ -303,14 +377,6 @@ export default function LicenserPage() {
     } catch {
       /* ignore */
     }
-  }
-
-  if (!isAdmin) {
-    return (
-      <div className="rounded-md border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
-        {t("pricing.noAccess", "Endast administratörer har tillgång till licensfakturering.")}
-      </div>
-    )
   }
 
   const reconOk =
@@ -344,15 +410,18 @@ export default function LicenserPage() {
               <Printer className="size-4" />
               {t("pricing.print", "Skriv ut / PDF")}
             </Button>
-            <Button variant="ghost" size="sm" onClick={handleClear}>
-              <RotateCcw className="size-4" />
-              {t("pricing.clear", "Rensa")}
-            </Button>
+            {isAdmin ? (
+              <Button variant="ghost" size="sm" onClick={handleClear}>
+                <RotateCcw className="size-4" />
+                {t("pricing.clear", "Rensa")}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>
 
-      {/* Upload */}
+      {/* Upload — admins only */}
+      {isAdmin ? (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t("pricing.upload.title", "Läs in filer")}</CardTitle>
@@ -402,6 +471,7 @@ export default function LicenserPage() {
           </Button>
         </CardContent>
       </Card>
+      ) : null}
 
       {/* Diagnostics */}
       {diagnostics ? (
@@ -469,8 +539,20 @@ export default function LicenserPage() {
       {hasResult ? (
         <>
           <PricingSummaryCards summary={summary} period={period} t={t} />
-          <PricingResultsTable rows={rows} onEdit={handleEdit} onSave={handleSave} t={t} />
+          <PricingResultsTable
+            rows={rows}
+            onEdit={handleEdit}
+            onSave={handleSave}
+            t={t}
+            readOnly={!isAdmin}
+          />
         </>
+      ) : !isAdmin ? (
+        <div className="rounded-md border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
+          {loadingShared
+            ? t("pricing.loadingShared", "Hämtar resultat…")
+            : t("pricing.noResultYet", "Inget resultat har publicerats ännu.")}
+        </div>
       ) : null}
     </div>
   )
