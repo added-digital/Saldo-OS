@@ -9,6 +9,7 @@ import {
   Plug,
   CircleCheck,
   RotateCw,
+  RefreshCw,
   AlertTriangle,
   Mail,
   Phone,
@@ -149,6 +150,7 @@ export default function CustomerDetailPage({
   const [loading, setLoading] = React.useState(true)
   const [connectingSie, setConnectingSie] = React.useState(false)
   const [refreshingBv, setRefreshingBv] = React.useState(false)
+  const [syncingCustomer, setSyncingCustomer] = React.useState(false)
   const { isAdmin } = useUser()
   const { t } = useTranslation()
   // Whether this customer has an active Fortnox SIE connection. null while
@@ -899,6 +901,49 @@ export default function CustomerDetailPage({
     )
   }
 
+  // Re-sync this one customer's data (details + invoices/time/contracts) from
+  // Fortnox on demand. Backed by /api/fortnox/sync-customer (admin-only). If
+  // Fortnox reports the customer no longer exists, the endpoint cleans it up
+  // locally and we return the user to the list.
+  async function handleSyncCustomer() {
+    if (syncingCustomer) return
+    setSyncingCustomer(true)
+    try {
+      const response = await fetch("/api/fortnox/sync-customer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId: id }),
+      })
+      const data = (await response.json().catch(() => ({}))) as {
+        removed?: boolean
+        error?: string
+        message?: string
+      }
+      if (!response.ok) {
+        toast.error(
+          data.message ??
+            data.error ??
+            t("customers.detail.syncFailed", "Fortnox sync failed"),
+        )
+        return
+      }
+      if (data.removed) {
+        toast.warning(
+          t(
+            "customers.detail.syncRemoved",
+            "Customer no longer exists in Fortnox and was removed.",
+          ),
+        )
+        router.push("/customers")
+        return
+      }
+      toast.success(t("customers.detail.syncSuccess", "Synced from Fortnox"))
+      await fetchData()
+    } finally {
+      setSyncingCustomer(false)
+    }
+  }
+
   async function handleRefreshBolagsverket() {
     if (refreshingBv) return
     setRefreshingBv(true)
@@ -1006,6 +1051,19 @@ export default function CustomerDetailPage({
                 {t("customers.detail.orgMismatch", "Org number mismatch")}
               </Badge>
             )}
+
+            {/* Re-sync this individual customer's data from Fortnox on demand. */}
+            <Button
+              variant="outline"
+              onClick={handleSyncCustomer}
+              disabled={syncingCustomer || !customer.fortnox_customer_number}
+              title={t("customers.detail.syncCustomerTooltip", "Sync this customer's data from Fortnox")}
+            >
+              <RefreshCw className={syncingCustomer ? "size-4 animate-spin" : "size-4"} />
+              {syncingCustomer
+                ? t("customers.detail.syncing", "Syncing…")
+                : t("customers.detail.syncCustomer", "Sync from Fortnox")}
+            </Button>
 
             {/* Refresh this customer's org number + räkenskapsår from Bolagsverket. */}
             <Button
@@ -1466,14 +1524,14 @@ export default function CustomerDetailPage({
             ? editingContact.linked_customers
                 .filter((c) => c.is_primary)
                 .map((c) => c.id)
-            : []
+            : [id]
         }
         initialCustomerIds={
           editingContact
             ? editingContact.linked_customers
                 .filter((c) => !c.is_primary)
                 .map((c) => c.id)
-            : [id]
+            : []
         }
         customers={allCustomers}
         onSave={handleSaveContact}

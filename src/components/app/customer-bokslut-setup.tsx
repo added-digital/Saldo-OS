@@ -98,7 +98,6 @@ export const CustomerBokslutSetup = React.forwardRef<
   const [financialYearToSie, setFinancialYearToSie] = React.useState<string | null>(null)
   const [financialYearToManual, setFinancialYearToManual] = React.useState<string>("")
   const [loading, setLoading] = React.useState(true)
-  const [saving, setSaving] = React.useState(false)
   // Signature of the last-saved values, to detect unsaved changes.
   const [snapshot, setSnapshot] = React.useState<string>("")
   // Last-saved structured values, so "Discard" can restore them.
@@ -207,7 +206,6 @@ export const CustomerBokslutSetup = React.forwardRef<
   }
 
   async function handleSave() {
-    setSaving(true)
     const supabase = createClient()
     const priceNum = fixedMonthlyPrice.trim() === "" ? null : Number(fixedMonthlyPrice)
     const { error } = await supabase
@@ -223,7 +221,6 @@ export const CustomerBokslutSetup = React.forwardRef<
       } as never)
       .eq("id", customerId)
     if (error) {
-      setSaving(false)
       toast.error(error.message)
       return
     }
@@ -234,7 +231,6 @@ export const CustomerBokslutSetup = React.forwardRef<
       "propagate_customer_financial_year" as never,
       { p_customer_id: customerId } as never,
     )
-    setSaving(false)
     if (propErr) {
       toast.error(propErr.message)
       // Customer save already succeeded; surface the propagation issue only.

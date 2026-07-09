@@ -140,6 +140,24 @@ shadcn/ui bridge variables (`--background`, `--foreground`, `--primary`, etc.) a
 
 ---
 
+## i18n / Translations
+
+All user-facing UI text goes through `t()` from `useTranslation` (`@/hooks/use-translation`):
+
+```tsx
+const { t } = useTranslation()
+t("leads.add.title", "Add lead") // key + English fallback
+```
+
+**Mandatory when adding or changing any UI string:**
+
+1. Call `t("scope.key", "English fallback")` — never hardcode display text.
+2. Add the key to **both** the `en` and `sv` dictionaries in `src/config/i18n.ts`. The fallback keeps things working, but Swedish users see English until the `sv` key exists — a missing `sv` entry is a bug, not a nice-to-have.
+3. Key naming: `area.subarea.name` (e.g. `leads.activity.logFailed`), matching the existing dictionary grouping.
+4. This applies to placeholders, toasts, empty states, aria-labels, dialog descriptions — every string a user can see.
+
+---
+
 ## Styling Conventions
 
 ### 1. Class Merging — always use `cn()`

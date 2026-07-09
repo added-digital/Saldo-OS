@@ -20,6 +20,16 @@ export interface BolagsverketFinancialYear {
   annualReportRegistered: boolean
 }
 
+/** Registered postal address as reported by Bolagsverket. */
+export interface BolagsverketAddress {
+  /** Street / utdelningsadress, e.g. "Storgatan 1". */
+  street: string | null
+  /** Postal code, e.g. "111 22". */
+  postalCode: string | null
+  /** City / postort, e.g. "Stockholm". */
+  city: string | null
+}
+
 /** Normalised company snapshot from Bolagsverket for one org number. */
 export interface BolagsverketCompany {
   /** Canonical org number as Bolagsverket holds it (source of truth). */
@@ -30,6 +40,8 @@ export interface BolagsverketCompany {
   legalForm: string | null
   /** Registered office / säte (kommun). */
   registeredOffice: string | null
+  /** Registered postal address (NULL when the dataset has none). */
+  address: BolagsverketAddress | null
   /** Registration status, e.g. active vs. deregistered. */
   status: string | null
   /**

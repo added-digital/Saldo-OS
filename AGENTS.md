@@ -56,6 +56,7 @@ LSP codemap unavailable: `typescript-language-server` is not installed in this e
 - Route params in pages/layouts should follow the async params shape already used in the codebase.
 - Follow existing formatting in touched files; there is no Prettier/Biome/EditorConfig.
 - Docs use pnpm commands, but both `pnpm-lock.yaml` and `package-lock.json` exist; avoid lockfile churn.
+- i18n: every user-facing string uses `t("scope.key", "English fallback")` from `useTranslation`, AND the key must be added to both the `en` and `sv` dictionaries in `src/config/i18n.ts`. Missing `sv` entries are bugs. Applies to placeholders, toasts, empty states, aria-labels.
 
 ## DATA RULES
 - Turnover values should use ex-VAT source fields, especially `total_ex_vat`, when available.

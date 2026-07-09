@@ -541,12 +541,20 @@ export interface SentEmail {
   updated_at: string
 }
 
-export type WebsiteLeadStatus = "new" | "contacted" | "archived" | "spam"
+export type WebsiteLeadStatus =
+  | "new"
+  | "contacted"
+  | "offer_sent"
+  | "won"
+  | "lost"
+  | "archived"
+  | "spam"
 export type WebsiteLeadNotificationStatus =
   | "pending"
   | "sent"
   | "failed"
   | "skipped"
+export type WebsiteLeadSource = "website" | "manual"
 
 export interface WebsiteLead {
   id: string
@@ -566,8 +574,39 @@ export interface WebsiteLead {
   notification_error: string | null
   idempotency_key: string | null
   source_ip: string | null
+  source: WebsiteLeadSource
+  org_number: string | null
+  company_legal_form: string | null
+  address_street: string | null
+  address_postal_code: string | null
+  address_city: string | null
+  contact_role: string | null
+  created_by: string | null
+  bolagsverket_data: Record<string, unknown> | null
   created_at: string
   updated_at: string
+}
+
+export type LeadActivityType =
+  | "called"
+  | "emailed"
+  | "meeting_booked"
+  | "offer_sent"
+  | "follow_up"
+  | "note"
+  | "status_change"
+  | "won"
+  | "lost"
+  | "archived"
+  | "spam"
+
+export interface LeadActivity {
+  id: string
+  lead_id: string
+  activity_type: LeadActivityType
+  note: string | null
+  created_by: string | null
+  created_at: string
 }
 
 export type EmailEventType = "open" | "click"
@@ -771,13 +810,40 @@ export interface Database {
           | "notification_status"
           | "meta"
           | "form_name"
+          | "message"
+          | "source"
+          | "org_number"
+          | "company_legal_form"
+          | "address_street"
+          | "address_postal_code"
+          | "address_city"
+          | "contact_role"
+          | "created_by"
+          | "bolagsverket_data"
         > & {
           status?: WebsiteLeadStatus
           notification_status?: WebsiteLeadNotificationStatus
           meta?: Record<string, unknown>
           form_name?: string
+          message?: string
+          source?: WebsiteLeadSource
+          org_number?: string | null
+          company_legal_form?: string | null
+          address_street?: string | null
+          address_postal_code?: string | null
+          address_city?: string | null
+          contact_role?: string | null
+          created_by?: string | null
+          bolagsverket_data?: Record<string, unknown> | null
         }
         Update: Partial<Omit<WebsiteLead, "id" | "created_at" | "updated_at">>
+      }
+      lead_activities: {
+        Row: LeadActivity
+        Insert: Omit<LeadActivity, "id" | "created_at" | "note"> & {
+          note?: string | null
+        }
+        Update: Partial<Pick<LeadActivity, "activity_type" | "note">>
       }
     }
   }

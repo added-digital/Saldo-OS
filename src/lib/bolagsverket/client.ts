@@ -129,7 +129,15 @@ interface RawOrganisation {
   }
   organisationsform?: { kod?: string; klartext?: string }
   juridiskForm?: { kod?: string; klartext?: string }
-  postadressOrganisation?: { postadress?: { postort?: string } }
+  postadressOrganisation?: {
+    postadress?: {
+      utdelningsadress?: string
+      // The API has used both spellings across versions; read either.
+      postnummer?: string
+      postNummer?: string
+      postort?: string
+    }
+  }
   verksamOrganisation?: { kod?: string }
   avregistreradOrganisation?: unknown
   organisationsdatum?: { registreringsdatum?: string }
@@ -170,6 +178,16 @@ function mapCompany(
       ? "aktiv"
       : (o?.verksamOrganisation?.kod ?? null)
 
+  const postadress = o?.postadressOrganisation?.postadress
+  const address =
+    postadress?.utdelningsadress || postadress?.postort
+      ? {
+          street: postadress?.utdelningsadress ?? null,
+          postalCode: postadress?.postnummer ?? postadress?.postNummer ?? null,
+          city: postadress?.postort ?? null,
+        }
+      : null
+
   return {
     // Canonical org number as Bolagsverket holds it (source of truth).
     orgNumber: o?.organisationsidentitet?.identitetsbeteckning ?? org,
@@ -177,6 +195,7 @@ function mapCompany(
     legalForm: o?.organisationsform?.klartext ?? o?.juridiskForm?.klartext ?? null,
     // No dedicated "säte" field in this dataset; postort is the best proxy.
     registeredOffice: o?.postadressOrganisation?.postadress?.postort ?? null,
+    address,
     status,
     financialYears: mapFinancialYears(documents),
     raw: { organisation: o ?? null, dokumentlista: documents.dokument ?? [] },
@@ -223,6 +242,11 @@ export class StubBolagsverketClient implements BolagsverketClient {
         name: "Stub Företag AB",
         legalForm: "Aktiebolag",
         registeredOffice: "Stockholm",
+        address: {
+          street: "Stubbgatan 1",
+          postalCode: "111 22",
+          city: "Stockholm",
+        },
         status: "aktivt",
         financialYears: [
           // Bolagsverket provides only the period END date (like the real API).
