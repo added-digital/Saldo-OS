@@ -30,6 +30,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -669,29 +670,44 @@ export function PricingResultsTable({
       ) : null}
 
       <LicenseDetailsDialog
-        row={detailRow}
+        row={
+          detailRow
+            ? (rows.find((r) => r.databaseNumber === detailRow.databaseNumber) ??
+              detailRow)
+            : null
+        }
         onOpenChange={(open) => {
           if (!open) setDetailRow(null)
         }}
+        onEdit={onEdit}
+        onSave={onSave}
+        readOnly={readOnly}
         t={t}
       />
     </div>
   )
 }
 
-/** Modal listing every license/service a single customer carries. */
+/** Modal listing every license/service a single customer carries, and — when
+ *  not read-only — the same editable overrides available inline in the row. */
 function LicenseDetailsDialog({
   row,
   onOpenChange,
+  onEdit,
+  onSave,
+  readOnly = false,
   t,
 }: {
   row: EditableRow | null
   onOpenChange: (open: boolean) => void
+  onEdit: (databaseNumber: string, patch: Patch) => void
+  onSave: (databaseNumber: string) => void
+  readOnly?: boolean
   t: (key: string, fallback: string) => string
 }) {
   return (
     <Dialog open={row !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{row?.name || "—"}</DialogTitle>
           <DialogDescription>
@@ -699,9 +715,147 @@ function LicenseDetailsDialog({
             {row && !row.nvrOnly ? ` · ${row.databaseNumber}` : ""}
           </DialogDescription>
         </DialogHeader>
-        {row ? <LicenseList row={row} t={t} /> : null}
+
+        {row ? (
+          <div className="space-y-5">
+            {!readOnly ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label={t("pricing.table.custNo", "Kundnr")}>
+                    <Input
+                      value={row.fortnoxCustomerNumber ?? ""}
+                      onChange={(e) =>
+                        onEdit(row.databaseNumber, {
+                          fortnoxCustomerNumber: e.target.value || null,
+                        })
+                      }
+                      placeholder={t("pricing.table.ejPlaceholder", "EJ")}
+                      className="h-8"
+                    />
+                  </Field>
+                  <Field label={t("pricing.table.discount", "Rabatt %")}>
+                    <Input
+                      inputMode="decimal"
+                      value={String(row.discountPercent ?? 0)}
+                      onChange={(e) =>
+                        onEdit(row.databaseNumber, {
+                          discountPercent: numOrNull(e.target.value) ?? 0,
+                        })
+                      }
+                      className="h-8 text-right"
+                    />
+                  </Field>
+                  <Field label={t("pricing.table.fixed", "Fast pris")}>
+                    <Input
+                      inputMode="decimal"
+                      value={row.fixedPriceFortnox == null ? "" : String(row.fixedPriceFortnox)}
+                      onChange={(e) =>
+                        onEdit(row.databaseNumber, {
+                          fixedPriceFortnox: numOrNull(e.target.value),
+                        })
+                      }
+                      className="h-8 text-right"
+                    />
+                  </Field>
+                  <Field label={t("pricing.table.redaFixed", "Fast Reda")}>
+                    <Input
+                      inputMode="decimal"
+                      value={row.fixedPriceReda == null ? "" : String(row.fixedPriceReda)}
+                      onChange={(e) =>
+                        onEdit(row.databaseNumber, {
+                          fixedPriceReda: numOrNull(e.target.value),
+                        })
+                      }
+                      className="h-8 text-right"
+                    />
+                  </Field>
+                  <Field label={t("pricing.table.nvrFixed", "Fast NVR")}>
+                    <Input
+                      inputMode="decimal"
+                      value={row.fixedPriceNvr == null ? "" : String(row.fixedPriceNvr)}
+                      onChange={(e) =>
+                        onEdit(row.databaseNumber, {
+                          fixedPriceNvr: numOrNull(e.target.value),
+                        })
+                      }
+                      className="h-8 text-right"
+                      disabled={!row.hasAktiebok}
+                      placeholder={row.hasAktiebok ? undefined : "—"}
+                    />
+                  </Field>
+                  <Field label={t("pricing.table.status", "Status")}>
+                    <select
+                      value={row.status ?? ""}
+                      onChange={(e) =>
+                        onEdit(row.databaseNumber, { status: e.target.value || null })
+                      }
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                    >
+                      <option value="">—</option>
+                      {(STATUS_OPTIONS as readonly string[]).includes(row.status ?? "")
+                        ? null
+                        : row.status
+                          ? <option value={row.status}>{row.status}</option>
+                          : null}
+                      {STATUS_OPTIONS.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <Field label={t("pricing.table.comment", "Kommentar")}>
+                  <Input
+                    value={row.comment ?? ""}
+                    onChange={(e) =>
+                      onEdit(row.databaseNumber, { comment: e.target.value || null })
+                    }
+                    placeholder={t("pricing.table.commentPlaceholder", "Kommentar…")}
+                    className="h-8"
+                  />
+                </Field>
+              </div>
+            ) : null}
+
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t("pricing.detail.services", "Tjänster")}
+              </p>
+              <LicenseList row={row} t={t} />
+            </div>
+          </div>
+        ) : null}
+
+        {row && !readOnly ? (
+          <DialogFooter>
+            <Button
+              onClick={() => onSave(row.databaseNumber)}
+              disabled={!row.dirty || row.saving}
+            >
+              {row.saving ? <Loader2 className="size-4 animate-spin" /> : null}
+              {t("pricing.table.save", "Spara")}
+            </Button>
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** Label + control row used inside the details dialog. */
+function Field({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {children}
+    </label>
   )
 }
 
