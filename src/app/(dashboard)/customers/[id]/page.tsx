@@ -11,6 +11,7 @@ import {
   RotateCw,
   RefreshCw,
   AlertTriangle,
+  Info,
   Mail,
   Phone,
   MapPin,
@@ -1051,6 +1052,48 @@ export default function CustomerDetailPage({
                 {t("customers.detail.orgMismatch", "Org number mismatch")}
               </Badge>
             )}
+
+            {/* Plain-language Bolagsverket sync state, so "found but no digital
+                annual report" isn't mistaken for "not synced". The mismatch case
+                has its own warning badge above, so skip it here. */}
+            {customer.bolagsverket_updated_at &&
+              !customer.bolagsverket_name_mismatch &&
+              customer.bolagsverket_match_status === "confirmed" && (
+                <Badge
+                  variant="outline"
+                  className="border-semantic-success/40 bg-semantic-success/10 text-semantic-success"
+                  title={t("customers.detail.bvStatusConfirmedTooltip", "Confirmed at Bolagsverket, with a digitally filed annual report.")}
+                >
+                  <CircleCheck className="size-3" />
+                  {t("customers.detail.bvStatusConfirmed", "Bolagsverket verified")}
+                </Badge>
+              )}
+
+            {customer.bolagsverket_updated_at &&
+              !customer.bolagsverket_name_mismatch &&
+              customer.bolagsverket_match_status === "no_rakenskapsar" && (
+                <Badge
+                  variant="outline"
+                  className="border-border bg-muted text-muted-foreground"
+                  title={t("customers.detail.bvStatusNoReportTooltip", "The company is registered at Bolagsverket, but has no digitally filed annual report. Bolagsverket only publishes digital filings from 2020 onwards, so paper-filed reports don't appear. Set the räkenskapsår via SIE or manually below.")}
+                >
+                  <Info className="size-3" />
+                  {t("customers.detail.bvStatusNoReport", "Found — no digital report")}
+                </Badge>
+              )}
+
+            {customer.bolagsverket_updated_at &&
+              !customer.bolagsverket_name_mismatch &&
+              customer.bolagsverket_match_status === "not_found" && (
+                <Badge
+                  variant="outline"
+                  className="border-border bg-muted text-muted-foreground"
+                  title={t("customers.detail.bvStatusNotFoundTooltip", "Not found at Bolagsverket — likely an individual, a foreign company, or a wrong org number.")}
+                >
+                  <Info className="size-3" />
+                  {t("customers.detail.bvStatusNotFound", "Not at Bolagsverket")}
+                </Badge>
+              )}
 
             {/* Re-sync this individual customer's data from Fortnox on demand. */}
             <Button

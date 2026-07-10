@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { Info } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -97,6 +98,10 @@ export const CustomerBokslutSetup = React.forwardRef<
   const [financialYearToBv, setFinancialYearToBv] = React.useState<string | null>(null)
   const [financialYearToSie, setFinancialYearToSie] = React.useState<string | null>(null)
   const [financialYearToManual, setFinancialYearToManual] = React.useState<string>("")
+  // Outcome of the last Bolagsverket lookup — lets us explain, right here, when
+  // Bolagsverket has no digital annual report for this company (so the user
+  // knows to fall back to SIE / manual rather than thinking it's broken).
+  const [bvMatchStatus, setBvMatchStatus] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
   // Signature of the last-saved values, to detect unsaved changes.
   const [snapshot, setSnapshot] = React.useState<string>("")
@@ -136,7 +141,7 @@ export const CustomerBokslutSetup = React.forwardRef<
       const supabase = createClient()
       const [cfgRes, custRes] = await Promise.all([
         supabase.from("engagement_config").select("checklist_fields").eq("id", 1).maybeSingle(),
-        supabase.from("customers").select("bokslut_setup, needs_segmentation, bokslut_relevant, saldoavtal_date, fixed_monthly_price, financial_year_to_bv, financial_year_to_sie, financial_year_to_manual").eq("id", customerId).maybeSingle(),
+        supabase.from("customers").select("bokslut_setup, needs_segmentation, bokslut_relevant, saldoavtal_date, fixed_monthly_price, financial_year_to_bv, financial_year_to_sie, financial_year_to_manual, bolagsverket_match_status").eq("id", customerId).maybeSingle(),
       ])
       if (cancelled) return
       const cfg = cfgRes.data as { checklist_fields: EngagementChecklistField[] | null } | null
@@ -150,6 +155,7 @@ export const CustomerBokslutSetup = React.forwardRef<
         financial_year_to_bv: string | null
         financial_year_to_sie: string | null
         financial_year_to_manual: string | null
+        bolagsverket_match_status: string | null
       } | null
       const loadedSetup = cust?.bokslut_setup ?? {}
       const loadedDate = cust?.saldoavtal_date ?? ""
@@ -165,6 +171,7 @@ export const CustomerBokslutSetup = React.forwardRef<
       setFinancialYearToBv(cust?.financial_year_to_bv ?? null)
       setFinancialYearToSie(cust?.financial_year_to_sie ?? null)
       setFinancialYearToManual(loadedFyManual)
+      setBvMatchStatus(cust?.bolagsverket_match_status ?? null)
       setSnapshot(serializeSetup(loadedSetup, loadedDate, loadedPrice, loadedFyManual, loadedRelevant))
       savedRef.current = {
         setup: { ...loadedSetup },
@@ -423,6 +430,20 @@ export const CustomerBokslutSetup = React.forwardRef<
           <p className="text-xs text-muted-foreground">
             {t("customers.bokslut.financialYearHint", "The recurring year-end. From Bolagsverket when available, else SIE when connected; otherwise enter it manually.")}
           </p>
+          {/* When Bolagsverket found the company but has no digital annual report
+              (paper-filed, or filed before 2020), explain it here so the empty
+              räkenskapsår reads as a known data gap, not a failed sync. */}
+          {bvMatchStatus === "no_rakenskapsar" && !financialYearToBv && !financialYearToSie ? (
+            <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+              <Info className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                {t(
+                  "customers.bokslut.noDigitalReportHint",
+                  "Bolagsverket has no digitally filed annual report for this company (it only publishes digital filings from 2020 onwards), so the räkenskapsår can't be fetched automatically. Connect SIE or set it manually above.",
+                )}
+              </span>
+            </p>
+          ) : null}
         </div>
 
         <div className="grid grid-cols-2 gap-3">

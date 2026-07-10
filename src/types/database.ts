@@ -592,6 +592,8 @@ export interface WebsiteLead {
   contact_role: string | null
   created_by: string | null
   bolagsverket_data: Record<string, unknown> | null
+  /** Manual board-column ordering (see migration 00103). Null = never ordered. */
+  board_position?: number | null
   created_at: string
   updated_at: string
 }
