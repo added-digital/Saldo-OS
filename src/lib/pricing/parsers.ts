@@ -319,6 +319,15 @@ export function parseNvrGrid(
 // Merge → per-client cost rows (L / M / N / O + NVR)
 // ---------------------------------------------------------------------------
 
+/** One license/subscription line a client carries (a Fortnox article). */
+export interface LicenseLine {
+  articleNo: string
+  name: string
+  quantity: number
+  /** Standard (list) unit price used for pricing; 0 when the article is unpriced. */
+  unitListPrice: number
+}
+
 export interface ClientCostRow {
   databaseNumber: string
   orgNumber: string
@@ -339,6 +348,8 @@ export interface ClientCostRow {
   clientListOnly: boolean
   /** True when the company is only in the NVR file (aktiebok-only, no Fortnox/kundlista). */
   nvrOnly: boolean
+  /** Individual Fortnox license lines (excludes the fixed base fee). */
+  licenses: LicenseLine[]
 }
 
 export interface UnknownArticle {
@@ -402,6 +413,7 @@ export function mergeToClientCostRows(
     const client = fortnox.clients.get(db)
     let listPrice = 0
     let extra = 0
+    const licenses: LicenseLine[] = []
     if (client) {
       for (const [artNo, qty] of client.articles) {
         const sp = standardPrice(artNo)
@@ -415,7 +427,14 @@ export function mergeToClientCostRows(
         }
         listPrice += qty * (sp ?? 0)
         extra += qty * (fortnox.articleTotals.get(artNo)?.unitPaidPrice ?? 0)
+        licenses.push({
+          articleNo: artNo,
+          name: fortnox.articleTotals.get(artNo)?.name ?? artNo,
+          quantity: qty,
+          unitListPrice: sp ?? 0,
+        })
       }
+      licenses.sort((a, b) => a.name.localeCompare(b.name, "sv"))
     }
     const fixedUnits = client?.fixedUnits ?? 1
     allocatedFixedUnits += fixedUnits
@@ -433,6 +452,7 @@ export function mergeToClientCostRows(
       hasAktiebok: nvr?.presentDatabases.has(db) ?? false,
       clientListOnly: !info.hasLicenses,
       nvrOnly: false,
+      licenses,
     })
   }
 
@@ -472,6 +492,7 @@ export function mergeToClientCostRows(
       hasAktiebok: true,
       clientListOnly: false,
       nvrOnly: true,
+      licenses: [],
     })
   }
 

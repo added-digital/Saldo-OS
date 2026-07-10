@@ -3,6 +3,7 @@
 import * as React from "react"
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -25,10 +26,24 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
+import type { LicenseLine } from "@/lib/pricing/compute"
 import { formatSek } from "./pricing-summary-cards"
 
 /** The editable subset of a priced row. */
@@ -62,6 +77,8 @@ export interface EditableRow {
   missingConfig: boolean
   comment: string | null
   status: string | null
+  /** Individual Fortnox license lines (excludes the base fee). */
+  licenses: LicenseLine[]
   /** Local UI: unsaved edits present. */
   dirty?: boolean
   saving?: boolean
@@ -130,8 +147,23 @@ export function PricingResultsTable({
   const [query, setQuery] = React.useState("")
   const [onlyReview, setOnlyReview] = React.useState(false)
   const [onlyLoss, setOnlyLoss] = React.useState(false)
+  // Filter by one or more statuses (empty = all). Filter to companies whose only
+  // billable service is the Digital Aktiebok (NVR), i.e. no Fortnox license lines
+  // and no Reda.
+  const [statusFilter, setStatusFilter] = React.useState<string[]>([])
+  const [onlyAktiebok, setOnlyAktiebok] = React.useState(false)
+  // The row whose license breakdown is shown in the modal (null = closed).
+  const [detailRow, setDetailRow] = React.useState<EditableRow | null>(null)
   const [pageSize, setPageSize] = React.useState<number>(25)
   const [pageIndex, setPageIndex] = React.useState(0)
+
+  // Status options for the filter: the known vocabulary plus any custom statuses
+  // that actually occur in the data.
+  const statusFilterOptions = React.useMemo(() => {
+    const set = new Set<string>(STATUS_OPTIONS as readonly string[])
+    for (const r of rows) if (r.status) set.add(r.status)
+    return [...set]
+  }, [rows])
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -147,13 +179,22 @@ export function PricingResultsTable({
       )
     if (onlyReview) list = list.filter((r) => r.missingConfig || r.dirty)
     if (onlyLoss) list = list.filter((r) => netOf(r) < 0)
+    if (statusFilter.length)
+      list = list.filter((r) => r.status != null && statusFilter.includes(r.status))
+    if (onlyAktiebok)
+      // Aktiebok-only = present only in the NVR file, with no Fortnox/Reda
+      // footprint — the same flag that drives the "Endast aktiebok" row badge,
+      // so the filter and the badge now agree. The previous check keyed off
+      // licenses.length, which collapsed when rows loaded without a populated
+      // licenses array and let every Fortnox client that also has aktiebok in.
+      list = list.filter((r) => r.nvrOnly)
     return list
-  }, [rows, query, onlyReview, onlyLoss])
+  }, [rows, query, onlyReview, onlyLoss, statusFilter, onlyAktiebok])
 
   // Reset to the first page whenever the filtered set or page size changes.
   React.useEffect(() => {
     setPageIndex(0)
-  }, [query, onlyReview, onlyLoss, pageSize])
+  }, [query, onlyReview, onlyLoss, statusFilter, onlyAktiebok, pageSize])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const safePage = Math.min(pageIndex, pageCount - 1)
@@ -188,6 +229,71 @@ export function PricingResultsTable({
         >
           {t("pricing.table.onlyLoss", "Endast förlust")}
         </Button>
+
+        {/* Status filter — multi-select (e.g. "Kolla upp", "Avtal Fortnox"). */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+            >
+              {t("pricing.table.statusFilter", "Status")}
+              {statusFilter.length ? (
+                <Badge
+                  variant="secondary"
+                  className="ml-0.5 h-5 min-w-5 justify-center px-1 text-xs tabular-nums"
+                >
+                  {statusFilter.length}
+                </Badge>
+              ) : null}
+              <ChevronDown className="size-4 shrink-0 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-60 p-2">
+            <div className="max-h-72 space-y-0.5 overflow-y-auto">
+              {statusFilterOptions.map((s) => {
+                const checked = statusFilter.includes(s)
+                return (
+                  <label
+                    key={s}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted"
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() =>
+                        setStatusFilter((prev) =>
+                          checked ? prev.filter((x) => x !== s) : [...prev, s],
+                        )
+                      }
+                    />
+                    <span className="min-w-0 flex-1 truncate">{s}</span>
+                  </label>
+                )
+              })}
+            </div>
+            {statusFilter.length ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-1 h-7 w-full text-xs text-muted-foreground"
+                onClick={() => setStatusFilter([])}
+              >
+                {t("pricing.table.clearStatus", "Rensa status")}
+              </Button>
+            ) : null}
+          </PopoverContent>
+        </Popover>
+
+        {/* Companies whose only service is the Digital Aktiebok. */}
+        <Button
+          variant={onlyAktiebok ? "default" : "outline"}
+          size="sm"
+          onClick={() => setOnlyAktiebok((v) => !v)}
+        >
+          {t("pricing.table.onlyAktiebok", "Endast Digital Aktiebok")}
+        </Button>
+
         <span className="ml-auto text-xs text-muted-foreground">
           {filtered.length} {t("pricing.table.rows", "rader")}
         </span>
@@ -254,7 +360,14 @@ export function PricingResultsTable({
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <div className="min-w-0">
-                      <div className="truncate font-medium">{r.name || "—"}</div>
+                      <button
+                        type="button"
+                        onClick={() => setDetailRow(r)}
+                        title={t("pricing.table.viewLicenses", "Visa licenser")}
+                        className="max-w-full cursor-pointer truncate text-left font-medium underline-offset-2 hover:underline"
+                      >
+                        {r.name || "—"}
+                      </button>
                       <div className="text-xs text-muted-foreground">
                         {r.orgNumber || "—"}
                         {!r.nvrOnly ? (
@@ -554,6 +667,103 @@ export function PricingResultsTable({
           </div>
         </div>
       ) : null}
+
+      <LicenseDetailsDialog
+        row={detailRow}
+        onOpenChange={(open) => {
+          if (!open) setDetailRow(null)
+        }}
+        t={t}
+      />
     </div>
+  )
+}
+
+/** Modal listing every license/service a single customer carries. */
+function LicenseDetailsDialog({
+  row,
+  onOpenChange,
+  t,
+}: {
+  row: EditableRow | null
+  onOpenChange: (open: boolean) => void
+  t: (key: string, fallback: string) => string
+}) {
+  return (
+    <Dialog open={row !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{row?.name || "—"}</DialogTitle>
+          <DialogDescription>
+            {row?.orgNumber || "—"}
+            {row && !row.nvrOnly ? ` · ${row.databaseNumber}` : ""}
+          </DialogDescription>
+        </DialogHeader>
+        {row ? <LicenseList row={row} t={t} /> : null}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** The list of services a customer has: base fee, Fortnox articles, Reda, aktiebok. */
+function LicenseList({
+  row,
+  t,
+}: {
+  row: EditableRow
+  t: (key: string, fallback: string) => string
+}) {
+  const items: Array<{ label: string; detail?: string; amount?: number }> = []
+
+  // Base Fortnox subscription (the fixed per-client fee) — not for aktiebok-only.
+  if (!row.nvrOnly && row.fixedCost > 0) {
+    items.push({ label: t("pricing.licenses.base", "Fast licens (Fortnox)") })
+  }
+  // Individual Fortnox license articles.
+  for (const l of row.licenses ?? []) {
+    items.push({
+      label: l.name || l.articleNo,
+      detail: `${l.quantity} ${t("pricing.licenses.qty", "st")}`,
+      amount: l.quantity * l.unitListPrice,
+    })
+  }
+  // Reda document scanning.
+  if (row.redaCost > 0) {
+    items.push({ label: t("pricing.licenses.reda", "Reda (dokumentskanning)") })
+  }
+  // Digital Aktiebok (NVR).
+  if (row.hasAktiebok) {
+    items.push({
+      label: t("pricing.licenses.aktiebok", "Digital Aktiebok"),
+      detail: `${row.nvrShareholders} ${t("pricing.table.shareholders", "ägare")}`,
+    })
+  }
+
+  if (items.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {t("pricing.licenses.none", "Inga licenser registrerade.")}
+      </p>
+    )
+  }
+
+  return (
+    <ul className="divide-y">
+      {items.map((it, i) => (
+        <li key={i} className="flex items-center justify-between gap-3 py-2 text-sm">
+          <div className="min-w-0">
+            <div className="truncate font-medium">{it.label}</div>
+            {it.detail ? (
+              <div className="text-xs text-muted-foreground">{it.detail}</div>
+            ) : null}
+          </div>
+          {typeof it.amount === "number" ? (
+            <div className="shrink-0 tabular-nums text-muted-foreground">
+              {formatSek(it.amount)}
+            </div>
+          ) : null}
+        </li>
+      ))}
+    </ul>
   )
 }

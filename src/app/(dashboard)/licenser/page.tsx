@@ -3,7 +3,6 @@
 import * as React from "react"
 import {
   AlertTriangle,
-  Calculator,
   ChevronDown,
   Download,
   FileSpreadsheet,
@@ -36,7 +35,7 @@ import {
 
 // Bump the version whenever the cached result shape changes so stale caches
 // (e.g. from before the NVR line existed) are discarded instead of crashing.
-const RESULT_STORAGE_KEY = "saldo.licenser.result.v5"
+const RESULT_STORAGE_KEY = "saldo.licenser.result.v6"
 
 interface CalcResponse {
   ok: true
@@ -390,7 +389,7 @@ export default function LicenserPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-semibold">
-            <Calculator className="size-5 text-muted-foreground" />
+            <FileSpreadsheet className="size-5 text-muted-foreground" />
             {t("pricing.title", "Licensfakturering")}
           </h1>
           <p className="text-sm text-muted-foreground">

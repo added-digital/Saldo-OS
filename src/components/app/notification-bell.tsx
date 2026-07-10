@@ -76,10 +76,20 @@ export function NotificationBell() {
         .update({ read_at: now } as never)
         .eq("id", n.id)
     }
-    if (n.engagement_id) {
+    if (n.type === "lead_assignment" && n.lead_id) {
+      router.push(`/leads/${n.lead_id}`)
+    } else if (n.engagement_id) {
       router.push(`/bokslut?engagement=${n.engagement_id}`)
     }
   }
+
+  const messageFor = React.useCallback(
+    (n: AppNotification) =>
+      n.type === "lead_assignment"
+        ? t("notifications.assignedLead", "assigned a lead to you")
+        : t("notifications.mentionedYou", "mentioned you in a comment"),
+    [t],
+  )
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -140,7 +150,7 @@ export function NotificationBell() {
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm">
                       <span className="font-medium">{n.actor_name ?? "—"}</span>{" "}
-                      {t("notifications.mentionedYou", "mentioned you in a comment")}
+                      {messageFor(n)}
                     </span>
                     {n.customer_name ? (
                       <span className="block truncate text-xs text-muted-foreground">

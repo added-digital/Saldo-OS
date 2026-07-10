@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { Check, ChevronDown, ChevronRight, Download, Landmark, Loader2, MessageSquare, Paperclip, Pencil, Send, Trash2, Upload, X } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Download, Landmark, Loader2, MessageSquare, Paperclip, Pencil, RotateCw, Send, Trash2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -181,6 +181,7 @@ export function EngagementDetailSheet({
   const [nextYearNote, setNextYearNote] = React.useState<string>("")
   const [generalComment, setGeneralComment] = React.useState<string>("")
   const [saving, setSaving] = React.useState(false)
+  const [refreshingBv, setRefreshingBv] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
   const [activity, setActivity] = React.useState<EngagementActivity[]>([])
@@ -366,6 +367,80 @@ export function EngagementDetailSheet({
     onSaved(merged)
     toast.success(t("engagements.toast.moved", "Status updated"))
     onOpenChange(false)
+  }
+
+  // Re-sync THIS customer from Bolagsverket without leaving the board — same
+  // per-customer refresh as the customer card, admin-only (the route is
+  // admin-gated too). On success we re-pull this engagement's board row so the
+  // header badge and any auto-advanced bokslut status reflect the new data.
+  async function handleRefreshBolagsverket() {
+    if (!row || refreshingBv) return
+    setRefreshingBv(true)
+    try {
+      const response = await fetch("/api/bolagsverket/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId: row.customer_id }),
+      })
+      const data = (await response.json().catch(() => ({}))) as {
+        result?: { status?: string; cardsMarkedRegistered?: number }
+        error?: string
+        message?: string
+      }
+      if (!response.ok) {
+        toast.error(
+          data.message ??
+            data.error ??
+            t("customers.detail.bvFailed", "Bolagsverket refresh failed"),
+        )
+        return
+      }
+      const status = data.result?.status
+      if (status === "name_mismatch") {
+        toast.warning(
+          t("customers.detail.bvMismatch", "Bolagsverket found a different company — check the org number."),
+        )
+      } else if (status === "not_found") {
+        toast.warning(
+          t("customers.detail.bvNotFound", "Not found in Bolagsverket (individual, foreign, or wrong org number)."),
+        )
+      } else if (status === "no_orgnr") {
+        toast.warning(
+          t("customers.detail.bvNoOrgNr", "No org number on this customer to look up."),
+        )
+      } else if (status === "no_rakenskapsar") {
+        toast.success(
+          t("customers.detail.bvUpdatedNoReport", "Updated from Bolagsverket (no filed annual report yet)."),
+        )
+      } else {
+        toast.success(t("customers.detail.bvUpdated", "Updated from Bolagsverket."))
+      }
+      const marked = data.result?.cardsMarkedRegistered ?? 0
+      if (marked > 0) {
+        toast.success(
+          t(
+            "customers.detail.bvCardsRegistered",
+            "{count} bokslut card(s) marked as registered with Bolagsverket.",
+          ).replace("{count}", String(marked)),
+        )
+      }
+      // Reflect any Bolagsverket-driven change (registration badge, auto-advanced
+      // bokslut status) on the board. Skip if the form has unsaved edits, so we
+      // don't reseed and clobber them.
+      if (!dirty) {
+        const supabase = createClient()
+        const { data: fresh } = await supabase
+          .from("engagement_board")
+          .select("*")
+          .eq("id", row.id)
+          .maybeSingle()
+        if (fresh) onSaved(fresh as EngagementBoardRow)
+      }
+    } catch {
+      toast.error(t("customers.detail.bvFailed", "Bolagsverket refresh failed"))
+    } finally {
+      setRefreshingBv(false)
+    }
   }
 
   async function handleDelete() {
@@ -588,6 +663,22 @@ export function EngagementDetailSheet({
               {" · "}
               {new Date(row.annual_report_registered_bv_at).toLocaleDateString("sv-SE")}
             </Badge>
+          ) : null}
+          {isAdmin ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2 w-fit"
+              onClick={handleRefreshBolagsverket}
+              disabled={refreshingBv}
+              title={t("customers.detail.refreshBolagsverketTooltip", "Refresh org number and räkenskapsår from Bolagsverket")}
+            >
+              <RotateCw className={refreshingBv ? "size-4 animate-spin" : "size-4"} />
+              {refreshingBv
+                ? t("customers.detail.refreshing", "Refreshing…")
+                : t("customers.detail.refreshBolagsverket", "Refresh from Bolagsverket")}
+            </Button>
           ) : null}
         </SheetHeader>
 

@@ -591,6 +591,8 @@ export interface WebsiteLead {
   address_city: string | null
   contact_role: string | null
   created_by: string | null
+  /** Assigned customer manager (profiles.id). Null = unassigned. Migration 00104. */
+  customer_manager_id: string | null
   bolagsverket_data: Record<string, unknown> | null
   /** Manual board-column ordering (see migration 00103). Null = never ordered. */
   board_position?: number | null

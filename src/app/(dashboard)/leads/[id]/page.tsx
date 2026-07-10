@@ -14,13 +14,18 @@ import {
   Hash,
   MapPin,
   UserPen,
+  UserRound,
   BadgeCheck,
   Trash2,
   Pencil,
+  Check,
+  ChevronsUpDown,
+  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import { useUser } from "@/hooks/use-user";
 import type { WebsiteLead, WebsiteLeadStatus } from "@/types/database";
 import { AddLeadDialog } from "@/components/app/add-lead-dialog";
@@ -30,7 +35,21 @@ import { PageHeader } from "@/components/app/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { useTranslation } from "@/hooks/use-translation";
+
+type ManagerOption = { id: string; name: string };
 
 const STATUS_LABEL: Record<WebsiteLeadStatus, string> = {
   new: "New",
@@ -42,17 +61,26 @@ const STATUS_LABEL: Record<WebsiteLeadStatus, string> = {
   spam: "Spam",
 };
 
-const STATUS_BADGE: Record<
-  WebsiteLeadStatus,
-  "default" | "secondary" | "outline" | "destructive"
-> = {
-  new: "default",
-  contacted: "secondary",
-  offer_sent: "secondary",
-  won: "default",
-  lost: "outline",
-  archived: "outline",
-  spam: "destructive",
+/** Pipeline order for the status dropdown. */
+const STATUS_ORDER: WebsiteLeadStatus[] = [
+  "new",
+  "contacted",
+  "offer_sent",
+  "won",
+  "lost",
+  "archived",
+  "spam",
+];
+
+/** Status dot colour, so the trigger keeps its at-a-glance signal. */
+const STATUS_DOT: Record<WebsiteLeadStatus, string> = {
+  new: "bg-semantic-info",
+  contacted: "bg-semantic-info",
+  offer_sent: "bg-semantic-warning",
+  won: "bg-semantic-success",
+  lost: "bg-muted-foreground",
+  archived: "bg-muted-foreground",
+  spam: "bg-semantic-error",
 };
 
 /**
@@ -121,6 +149,12 @@ export default function LeadDetailPage({
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
+  const [managers, setManagers] = React.useState<ManagerOption[]>([]);
+  const [savingManager, setSavingManager] = React.useState(false);
+  const [managerOpen, setManagerOpen] = React.useState(false);
+  const [statusOpen, setStatusOpen] = React.useState(false);
+  const [savingStatus, setSavingStatus] = React.useState(false);
+  const [activityRefresh, setActivityRefresh] = React.useState(0);
 
   const fetchLead = React.useCallback(async () => {
     const supabase = createClient();
@@ -147,6 +181,105 @@ export default function LeadDetailPage({
   React.useEffect(() => {
     void fetchLead();
   }, [fetchLead]);
+
+  // Active staff, used to populate the customer-manager picker.
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .eq("is_active", true)
+        .order("full_name")
+        .limit(500);
+      if (cancelled) return;
+      setManagers(
+        ((data ?? []) as Array<{
+          id: string;
+          full_name: string | null;
+          email: string;
+        }>).map((p) => ({ id: p.id, name: p.full_name ?? p.email })),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist the customer-manager assignment. On a real (non-self) assignment,
+  // fire the notification RPC so the manager sees it in the header bell.
+  async function handleManagerChange(nextId: string | null) {
+    setManagerOpen(false);
+    if (!lead) return;
+    if (nextId === (lead.customer_manager_id ?? null)) return;
+
+    setSavingManager(true);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("website_leads")
+      .update({ customer_manager_id: nextId } as never)
+      .eq("id", lead.id)
+      .select("id");
+
+    if (error || !data?.length) {
+      setSavingManager(false);
+      toast.error(
+        t("leads.detail.managerFailed", "Failed to update customer manager"),
+      );
+      return;
+    }
+
+    setLead((prev) =>
+      prev ? { ...prev, customer_manager_id: nextId } : prev,
+    );
+
+    if (nextId && nextId !== user.id) {
+      await supabase.rpc("create_lead_assignment_notification" as never, {
+        p_lead_id: lead.id,
+        p_recipient_id: nextId,
+      } as never);
+    }
+
+    setSavingManager(false);
+    toast.success(
+      t("leads.detail.managerUpdated", "Customer manager updated"),
+    );
+  }
+
+  // Manually set the pipeline status. Status is normally activity-driven, so we
+  // also log a status_change entry to keep the activity timeline truthful.
+  async function handleStatusSelect(next: WebsiteLeadStatus) {
+    setStatusOpen(false);
+    if (!lead || next === lead.status) return;
+
+    setSavingStatus(true);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("website_leads")
+      .update({ status: next } as never)
+      .eq("id", lead.id)
+      .select("id");
+
+    if (error || !data?.length) {
+      setSavingStatus(false);
+      toast.error(t("leads.detail.statusFailed", "Failed to update status"));
+      return;
+    }
+
+    await supabase.from("lead_activities").insert({
+      lead_id: lead.id,
+      activity_type: "status_change",
+      note: null,
+      created_by: user.id,
+    } as never);
+
+    setLead((prev) => (prev ? { ...prev, status: next } : prev));
+    patchLeadsCache(user.id, id, next);
+    setActivityRefresh((n) => n + 1);
+    setSavingStatus(false);
+    toast.success(t("leads.detail.statusUpdated", "Status updated"));
+  }
 
   // Status is driven by the activity log; this just reflects the change in
   // local state and the cached /leads list.
@@ -220,6 +353,8 @@ export default function LeadDetailPage({
   const email = lead.email?.trim() || null;
   const phone = lead.phone?.trim() || null;
   const isManual = lead.source === "manual";
+  const selectedManagerName =
+    managers.find((m) => m.id === lead.customer_manager_id)?.name ?? null;
   const addressLine = [
     lead.address_street,
     [lead.address_postal_code, lead.address_city].filter(Boolean).join(" "),
@@ -241,9 +376,55 @@ export default function LeadDetailPage({
 
       <PageHeader title={lead.name} description={lead.company}>
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_BADGE[lead.status]}>
-            {t(`leads.status.${lead.status}`, STATUS_LABEL[lead.status])}
-          </Badge>
+          <Popover open={statusOpen} onOpenChange={setStatusOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                role="combobox"
+                aria-expanded={statusOpen}
+                disabled={savingStatus}
+                className="h-9 justify-between gap-2 font-normal"
+              >
+                <span className="flex items-center gap-2">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-2 shrink-0 rounded-full",
+                      STATUS_DOT[lead.status],
+                    )}
+                  />
+                  {t(`leads.status.${lead.status}`, STATUS_LABEL[lead.status])}
+                </span>
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-52 p-1">
+              {STATUS_ORDER.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => void handleStatusSelect(s)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
+                    s === lead.status && "bg-accent/50",
+                  )}
+                >
+                  <Check
+                    className={cn(
+                      "size-4 shrink-0",
+                      s === lead.status ? "opacity-100" : "opacity-0",
+                    )}
+                  />
+                  <span
+                    aria-hidden
+                    className={cn("size-2 shrink-0 rounded-full", STATUS_DOT[s])}
+                  />
+                  {t(`leads.status.${s}`, STATUS_LABEL[s])}
+                </button>
+              ))}
+            </PopoverContent>
+          </Popover>
           <Button
             variant="outline"
             size="icon"
@@ -300,6 +481,7 @@ export default function LeadDetailPage({
             leadId={lead.id}
             leadStatus={lead.status}
             onStatusChange={handleStatusChange}
+            refreshToken={activityRefresh}
           />
         </div>
 
@@ -320,7 +502,87 @@ export default function LeadDetailPage({
             </div>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <div className="flex items-center gap-2">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <UserRound className="size-4 shrink-0" />
+                <span className="text-xs font-medium uppercase tracking-wide">
+                  {t("leads.detail.customerManager", "Customer manager")}
+                </span>
+              </div>
+              <Popover open={managerOpen} onOpenChange={setManagerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={managerOpen}
+                    disabled={savingManager}
+                    className="w-full justify-between font-normal"
+                  >
+                    <span
+                      className={cn(
+                        "truncate",
+                        !selectedManagerName && "text-muted-foreground",
+                      )}
+                    >
+                      {selectedManagerName ??
+                        t("leads.detail.unassigned", "Unassigned")}
+                    </span>
+                    <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  className="w-[--radix-popover-trigger-width] p-0"
+                >
+                  <Command>
+                    <CommandInput
+                      placeholder={t(
+                        "leads.detail.managerSearch",
+                        "Search people…",
+                      )}
+                    />
+                    <CommandList className="max-h-[260px]">
+                      <CommandEmpty>
+                        {t("leads.detail.managerNoResults", "No people found.")}
+                      </CommandEmpty>
+                      <CommandItem
+                        value={t("leads.detail.unassigned", "Unassigned")}
+                        onSelect={() => void handleManagerChange(null)}
+                      >
+                        <Check
+                          className={cn(
+                            "size-4",
+                            lead.customer_manager_id
+                              ? "opacity-0"
+                              : "opacity-100",
+                          )}
+                        />
+                        {t("leads.detail.unassigned", "Unassigned")}
+                      </CommandItem>
+                      {managers.map((m) => (
+                        <CommandItem
+                          key={m.id}
+                          value={m.name}
+                          onSelect={() => void handleManagerChange(m.id)}
+                        >
+                          <Check
+                            className={cn(
+                              "size-4",
+                              lead.customer_manager_id === m.id
+                                ? "opacity-100"
+                                : "opacity-0",
+                            )}
+                          />
+                          {m.name}
+                        </CommandItem>
+                      ))}
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            <div className="flex items-center gap-2 border-t pt-3">
               <Building2 className="size-4 shrink-0 text-muted-foreground" />
               <span className="truncate">
                 {lead.company}

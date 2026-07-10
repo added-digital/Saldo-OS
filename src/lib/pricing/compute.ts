@@ -15,8 +15,11 @@ import {
   parseNvrGrid,
   parseRedaGrid,
   type Grid,
+  type LicenseLine,
   type MergeResult,
 } from "./parsers"
+
+export type { LicenseLine } from "./parsers"
 import { PRICING_CONFIG, STANDARD_PRICE_LIST, type PriceListEntry } from "./price-list"
 
 /**
@@ -149,6 +152,8 @@ export interface PricedResultRow {
   nvrOnly: boolean
   /** True when no saved config was found (needs review before invoicing). */
   missingConfig: boolean
+  /** Individual Fortnox license lines this client carries (excludes base fee). */
+  licenses: LicenseLine[]
 }
 
 export interface PricingComputation {
@@ -277,6 +282,7 @@ export function computePricing(inputs: ComputeInputs): PricingComputation {
       clientListOnly: r.clientListOnly,
       nvrOnly: r.nvrOnly,
       missingConfig: !cfg,
+      licenses: r.licenses,
     }
   })
 
