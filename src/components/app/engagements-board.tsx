@@ -37,7 +37,11 @@ const ALL = "all"
  * Match a bokslut row against the Bolagsverket registration filter:
  *   • sent             — reached "Skickad till Bolagsverket" or beyond, or BV-confirmed
  *   • registered       — confirmed registered by Bolagsverket (badge)
- *   • sent_unconfirmed — marked sent, but Bolagsverket hasn't confirmed yet
+ *   • sent_unconfirmed — awaiting Bolagsverket's confirmation. Covers both the
+ *     "Skickad till Bolagsverket" column and cards a colleague has already
+ *     dragged on to "Registrerad hos Bolagsverket" by hand — the manual move
+ *     is a claim, the sync's timestamp is the proof, so an unsynced card is
+ *     still unconfirmed wherever it sits on the board.
  */
 function bvFilterMatches(r: EngagementBoardRow, mode: BvFilter): boolean {
   if (mode === "all") return true
@@ -48,7 +52,7 @@ function bvFilterMatches(r: EngagementBoardRow, mode: BvFilter): boolean {
     case "registered":
       return confirmed
     case "sent_unconfirmed":
-      return sent && !confirmed
+      return (sent || registeredCol) && !confirmed
     case "sent":
       return confirmed || sent || registeredCol
     default:
