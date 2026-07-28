@@ -7,22 +7,51 @@ import {
   Building2,
   Clock,
   Hash,
+  ListPlus,
+  Loader2,
   Plus,
   UserPen,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import {
+  ACTION_ICON,
+  ACTION_LABEL,
+  deriveStatus,
+  LOGGABLE_ACTIONS,
+} from "@/lib/lead-activity";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { WebsiteLead, WebsiteLeadStatus } from "@/types/database";
+import type {
+  LeadActivityType,
+  WebsiteLead,
+  WebsiteLeadStatus,
+} from "@/types/database";
 import { AddLeadDialog } from "@/components/app/add-lead-dialog";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
 import { EmptyState } from "@/components/app/empty-state";
 import { SearchInput } from "@/components/app/search-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { useUser } from "@/hooks/use-user";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCachedData } from "@/hooks/use-cached-data";
@@ -133,9 +162,28 @@ export default function LeadsPage() {
     line: number;
   } | null>(null);
 
+  // Which card is mid quick-log — drives the spinner on that card's button.
+  const [quickLoggingId, setQuickLoggingId] = React.useState<string | null>(
+    null,
+  );
+  // Action picked from a card's shortcut, waiting on the optional note.
+  const [pendingLog, setPendingLog] = React.useState<{
+    lead: WebsiteLead;
+    action: LeadActivityType;
+  } | null>(null);
+  const [pendingNote, setPendingNote] = React.useState("");
+  const quickLogging =
+    pendingLog !== null && quickLoggingId === pendingLog.lead.id;
+
   const statusLabel = React.useCallback(
     (status: WebsiteLeadStatus) =>
       t(`leads.status.${status}`, STATUS_LABEL[status]),
+    [t],
+  );
+
+  const actionLabel = React.useCallback(
+    (action: LeadActivityType) =>
+      t(`leads.activity.type.${action}`, ACTION_LABEL[action]),
     [t],
   );
 
@@ -344,6 +392,98 @@ export default function LeadsPage() {
     [draggingId, leads, setData, statusLabel, t, user.id],
   );
 
+  // Quick-log straight from a board card: picking an action opens the note
+  // dialog; saving writes the activity row (note optional, same field as the
+  // detail-page log),
+  // and — exactly like the detail page's log — lets the action move the lead's
+  // status. A status move mirrors a cross-column drag: the card lands on top
+  // of its new column. Notes stay on the detail page; this is the fast path.
+  const handleQuickLog = React.useCallback(
+    async (lead: WebsiteLead, action: LeadActivityType, note: string) => {
+      setQuickLoggingId(lead.id);
+      const supabase = createClient();
+      const { error } = await supabase.from("lead_activities").insert({
+        lead_id: lead.id,
+        activity_type: action,
+        note: note.trim() || null,
+        created_by: user.id,
+      } as never);
+      if (error) {
+        setQuickLoggingId(null);
+        toast.error(t("leads.activity.logFailed", "Failed to log activity"));
+        return;
+      }
+      setPendingLog(null);
+
+      const nextStatus = deriveStatus(action, lead.status);
+      if (!nextStatus || nextStatus === lead.status) {
+        setQuickLoggingId(null);
+        toast.success(
+          `${actionLabel(action)} · ${t("leads.activity.logged", "Activity logged")}`,
+        );
+        return;
+      }
+
+      const snapshot = leads;
+      const destIds = leads
+        .filter((l) => l.id !== lead.id && l.status === nextStatus)
+        .sort(compareInColumn)
+        .map((l) => l.id);
+      const newOrderIds = [lead.id, ...destIds];
+      const positionById = new Map(newOrderIds.map((rid, i) => [rid, i + 1]));
+      setData((prev) => ({
+        leads: (prev?.leads ?? []).map((l) => {
+          if (!positionById.has(l.id)) return l;
+          const next = l.id === lead.id ? { ...l, status: nextStatus } : { ...l };
+          next.board_position = positionById.get(l.id)!;
+          return next;
+        }),
+      }));
+
+      // Empty result + no error = RLS blocked the update.
+      const { data: updated, error: statusError } = await supabase
+        .from("website_leads")
+        .update({ status: nextStatus } as never)
+        .eq("id", lead.id)
+        .select("id");
+      if (statusError || !updated?.length) {
+        setData({ leads: snapshot });
+        setQuickLoggingId(null);
+        toast.error(
+          t(
+            "leads.activity.statusUpdateFailed",
+            "Failed to update lead status",
+          ),
+        );
+        return;
+      }
+
+      // Ordering is cosmetic — if it fails, refetch rather than undoing a
+      // status change that did land.
+      const { error: reorderError } = await supabase.rpc(
+        "reorder_leads" as never,
+        { p_ids: newOrderIds } as never,
+      );
+      if (reorderError) void refresh();
+
+      setQuickLoggingId(null);
+      toast.success(
+        `${actionLabel(action)} · ${t("leads.activity.statusUpdated", "Status updated to")} ${statusLabel(nextStatus)}`,
+      );
+    },
+    [actionLabel, leads, refresh, setData, statusLabel, t, user.id],
+  );
+
+  // Picking an action on a card opens the note step — the note is optional, so
+  // saving with an empty field is the same one-click log as before.
+  const openQuickLog = React.useCallback(
+    (lead: WebsiteLead, action: LeadActivityType) => {
+      setPendingNote("");
+      setPendingLog({ lead, action });
+    },
+    [],
+  );
+
   return (
     <div className="flex h-full flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -381,6 +521,72 @@ export default function LeadsPage() {
         onConfirm={handleDelete}
         loading={deleting}
       />
+
+      {/* Note step for the card shortcut — mirrors the detail-page log form. */}
+      <Dialog
+        open={pendingLog !== null}
+        onOpenChange={(open) => {
+          if (!open && !quickLogging) setPendingLog(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {pendingLog ? <PendingIcon action={pendingLog.action} /> : null}
+              {pendingLog ? actionLabel(pendingLog.action) : null}
+            </DialogTitle>
+            <DialogDescription>
+              {pendingLog?.lead.company ?? pendingLog?.lead.name ?? ""}
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            autoFocus
+            value={pendingNote}
+            onChange={(e) => setPendingNote(e.target.value)}
+            rows={3}
+            placeholder={t(
+              "leads.activity.notePlaceholder",
+              "Optional note — what was said, next step...",
+            )}
+            onKeyDown={(e) => {
+              // ⌘/Ctrl+Enter saves, matching the rest of the app's forms.
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && pendingLog) {
+                e.preventDefault();
+                void handleQuickLog(
+                  pendingLog.lead,
+                  pendingLog.action,
+                  pendingNote,
+                );
+              }
+            }}
+          />
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setPendingLog(null)}
+              disabled={quickLogging}
+            >
+              {t("common.cancel", "Cancel")}
+            </Button>
+            <Button
+              size="sm"
+              disabled={quickLogging}
+              onClick={() => {
+                if (!pendingLog) return;
+                void handleQuickLog(
+                  pendingLog.lead,
+                  pendingLog.action,
+                  pendingNote,
+                );
+              }}
+            >
+              {quickLogging ? <Loader2 className="size-4 animate-spin" /> : null}
+              {t("leads.activity.save", "Save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {loading || (refreshing && leads.length === 0) ? (
         <div className="flex gap-3 overflow-hidden">
@@ -465,12 +671,16 @@ export default function LeadsPage() {
                         <LeadCard
                           lead={lead}
                           dragging={draggingId === lead.id}
+                          logging={quickLoggingId === lead.id}
                           onDragStart={setDraggingId}
                           onDragEnd={handleCardDragEnd}
                           onClick={(id) => router.push(`/leads/${id}`)}
                           onDelete={setDeleteTarget}
+                          onQuickLog={openQuickLog}
+                          actionLabel={actionLabel}
                           manualLabel={t("leads.source.manual", "Manual")}
                           deleteLabel={t("leads.detail.delete", "Delete lead")}
+                          logLabel={t("leads.activity.log", "Log activity")}
                         />
                       </React.Fragment>
                     );
@@ -489,6 +699,12 @@ export default function LeadsPage() {
   );
 }
 
+// Icon for the action awaiting its note, in the dialog title.
+function PendingIcon({ action }: { action: LeadActivityType }) {
+  const Icon = ACTION_ICON[action];
+  return Icon ? <Icon className="size-4 text-muted-foreground" /> : null;
+}
+
 // The drop-position guide: a thin accented bar marking where the card will land.
 function DropLine() {
   return (
@@ -501,21 +717,29 @@ function DropLine() {
 const LeadCard = React.memo(function LeadCard({
   lead,
   dragging,
+  logging,
   onDragStart,
   onDragEnd,
   onClick,
   onDelete,
+  onQuickLog,
+  actionLabel,
   manualLabel,
   deleteLabel,
+  logLabel,
 }: {
   lead: WebsiteLead;
   dragging: boolean;
+  logging: boolean;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
   onClick: (id: string) => void;
   onDelete: (lead: WebsiteLead) => void;
+  onQuickLog: (lead: WebsiteLead, action: LeadActivityType) => void;
+  actionLabel: (action: LeadActivityType) => string;
   manualLabel: string;
   deleteLabel: string;
+  logLabel: string;
 }) {
   return (
     <div
@@ -571,10 +795,62 @@ const LeadCard = React.memo(function LeadCard({
           {lead.message}
         </p>
       ) : null}
-      <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        <Clock className="size-3 shrink-0" />
-        {formatDate(lead.submitted_at ?? lead.created_at)}
-      </p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Clock className="size-3 shrink-0" />
+          <span className="truncate">
+            {formatDate(lead.submitted_at ?? lead.created_at)}
+          </span>
+        </p>
+
+        {/* Quick-log: same actions as the detail page, one click, no note. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              draggable={false}
+              aria-label={logLabel}
+              title={logLabel}
+              disabled={logging}
+              // Keep the press on the button: no card navigation, no drag.
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="-my-1 -mr-1 shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:text-foreground disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:bg-muted data-[state=open]:text-foreground"
+            >
+              {logging ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <ListPlus className="size-3.5" />
+              )}
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="w-56"
+            onClick={(e) => e.stopPropagation()}
+            // The menu closes into a dialog — don't yank focus back here.
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
+            <DropdownMenuLabel className="text-xs text-muted-foreground">
+              {logLabel}
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {LOGGABLE_ACTIONS.map((action) => {
+              const Icon = ACTION_ICON[action];
+              return (
+                <DropdownMenuItem
+                  key={action}
+                  className="cursor-pointer"
+                  onSelect={() => onQuickLog(lead, action)}
+                >
+                  <Icon className="size-4" />
+                  {actionLabel(action)}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 });

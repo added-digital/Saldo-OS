@@ -1,26 +1,16 @@
 "use client"
 
 import * as React from "react"
-import {
-  Archive,
-  ArrowRightLeft,
-  Bell,
-  CalendarClock,
-  FileText,
-  Loader2,
-  Mail,
-  Pencil,
-  Phone,
-  Plus,
-  ShieldAlert,
-  StickyNote,
-  Trash2,
-  Trophy,
-  XCircle,
-  type LucideIcon,
-} from "lucide-react"
+import { Loader2, Pencil, Plus, StickyNote, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
+import {
+  ACTION_ICON,
+  ACTION_LABEL,
+  deriveStatus,
+  LOGGABLE_ACTIONS,
+  STATUS_TOAST_LABEL,
+} from "@/lib/lead-activity"
 import { createClient } from "@/lib/supabase/client"
 import type {
   LeadActivity,
@@ -40,94 +30,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-
-// Preset actions a consultant can log. The activity log is the single source
-// of truth for lead status — logging an action moves the pipeline (see
-// deriveStatus below). 'status_change' is legacy (from the removed status
-// dropdown) and only kept so old rows still render.
-const LOGGABLE_ACTIONS: LeadActivityType[] = [
-  "called",
-  "emailed",
-  "meeting_booked",
-  "offer_sent",
-  "follow_up",
-  "note",
-  "won",
-  "lost",
-  "archived",
-  "spam",
-]
-
-const ACTION_LABEL: Record<LeadActivityType, string> = {
-  called: "Called",
-  emailed: "Sent email",
-  meeting_booked: "Meeting booked",
-  offer_sent: "Offer sent",
-  follow_up: "Follow-up planned",
-  note: "Note",
-  status_change: "Status changed",
-  won: "Won — deal closed",
-  lost: "Lost — declined",
-  archived: "Archived",
-  spam: "Marked as spam",
-}
-
-const ACTION_ICON: Record<LeadActivityType, LucideIcon> = {
-  called: Phone,
-  emailed: Mail,
-  meeting_booked: CalendarClock,
-  offer_sent: FileText,
-  follow_up: Bell,
-  note: StickyNote,
-  status_change: ArrowRightLeft,
-  won: Trophy,
-  lost: XCircle,
-  archived: Archive,
-  spam: ShieldAlert,
-}
-
-/** English fallbacks for the status names used in the auto-update toast. */
-const STATUS_TOAST_LABEL: Record<WebsiteLeadStatus, string> = {
-  new: "New",
-  contacted: "Contacted",
-  offer_sent: "Offer sent",
-  won: "Won",
-  lost: "Lost",
-  archived: "Archived",
-  spam: "Spam",
-}
-
-/**
- * What logging an action does to the lead status. Returns the new status, or
- * null when the action shouldn't move the pipeline. Status only ever moves
- * forward automatically: outreach promotes 'new' to 'contacted', an offer
- * promotes to 'offer_sent', and outcome actions set the final state.
- */
-function deriveStatus(
-  action: LeadActivityType,
-  current: WebsiteLeadStatus,
-): WebsiteLeadStatus | null {
-  switch (action) {
-    case "called":
-    case "emailed":
-    case "meeting_booked":
-      return current === "new" ? "contacted" : null
-    case "offer_sent":
-      return current === "new" || current === "contacted"
-        ? "offer_sent"
-        : null
-    case "won":
-      return "won"
-    case "lost":
-      return "lost"
-    case "archived":
-      return "archived"
-    case "spam":
-      return "spam"
-    default:
-      return null
-  }
-}
 
 type ActivityRow = LeadActivity & {
   profiles: { full_name: string | null } | null
