@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import type { EngagementBoardRow } from "@/types/engagement"
-import { deadlineForFiscalYearEnd, fiscalYearEndForCycle } from "@/lib/engagements/fiscal-year"
+import { deadlineForFiscalYearEnd, proposeFiscalYearEnd } from "@/lib/engagements/fiscal-year"
 import { Button } from "@/components/ui/button"
 import { DateInput } from "@/components/ui/date-input"
 import { Label } from "@/components/ui/label"
@@ -33,8 +33,12 @@ type CustomerOption = {
   name: string
   office: string | null
   costCenter: string | null
-  /** Customer's räkenskapsår end (effective SIE-or-manual date); MM-DD is used. */
-  financialYearEnd: string | null
+  /** Latest annual report registered by Bolagsverket — that year is done. */
+  bvYearEnd: string | null
+  /** Newest book year imported from Fortnox via SIE — the open period. */
+  sieYearEnd: string | null
+  /** Hand-entered räkenskapsår; a shape only, no filing history. */
+  manualYearEnd: string | null
 }
 type ConsultantOption = { id: string; name: string; costCenter: string | null }
 
@@ -64,6 +68,11 @@ export function EngagementCreateDialog({
   // Tracks whether the user hand-edited the deadline. Until they do, it stays
   // auto-synced to fiscal_year_end + offset; once touched we stop overwriting.
   const [deadlineTouched, setDeadlineTouched] = React.useState(false)
+  // Same idea for the fiscal year: the proposal below stops once it's hand-set.
+  const [fiscalYearTouched, setFiscalYearTouched] = React.useState(false)
+  // Fiscal-year ends this customer already has engagements for, so the proposal
+  // can skip them (and stay off the unique constraint).
+  const [takenYearEnds, setTakenYearEnds] = React.useState<string[]>([])
   const [creating, setCreating] = React.useState(false)
 
   // Lazy-load the option lists the first time the dialog opens.
@@ -73,17 +82,37 @@ export function EngagementCreateDialog({
     void (async () => {
       const supabase = createClient()
       const [custRes, profRes] = await Promise.all([
-        supabase.from("customers").select("id, name, office, fortnox_cost_center, financial_year_to").eq("status", "active").order("name").limit(1000),
+        supabase
+          .from("customers")
+          // The three räkenskapsår sources separately, not the coalesced
+          // financial_year_to: which one a date came from changes what it means
+          // for the year (see proposeFiscalYearEnd).
+          .select(
+            "id, name, office, fortnox_cost_center, financial_year_to_bv, financial_year_to_sie, financial_year_to_manual",
+          )
+          .eq("status", "active")
+          .order("name")
+          .limit(1000),
         supabase.from("profiles").select("id, full_name, email, fortnox_cost_center").eq("is_active", true).order("full_name").limit(500),
       ])
       if (cancelled) return
       setCustomers(
-        ((custRes.data ?? []) as Array<{ id: string; name: string; office: string | null; fortnox_cost_center: string | null; financial_year_to: string | null }>).map((c) => ({
+        ((custRes.data ?? []) as Array<{
+          id: string
+          name: string
+          office: string | null
+          fortnox_cost_center: string | null
+          financial_year_to_bv: string | null
+          financial_year_to_sie: string | null
+          financial_year_to_manual: string | null
+        }>).map((c) => ({
           id: c.id,
           name: c.name,
           office: c.office,
           costCenter: c.fortnox_cost_center,
-          financialYearEnd: c.financial_year_to,
+          bvYearEnd: c.financial_year_to_bv,
+          sieYearEnd: c.financial_year_to_sie,
+          manualYearEnd: c.financial_year_to_manual,
         })),
       )
       setConsultants(
@@ -104,8 +133,35 @@ export function EngagementCreateDialog({
       setFiscalYearEnd(defaultFiscalYearEnd)
       setCustomerId(presetCustomerId ?? "")
       setDeadlineTouched(false)
+      setFiscalYearTouched(false)
+      setTakenYearEnds([])
     }
   }, [open, defaultFiscalYearEnd, presetCustomerId])
+
+  // Which years this customer is already booked for. Read from `engagements`
+  // rather than the board rows so a card hidden by a board filter (or by RLS)
+  // still counts — landing on a taken year fails the insert.
+  React.useEffect(() => {
+    if (!open || !customerId) {
+      setTakenYearEnds([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from("engagements")
+        .select("fiscal_year_end")
+        .eq("customer_id", customerId)
+      if (cancelled) return
+      setTakenYearEnds(
+        ((data ?? []) as Array<{ fiscal_year_end: string }>).map((e) => e.fiscal_year_end),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, customerId])
 
   // Auto-suggest the deadline as räkenskapsårsslut + offset months, kept in sync
   // with the fiscal year until the user overrides it by hand.
@@ -135,14 +191,24 @@ export function EngagementCreateDialog({
     setConsultantId(managerId ?? "")
   }, [customerId, customers, ccToConsultant])
 
-  // Default the fiscal year from the customer's räkenskapsår: take its MONTH-DAY
-  // and stamp it onto the active close cycle's YEAR (defaultFiscalYearEnd). So a
-  // 31-Dec company → <cycle>-12-31, a 30-Jun company → <cycle>-06-30 — never the
-  // raw stored date (which may sit on a later Fortnox year). Overridable below.
+  // Default the fiscal year to the oldest ended räkenskapsår that still needs a
+  // bokslut: Bolagsverket's latest filed year first (start after it), then SIE's
+  // open book year, then the year that most recently ended — rolled past any
+  // year this customer already has a card for. See proposeFiscalYearEnd.
   React.useEffect(() => {
-    const customerYearEnd = customers.find((c) => c.id === customerId)?.financialYearEnd
-    setFiscalYearEnd(fiscalYearEndForCycle(customerYearEnd, defaultFiscalYearEnd))
-  }, [customerId, customers, defaultFiscalYearEnd])
+    if (fiscalYearTouched) return
+    const customer = customers.find((c) => c.id === customerId)
+    setFiscalYearEnd(
+      proposeFiscalYearEnd({
+        bvYearEnd: customer?.bvYearEnd,
+        sieYearEnd: customer?.sieYearEnd,
+        manualYearEnd: customer?.manualYearEnd,
+        todayISO: new Date().toISOString().slice(0, 10),
+        takenYearEnds,
+        fallback: defaultFiscalYearEnd,
+      }),
+    )
+  }, [customerId, customers, defaultFiscalYearEnd, takenYearEnds, fiscalYearTouched])
 
   async function handleCreate() {
     if (!customerId || !fiscalYearEnd) return
@@ -254,7 +320,10 @@ export function EngagementCreateDialog({
               <DateInput
                 id="fiscal-year-end"
                 value={fiscalYearEnd}
-                onChange={setFiscalYearEnd}
+                onChange={(next) => {
+                  setFiscalYearTouched(true)
+                  setFiscalYearEnd(next)
+                }}
               />
             </div>
             <div className="space-y-1.5">
