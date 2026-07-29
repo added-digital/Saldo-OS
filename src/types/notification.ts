@@ -1,7 +1,7 @@
 // Header notification bell. Mirrors supabase/migrations/00073_notifications.sql.
 // Not in the generated Database type yet, so queries cast results to this.
 
-export type NotificationType = "engagement_mention" | "lead_assignment"
+export type NotificationType = "engagement_mention" | "lead_assignment" | "task_assignment"
 
 export interface AppNotification {
   id: string
@@ -11,6 +11,8 @@ export interface AppNotification {
   type: NotificationType
   engagement_id: string | null
   lead_id: string | null
+  task_id: string | null
+  /** Subtitle line: the customer for engagement/lead rows, the title for tasks. */
   customer_name: string | null
   read_at: string | null
   created_at: string

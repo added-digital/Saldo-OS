@@ -94,6 +94,7 @@ function SidebarNav({ className }: SidebarNavProps) {
       Customers: "navigation.items.customers",
       Contacts: "navigation.items.contacts",
       Bokslut: "navigation.items.engagements",
+      Tasks: "navigation.items.tasks",
       "Send mail": "navigation.items.sendMail",
       "Mail history": "navigation.items.mailHistory",
       "Mail tracking": "navigation.items.mailTracking",

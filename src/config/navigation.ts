@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   Target,
   ClipboardList,
+  ListTodo,
   Inbox,
   type LucideIcon,
 } from "lucide-react"
@@ -44,6 +45,9 @@ export const navigation: NavSection[] = [
       { label: "Leads", href: "/leads", icon: Inbox },
       // Bokslut + INK2 workflow board (replaces the Effektivitet Excel tracker).
       { label: "Bokslut", href: "/bokslut", icon: ClipboardList, scope: "customers" },
+      // Ad-hoc tasks outside the recurring services (rådgivning, follow-ups),
+      // handed between colleagues. Open to all staff — no scope gate.
+      { label: "Tasks", href: "/uppgifter", icon: ListTodo, badge: "new" },
       // Licensfakturering — Fortnox/Reda price & discount calculator (replaces
       // the "Huvud excel" macro workbook). Admin-only.
       { label: "Licenser", href: "/licenser", icon: FileSpreadsheet, minRole: "admin" },
