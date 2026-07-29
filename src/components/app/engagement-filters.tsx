@@ -34,10 +34,13 @@ interface EngagementFiltersProps {
   onBvChange: (value: BvFilter) => void
   cleared: ClearedMode
   onClearedChange: (value: ClearedMode) => void
-  /** Minimum days in the current status, or null when the filter is off. */
+  /** Minimum days in "Klar för granskning", or null when the filter is off. */
   minDaysInStatus: number | null
   onMinDaysInStatusChange: (value: number | null) => void
   minDaysOptions: number[]
+  /** Order the review column by waiting time instead of the manual card order. */
+  sortByAge: boolean
+  onSortByAgeChange: (value: boolean) => void
   yearOptions: string[]
   years: string[]
   onToggleYear: (year: string) => void
@@ -116,6 +119,8 @@ export function EngagementFilters(props: EngagementFiltersProps) {
     minDaysInStatus,
     onMinDaysInStatusChange,
     minDaysOptions,
+    sortByAge,
+    onSortByAgeChange,
     yearOptions,
     years,
     onToggleYear,
@@ -178,19 +183,27 @@ export function EngagementFilters(props: EngagementFiltersProps) {
             </FilterSection>
           ) : null}
 
+          {/* Everything in here touches the "Klar för granskning" column only —
+              the title says so, so nobody expects it to move the whole board. */}
           <FilterSection
-            title={t("engagements.filter.section.timeInStatus", "Time in review")}
-            count={minDaysInStatus != null ? 1 : 0}
-            defaultOpen={minDaysInStatus != null}
+            title={t("engagements.filter.section.timeInStatus", "Klar för granskning")}
+            count={(minDaysInStatus != null ? 1 : 0) + (sortByAge ? 1 : 0)}
+            defaultOpen={minDaysInStatus != null || sortByAge}
           >
             <div className="space-y-2">
+              <CheckRow
+                id="eng-filter-sort-oldest"
+                checked={sortByAge}
+                onChange={() => onSortByAgeChange(!sortByAge)}
+                label={t("engagements.sort.oldest", "Longest waiting first")}
+              />
               {minDaysOptions.map((d) => (
                 <CheckRow
                   key={d}
                   id={`eng-filter-days-${d}`}
                   checked={minDaysInStatus === d}
                   onChange={() => onMinDaysInStatusChange(minDaysInStatus === d ? null : d)}
-                  label={t("engagements.filter.timeInStatus.atLeast", "At least {days} days").replace(
+                  label={t("engagements.filter.timeInStatus.atLeast", "Waiting at least {days} days").replace(
                     "{days}",
                     String(d),
                   )}
@@ -200,7 +213,7 @@ export function EngagementFilters(props: EngagementFiltersProps) {
             <p className="mt-3 text-xs text-muted-foreground">
               {t(
                 "engagements.filter.timeInStatus.hint",
-                "Keeps only cards in Klar för granskning, counted from when they landed there. Comments and attachments do not reset the count.",
+                "Only affects the Klar för granskning column, counted from when the card landed there. Manual card ordering there is paused while sorting is on.",
               )}
             </p>
           </FilterSection>

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark, ArrowDownWideNarrow } from "lucide-react"
+import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -363,9 +363,9 @@ export function EngagementsBoard() {
     const parked = ofWorkflow.filter((s) => s.is_parked)
     const active = ofWorkflow.filter((s) => !s.is_parked)
     return [
-      { id: NO_STATUS, label: t("engagements.noStatus", "No status"), parked: false },
-      ...active.map((s) => ({ id: s.id, label: s.label, parked: false })),
-      ...parked.map((s) => ({ id: s.id, label: s.label, parked: true })),
+      { id: NO_STATUS, label: t("engagements.noStatus", "No status"), key: null, parked: false },
+      ...active.map((s) => ({ id: s.id, label: s.label, key: s.key, parked: false })),
+      ...parked.map((s) => ({ id: s.id, label: s.label, key: s.key, parked: true })),
     ]
   }, [statuses, workflow, t])
 
@@ -418,14 +418,8 @@ export function EngagementsBoard() {
     if (workflow === "bokslut" && bvFilter !== "all") {
       list = list.filter((r) => bvFilterMatches(r, bvFilter))
     }
-    if (minDaysInStatus != null) {
-      list = list.filter((r) => {
-        const days = daysInStatus(r, workflow, nowMs)
-        return days != null && days >= minDaysInStatus
-      })
-    }
     return list
-  }, [scopedRows, filterOverdue, bvFilter, workflow, minDaysInStatus, nowMs])
+  }, [scopedRows, filterOverdue, bvFilter, workflow])
 
   const overdueCount = React.useMemo(
     () => scopedRows.filter((r) => r.is_overdue).length,
@@ -438,7 +432,8 @@ export function EngagementsBoard() {
     years.length +
     (bvFilter !== "all" ? 1 : 0) +
     (clearedMode !== "hide" ? 1 : 0) +
-    (minDaysInStatus != null ? 1 : 0)
+    (minDaysInStatus != null ? 1 : 0) +
+    (sortByAge ? 1 : 0)
 
   const filtersActive =
     filterConsultant !== ALL ||
@@ -457,6 +452,7 @@ export function EngagementsBoard() {
       setBvFilter("all")
       setClearedMode("hide")
       setMinDaysInStatus(null)
+      setSortMode("manual")
     })
   }, [])
 
@@ -476,6 +472,15 @@ export function EngagementsBoard() {
     [rows],
   )
 
+  // Column ids whose cards the review controls (age sort / min-days) apply to —
+  // just "Klar för granskning". Everything else keeps its manual order and its
+  // full set of cards, so ticking a review filter never disturbs the rest of
+  // the board.
+  const reviewColumnIds = React.useMemo(
+    () => new Set(columns.filter((c) => c.key === AGE_TRACKED_STATUS_KEY).map((c) => c.id)),
+    [columns],
+  )
+
   const rowsByColumn = React.useMemo(() => {
     const map = new Map<string, EngagementBoardRow[]>()
     for (const col of columns) map.set(col.id, [])
@@ -485,13 +490,24 @@ export function EngagementsBoard() {
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(r)
     }
-    for (const list of map.values()) {
+    for (const [colId, list] of map) {
+      const isReview = reviewColumnIds.has(colId)
+      if (isReview && minDaysInStatus != null) {
+        const kept = list.filter((r) => {
+          const days = daysInStatus(r, workflow, nowMs)
+          return days != null && days >= minDaysInStatus
+        })
+        list.length = 0
+        list.push(...kept)
+      }
       list.sort((a, b) =>
-        sortByAge ? compareByTimeInStatus(a, b, workflow) : compareInColumn(a, b, workflow),
+        isReview && sortByAge
+          ? compareByTimeInStatus(a, b, workflow)
+          : compareInColumn(a, b, workflow),
       )
     }
     return map
-  }, [columns, filteredRows, workflow, sortByAge])
+  }, [columns, filteredRows, workflow, sortByAge, reviewColumnIds, minDaysInStatus, nowMs])
 
   const detailRow = detailId ? rows.find((r) => r.id === detailId) ?? null : null
 
@@ -615,11 +631,12 @@ export function EngagementsBoard() {
     const crossColumn = currentColumn !== columnId
     const toStatusId = columnId === NO_STATUS ? null : columnId
 
-    // Sorted by time in status: manual ordering is paused. An in-column drop has
-    // nowhere meaningful to land, and a cross-column move must not rewrite
+    // Dropping into the review column while it is sorted by waiting time: manual
+    // ordering is paused there. An in-column drop has nowhere meaningful to land,
+    // and a drop from another column must not rewrite the review column's
     // positions from the sorted (not manual) order — so move the status only and
-    // leave every stored position untouched.
-    if (sortByAge) {
+    // leave every stored position untouched. Other columns are unaffected.
+    if (sortByAge && reviewColumnIds.has(columnId)) {
       if (!crossColumn) return
       const snapshot = rows
       setRows((prev) =>
@@ -774,23 +791,6 @@ export function EngagementsBoard() {
           <Button
             type="button"
             size="sm"
-            variant={sortByAge ? "default" : "outline"}
-            className="h-8"
-            onClick={() =>
-              React.startTransition(() => setSortMode((m) => (m === "oldest" ? "manual" : "oldest")))
-            }
-            aria-pressed={sortByAge}
-            title={t(
-              "engagements.sort.oldestHint",
-              "Sort every column by time in the current status. Manual card ordering is paused while this is on.",
-            )}
-          >
-            <ArrowDownWideNarrow className="size-4" />
-            {t("engagements.sort.oldest", "Longest in status")}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
             variant={filterOverdue ? "default" : "outline"}
             className="h-8"
             onClick={() => React.startTransition(() => setFilterOverdue((v) => !v))}
@@ -831,6 +831,10 @@ export function EngagementsBoard() {
             minDaysInStatus={minDaysInStatus}
             onMinDaysInStatusChange={(v) => React.startTransition(() => setMinDaysInStatus(v))}
             minDaysOptions={AGE_FILTER_PRESETS}
+            sortByAge={sortByAge}
+            onSortByAgeChange={(v) =>
+              React.startTransition(() => setSortMode(v ? "oldest" : "manual"))
+            }
             yearOptions={yearOptions}
             years={years}
             onToggleYear={(y) => toggleFrom(setYears, y)}
@@ -861,9 +865,9 @@ export function EngagementsBoard() {
                 onDragOver={(e) => {
                   e.preventDefault()
                   const sameColumn = draggedColumnKey() === col.id
-                  // Sorted by age: no in-column reorder, so don't promise one
-                  // with a drop guide over the card's own column.
-                  if (sortByAge && sameColumn) {
+                  // Review column sorted by waiting time: no in-column reorder,
+                  // so don't promise one with a drop guide over its own column.
+                  if (sortByAge && sameColumn && reviewColumnIds.has(col.id)) {
                     setDragOverCol((cur) => (cur === col.id ? null : cur))
                     setDropTarget((cur) => (cur?.colId === col.id ? null : cur))
                     return
