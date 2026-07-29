@@ -34,6 +34,10 @@ interface EngagementFiltersProps {
   onBvChange: (value: BvFilter) => void
   cleared: ClearedMode
   onClearedChange: (value: ClearedMode) => void
+  /** Minimum days in the current status, or null when the filter is off. */
+  minDaysInStatus: number | null
+  onMinDaysInStatusChange: (value: number | null) => void
+  minDaysOptions: number[]
   yearOptions: string[]
   years: string[]
   onToggleYear: (year: string) => void
@@ -109,6 +113,9 @@ export function EngagementFilters(props: EngagementFiltersProps) {
     onBvChange,
     cleared,
     onClearedChange,
+    minDaysInStatus,
+    onMinDaysInStatusChange,
+    minDaysOptions,
     yearOptions,
     years,
     onToggleYear,
@@ -170,6 +177,33 @@ export function EngagementFilters(props: EngagementFiltersProps) {
               </div>
             </FilterSection>
           ) : null}
+
+          <FilterSection
+            title={t("engagements.filter.section.timeInStatus", "Time in status")}
+            count={minDaysInStatus != null ? 1 : 0}
+            defaultOpen={minDaysInStatus != null}
+          >
+            <div className="space-y-2">
+              {minDaysOptions.map((d) => (
+                <CheckRow
+                  key={d}
+                  id={`eng-filter-days-${d}`}
+                  checked={minDaysInStatus === d}
+                  onChange={() => onMinDaysInStatusChange(minDaysInStatus === d ? null : d)}
+                  label={t("engagements.filter.timeInStatus.atLeast", "At least {days} days").replace(
+                    "{days}",
+                    String(d),
+                  )}
+                />
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              {t(
+                "engagements.filter.timeInStatus.hint",
+                "Counts days since the card last changed status. Comments and attachments do not reset it.",
+              )}
+            </p>
+          </FilterSection>
 
           <FilterSection
             title={t("engagements.filter.section.year", "Fiscal year")}

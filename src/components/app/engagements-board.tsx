@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark } from "lucide-react"
+import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark, ArrowDownWideNarrow, Hourglass } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -80,6 +80,65 @@ function statusFieldsFor(workflow: EngagementWorkflow) {
         done: "ink2_status_is_done",
         changed: "ink2_status_changed_at",
       }
+}
+
+/**
+ * "Time in status" thresholds, in calendar days. Below WARN a card stays quiet;
+ * from WARN it carries an amber badge, from LATE a red one. Calendar days (not
+ * working days) so the number on the card matches what a human counts on a
+ * calendar. Review is meant to take days, not weeks — raise these if the board
+ * turns red across the board in high season.
+ */
+const AGE_WARN_DAYS = 8
+const AGE_LATE_DAYS = 15
+
+/** Presets offered by the "time in status" filter, in days. */
+const AGE_FILTER_PRESETS = [7, 14, 30]
+
+/** When this row last changed status in the active workflow (trigger-stamped). */
+function statusChangedAtOf(row: EngagementBoardRow, workflow: EngagementWorkflow): string | null {
+  return workflow === "bokslut" ? row.bokslut_status_changed_at : row.ink2_status_changed_at
+}
+
+/**
+ * Whole calendar days the row has sat in its current status, or null when the
+ * age is meaningless: no status yet, a done or parked stage, a cleared card, or
+ * a row that has never been stamped. Note this measures time in *status*, not
+ * time without any activity — a comment or attachment does not reset it.
+ */
+function daysInStatus(
+  row: EngagementBoardRow,
+  workflow: EngagementWorkflow,
+  statusById: Map<string, EngagementStatus>,
+  nowMs: number,
+): number | null {
+  const statusId = workflow === "bokslut" ? row.bokslut_status_id : row.ink2_status_id
+  if (!statusId) return null
+  const status = statusById.get(statusId)
+  if (!status || status.is_done || status.is_parked) return null
+  if (clearedOf(row, workflow)) return null
+  const changed = statusChangedAtOf(row, workflow)
+  if (!changed) return null
+  const ms = nowMs - new Date(changed).getTime()
+  if (!Number.isFinite(ms)) return null
+  return ms <= 0 ? 0 : Math.floor(ms / 86_400_000)
+}
+
+/**
+ * Longest-waiting first: oldest status change at the top. Rows that were never
+ * stamped sort last, stable id tiebreak so the order doesn't shuffle.
+ */
+function compareByTimeInStatus(
+  a: EngagementBoardRow,
+  b: EngagementBoardRow,
+  workflow: EngagementWorkflow,
+): number {
+  const ca = statusChangedAtOf(a, workflow)
+  const cb = statusChangedAtOf(b, workflow)
+  if (ca && cb && ca !== cb) return ca.localeCompare(cb)
+  if (ca && !cb) return -1
+  if (!ca && cb) return 1
+  return a.id.localeCompare(b.id)
 }
 
 /** The cleared-flag column for a workflow — bokslut and INK2 clear independently. */
@@ -203,6 +262,19 @@ export function EngagementsBoard() {
   // Bolagsverket registration filter (bokslut board only).
   const [bvFilter, setBvFilter] = React.useState<BvFilter>("all")
   const [clearedMode, setClearedMode] = React.useState<"hide" | "show" | "only">("hide")
+  // "Legat i status i minst N dagar" — null = off.
+  const [minDaysInStatus, setMinDaysInStatus] = React.useState<number | null>(null)
+  // Column ordering: the team's manual drag order, or longest-waiting first.
+  const [sortMode, setSortMode] = React.useState<"manual" | "oldest">("manual")
+  const sortByAge = sortMode === "oldest"
+
+  // Day counts are derived from now, so refresh the clock hourly — a board left
+  // open over a shift change should not keep showing yesterday's ages.
+  const [nowMs, setNowMs] = React.useState(() => Date.now())
+  React.useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [])
 
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = React.useState<string | null>(null)
@@ -341,8 +413,14 @@ export function EngagementsBoard() {
     if (workflow === "bokslut" && bvFilter !== "all") {
       list = list.filter((r) => bvFilterMatches(r, bvFilter))
     }
+    if (minDaysInStatus != null) {
+      list = list.filter((r) => {
+        const days = daysInStatus(r, workflow, statusById, nowMs)
+        return days != null && days >= minDaysInStatus
+      })
+    }
     return list
-  }, [scopedRows, filterOverdue, bvFilter, workflow])
+  }, [scopedRows, filterOverdue, bvFilter, workflow, minDaysInStatus, statusById, nowMs])
 
   const overdueCount = React.useMemo(
     () => scopedRows.filter((r) => r.is_overdue).length,
@@ -354,7 +432,8 @@ export function EngagementsBoard() {
   const popoverFilterCount =
     years.length +
     (bvFilter !== "all" ? 1 : 0) +
-    (clearedMode !== "hide" ? 1 : 0)
+    (clearedMode !== "hide" ? 1 : 0) +
+    (minDaysInStatus != null ? 1 : 0)
 
   const filtersActive =
     filterConsultant !== ALL ||
@@ -372,6 +451,7 @@ export function EngagementsBoard() {
       setFilterOverdue(false)
       setBvFilter("all")
       setClearedMode("hide")
+      setMinDaysInStatus(null)
     })
   }, [])
 
@@ -400,9 +480,13 @@ export function EngagementsBoard() {
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(r)
     }
-    for (const list of map.values()) list.sort((a, b) => compareInColumn(a, b, workflow))
+    for (const list of map.values()) {
+      list.sort((a, b) =>
+        sortByAge ? compareByTimeInStatus(a, b, workflow) : compareInColumn(a, b, workflow),
+      )
+    }
     return map
-  }, [columns, filteredRows, workflow])
+  }, [columns, filteredRows, workflow, sortByAge])
 
   const detailRow = detailId ? rows.find((r) => r.id === detailId) ?? null : null
 
@@ -436,6 +520,14 @@ export function EngagementsBoard() {
       mark: t("engagements.clear.mark", "Mark as cleared"),
       restore: t("engagements.clear.restore", "Restore to board"),
       badge: t("engagements.clear.badge", "Cleared"),
+    }),
+    [t],
+  )
+  // "Time in status" badge wording — the day count itself is per card.
+  const ageLabels = React.useMemo(
+    () => ({
+      dayShort: t("engagements.age.dayShort", "d"),
+      tooltip: t("engagements.age.tooltip", "Days in the current status"),
     }),
     [t],
   )
@@ -517,6 +609,32 @@ export function EngagementsBoard() {
     const currentColumn = currentStatusId ?? NO_STATUS
     const crossColumn = currentColumn !== columnId
     const toStatusId = columnId === NO_STATUS ? null : columnId
+
+    // Sorted by time in status: manual ordering is paused. An in-column drop has
+    // nowhere meaningful to land, and a cross-column move must not rewrite
+    // positions from the sorted (not manual) order — so move the status only and
+    // leave every stored position untouched.
+    if (sortByAge) {
+      if (!crossColumn) return
+      const snapshot = rows
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === id
+            ? applyStatus(r, workflow, toStatusId ? statusById.get(toStatusId) ?? null : null)
+            : r,
+        ),
+      )
+      const supabase = createClient()
+      const { error } = await supabase
+        .from("engagements")
+        .update({ [statusFieldsFor(workflow).id]: toStatusId } as never)
+        .eq("id", id)
+      if (error) {
+        setRows(snapshot)
+        toast.error(`${t("engagements.toast.error", "Couldn't update engagement")}: ${error.message}`)
+      }
+      return
+    }
 
     // Anchor the insert to a real neighbour id from what's actually rendered, so
     // ordering is correct even when filters hide some cards. Cross-column drops
@@ -651,6 +769,23 @@ export function EngagementsBoard() {
           <Button
             type="button"
             size="sm"
+            variant={sortByAge ? "default" : "outline"}
+            className="h-8"
+            onClick={() =>
+              React.startTransition(() => setSortMode((m) => (m === "oldest" ? "manual" : "oldest")))
+            }
+            aria-pressed={sortByAge}
+            title={t(
+              "engagements.sort.oldestHint",
+              "Sort every column by time in the current status. Manual card ordering is paused while this is on.",
+            )}
+          >
+            <ArrowDownWideNarrow className="size-4" />
+            {t("engagements.sort.oldest", "Longest in status")}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
             variant={filterOverdue ? "default" : "outline"}
             className="h-8"
             onClick={() => React.startTransition(() => setFilterOverdue((v) => !v))}
@@ -688,6 +823,9 @@ export function EngagementsBoard() {
             onBvChange={(v) => React.startTransition(() => setBvFilter(v))}
             cleared={clearedMode}
             onClearedChange={(v) => React.startTransition(() => setClearedMode(v))}
+            minDaysInStatus={minDaysInStatus}
+            onMinDaysInStatusChange={(v) => React.startTransition(() => setMinDaysInStatus(v))}
+            minDaysOptions={AGE_FILTER_PRESETS}
             yearOptions={yearOptions}
             years={years}
             onToggleYear={(y) => toggleFrom(setYears, y)}
@@ -717,8 +855,16 @@ export function EngagementsBoard() {
                 key={col.id}
                 onDragOver={(e) => {
                   e.preventDefault()
+                  const sameColumn = draggedColumnKey() === col.id
+                  // Sorted by age: no in-column reorder, so don't promise one
+                  // with a drop guide over the card's own column.
+                  if (sortByAge && sameColumn) {
+                    setDragOverCol((cur) => (cur === col.id ? null : cur))
+                    setDropTarget((cur) => (cur?.colId === col.id ? null : cur))
+                    return
+                  }
                   setDragOverCol(col.id)
-                  const line = draggedColumnKey() === col.id
+                  const line = sameColumn
                     ? computeDropLine(e.currentTarget, e.clientY, draggingId).lineIndex
                     : 0 // cross-column drops always land at the top
                   setDropTarget((cur) =>
@@ -761,6 +907,8 @@ export function EngagementsBoard() {
                         {showLine ? <DropLine /> : null}
                         <EngagementCard
                           row={row}
+                          ageDays={daysInStatus(row, workflow, statusById, nowMs)}
+                          ageLabels={ageLabels}
                           dragging={draggingId === row.id}
                           cleared={!!clearedOf(row, workflow)}
                           // Clearing is allowed from ANY column (not just the
@@ -1150,6 +1298,8 @@ const EngagementCard = React.memo(function EngagementCard({
   overdueLabel,
   verifiedLabels,
   showVerified,
+  ageDays,
+  ageLabels,
 }: {
   row: EngagementBoardRow
   dragging: boolean
@@ -1163,7 +1313,11 @@ const EngagementCard = React.memo(function EngagementCard({
   overdueLabel: string
   verifiedLabels: { badge: string; tooltip: string }
   showVerified: boolean
+  /** Calendar days in the current status, or null when the age is meaningless. */
+  ageDays: number | null
+  ageLabels: { dayShort: string; tooltip: string }
 }) {
+  const stale = ageDays != null && ageDays >= AGE_WARN_DAYS
   return (
     <div
       draggable
@@ -1190,6 +1344,22 @@ const EngagementCard = React.memo(function EngagementCard({
           >
             <Landmark className="size-4" />
           </span>
+        ) : null}
+        {stale ? (
+          <Badge
+            variant="outline"
+            className={cn(
+              "shrink-0 gap-1 px-1.5 text-[10px] tabular-nums",
+              ageDays! >= AGE_LATE_DAYS
+                ? "border-semantic-error/40 text-semantic-error"
+                : "border-semantic-warning/40 text-semantic-warning",
+            )}
+            title={`${ageLabels.tooltip}: ${ageDays}`}
+          >
+            <Hourglass className="size-3" />
+            {ageDays}
+            {ageLabels.dayShort}
+          </Badge>
         ) : null}
         {cleared ? (
           <Badge variant="secondary" className="shrink-0 gap-1 text-[10px]">

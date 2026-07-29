@@ -71,6 +71,15 @@ const dictionaries = {
     "engagements.filter.section.team": "Team",
     "engagements.filter.section.year": "Fiscal year",
     "engagements.filter.section.cleared": "Cleared cards",
+    "engagements.filter.section.timeInStatus": "Time in status",
+    "engagements.filter.timeInStatus.atLeast": "At least {days} days",
+    "engagements.filter.timeInStatus.hint":
+      "Counts days since the card last changed status. Comments and attachments do not reset it.",
+    "engagements.sort.oldest": "Longest in status",
+    "engagements.sort.oldestHint":
+      "Sort every column by time in the current status. Manual card ordering is paused while this is on.",
+    "engagements.age.dayShort": "d",
+    "engagements.age.tooltip": "Days in the current status",
     "engagements.filter.bv.all": "All Bolagsverket",
     "engagements.filter.bv.sent": "Sent to Bolagsverket",
     "engagements.filter.bv.registered": "Registered by Bolagsverket",
@@ -1396,6 +1405,15 @@ const dictionaries = {
     "engagements.filter.section.team": "Team",
     "engagements.filter.section.year": "Räkenskapsår",
     "engagements.filter.section.cleared": "Klarmarkerade kort",
+    "engagements.filter.section.timeInStatus": "Tid i status",
+    "engagements.filter.timeInStatus.atLeast": "Minst {days} dagar",
+    "engagements.filter.timeInStatus.hint":
+      "Räknar dagar sedan kortet senast bytte status. Kommentarer och bilagor nollställer inte räknaren.",
+    "engagements.sort.oldest": "Längst i status",
+    "engagements.sort.oldestHint":
+      "Sortera varje kolumn på tid i nuvarande status. Manuell kortordning pausas medan detta är på.",
+    "engagements.age.dayShort": "d",
+    "engagements.age.tooltip": "Dagar i nuvarande status",
     "engagements.filter.bv.all": "Alla Bolagsverket",
     "engagements.filter.bv.sent": "Skickade till Bolagsverket",
     "engagements.filter.bv.registered": "Registrerade hos Bolagsverket",
