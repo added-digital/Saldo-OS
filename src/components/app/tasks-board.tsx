@@ -25,7 +25,9 @@ const ALL = "all"
 /** Sentinel for "tasks nobody has picked up" in the assignee filter. */
 const UNASSIGNED = "unassigned"
 
-type Consultant = { id: string; name: string }
+/** Cost centre carries the customer↔manager link, so the create dialog can
+ *  resolve a customer's manager the same way the bokslut board does. */
+type Consultant = { id: string; name: string; costCenter: string | null }
 
 /**
  * Within-column ordering: manually-positioned cards first (ascending), then any
@@ -120,7 +122,7 @@ export function TasksBoard() {
         supabase.from("task_board").select("*"),
         supabase
           .from("profiles")
-          .select("id, full_name, email")
+          .select("id, full_name, email, fortnox_cost_center")
           .eq("is_active", true)
           .order("full_name")
           .limit(500),
@@ -130,9 +132,18 @@ export function TasksBoard() {
       setCategories((categoryRes.data ?? []) as TaskCategory[])
       setRows((boardRes.data ?? []) as TaskBoardRow[])
       setConsultants(
-        ((profRes.data ?? []) as Array<{ id: string; full_name: string | null; email: string }>).map(
-          (p) => ({ id: p.id, name: p.full_name ?? p.email }),
-        ),
+        (
+          (profRes.data ?? []) as Array<{
+            id: string
+            full_name: string | null
+            email: string
+            fortnox_cost_center: string | null
+          }>
+        ).map((p) => ({
+          id: p.id,
+          name: p.full_name ?? p.email,
+          costCenter: p.fortnox_cost_center,
+        })),
       )
       setLoading(false)
     })()

@@ -47,7 +47,7 @@ export const navigation: NavSection[] = [
       { label: "Bokslut", href: "/bokslut", icon: ClipboardList, scope: "customers" },
       // Ad-hoc tasks outside the recurring services (rådgivning, follow-ups),
       // handed between colleagues. Open to all staff — no scope gate.
-      { label: "Tasks", href: "/uppgifter", icon: ListTodo, badge: "new" },
+      { label: "Tasks", href: "/uppgifter", icon: ListTodo },
       // Licensfakturering — Fortnox/Reda price & discount calculator (replaces
       // the "Huvud excel" macro workbook). Admin-only.
       { label: "Licenser", href: "/licenser", icon: FileSpreadsheet, minRole: "admin" },

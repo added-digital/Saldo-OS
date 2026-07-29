@@ -32,7 +32,13 @@ import {
 
 const NONE = "none"
 
-type CustomerOption = { id: string; name: string; org_number: string | null }
+type CustomerOption = {
+  id: string
+  name: string
+  org_number: string | null
+  /** Carries the customer↔manager link (each consultant has their own). */
+  fortnox_cost_center: string | null
+}
 
 export function TaskCreateDialog({
   open,
@@ -46,7 +52,7 @@ export function TaskCreateDialog({
   onOpenChange: (open: boolean) => void
   statuses: TaskStatus[]
   categories: TaskCategory[]
-  consultants: Array<{ id: string; name: string }>
+  consultants: Array<{ id: string; name: string; costCenter: string | null }>
   onCreated: (row: TaskBoardRow) => void
 }) {
   const { t } = useTranslation()
@@ -71,7 +77,7 @@ export function TaskCreateDialog({
       const supabase = createClient()
       const { data, error } = await supabase
         .from("customers")
-        .select("id, name, org_number")
+        .select("id, name, org_number, fortnox_cost_center")
         .eq("status", "active")
         .order("name")
         .limit(5000)
@@ -98,6 +104,27 @@ export function TaskCreateDialog({
     setCustomerId(null)
     setDeadline("")
   }, [open])
+
+  // Map each consultant's cost centre → their id, so a customer's cost centre
+  // resolves to its customer manager — the same link the bokslut board uses.
+  const ccToConsultant = React.useMemo(() => {
+    const m = new Map<string, string>()
+    for (const c of consultants) {
+      if (c.costCenter && c.costCenter.trim() && !m.has(c.costCenter)) m.set(c.costCenter, c.id)
+    }
+    return m
+  }, [consultants])
+
+  // Picking a customer proposes their customer manager as the assignee. Unlike
+  // the bokslut dialog this never clears an existing pick: on a task the
+  // assignee is often chosen first and deliberately, so a customer without a
+  // resolvable manager must not wipe that choice.
+  React.useEffect(() => {
+    if (!customerId) return
+    const cc = customers?.find((c) => c.id === customerId)?.fortnox_cost_center
+    const managerId = cc && cc.trim() ? ccToConsultant.get(cc) : undefined
+    if (managerId) setAssigneeId(managerId)
+  }, [customerId, customers, ccToConsultant])
 
   const selectedCustomer = customers?.find((c) => c.id === customerId) ?? null
   const q = customerQuery.trim().toLowerCase()
