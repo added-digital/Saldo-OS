@@ -179,7 +179,7 @@ export function EngagementFilters(props: EngagementFiltersProps) {
           ) : null}
 
           <FilterSection
-            title={t("engagements.filter.section.timeInStatus", "Time in status")}
+            title={t("engagements.filter.section.timeInStatus", "Time in review")}
             count={minDaysInStatus != null ? 1 : 0}
             defaultOpen={minDaysInStatus != null}
           >
@@ -200,7 +200,7 @@ export function EngagementFilters(props: EngagementFiltersProps) {
             <p className="mt-3 text-xs text-muted-foreground">
               {t(
                 "engagements.filter.timeInStatus.hint",
-                "Counts days since the card last changed status. Comments and attachments do not reset it.",
+                "Keeps only cards in Klar för granskning, counted from when they landed there. Comments and attachments do not reset the count.",
               )}
             </p>
           </FilterSection>

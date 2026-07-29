@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark, ArrowDownWideNarrow, Hourglass } from "lucide-react"
+import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark, ArrowDownWideNarrow } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -95,27 +95,32 @@ const AGE_LATE_DAYS = 15
 /** Presets offered by the "time in status" filter, in days. */
 const AGE_FILTER_PRESETS = [7, 14, 30]
 
+/**
+ * The only stage that carries a day count for now: the review queue. A card
+ * waiting here is waiting on us, so the age is actionable — elsewhere (waiting
+ * on the client, sent to Bolagsverket) it would just be noise. Both workflows
+ * use the same status key. Widen this to a set if more stages want the marker.
+ */
+const AGE_TRACKED_STATUS_KEY = "klar_for_granskning"
+
 /** When this row last changed status in the active workflow (trigger-stamped). */
 function statusChangedAtOf(row: EngagementBoardRow, workflow: EngagementWorkflow): string | null {
   return workflow === "bokslut" ? row.bokslut_status_changed_at : row.ink2_status_changed_at
 }
 
 /**
- * Whole calendar days the row has sat in its current status, or null when the
- * age is meaningless: no status yet, a done or parked stage, a cleared card, or
- * a row that has never been stamped. Note this measures time in *status*, not
- * time without any activity — a comment or attachment does not reset it.
+ * Whole calendar days the row has sat in "Klar för granskning", or null when
+ * the age is not tracked: any other stage, a cleared card, or a row that has
+ * never been stamped. Note this measures time in *status*, not time without any
+ * activity — a comment or attachment does not reset it.
  */
 function daysInStatus(
   row: EngagementBoardRow,
   workflow: EngagementWorkflow,
-  statusById: Map<string, EngagementStatus>,
   nowMs: number,
 ): number | null {
-  const statusId = workflow === "bokslut" ? row.bokslut_status_id : row.ink2_status_id
-  if (!statusId) return null
-  const status = statusById.get(statusId)
-  if (!status || status.is_done || status.is_parked) return null
+  const statusKey = workflow === "bokslut" ? row.bokslut_status_key : row.ink2_status_key
+  if (statusKey !== AGE_TRACKED_STATUS_KEY) return null
   if (clearedOf(row, workflow)) return null
   const changed = statusChangedAtOf(row, workflow)
   if (!changed) return null
@@ -415,12 +420,12 @@ export function EngagementsBoard() {
     }
     if (minDaysInStatus != null) {
       list = list.filter((r) => {
-        const days = daysInStatus(r, workflow, statusById, nowMs)
+        const days = daysInStatus(r, workflow, nowMs)
         return days != null && days >= minDaysInStatus
       })
     }
     return list
-  }, [scopedRows, filterOverdue, bvFilter, workflow, minDaysInStatus, statusById, nowMs])
+  }, [scopedRows, filterOverdue, bvFilter, workflow, minDaysInStatus, nowMs])
 
   const overdueCount = React.useMemo(
     () => scopedRows.filter((r) => r.is_overdue).length,
@@ -523,11 +528,11 @@ export function EngagementsBoard() {
     }),
     [t],
   )
-  // "Time in status" badge wording — the day count itself is per card.
+  // Day-count badge wording — the count itself is per card.
   const ageLabels = React.useMemo(
     () => ({
       dayShort: t("engagements.age.dayShort", "d"),
-      tooltip: t("engagements.age.tooltip", "Days in the current status"),
+      tooltip: t("engagements.age.tooltip", "Days in Klar för granskning"),
     }),
     [t],
   )
@@ -907,7 +912,7 @@ export function EngagementsBoard() {
                         {showLine ? <DropLine /> : null}
                         <EngagementCard
                           row={row}
-                          ageDays={daysInStatus(row, workflow, statusById, nowMs)}
+                          ageDays={daysInStatus(row, workflow, nowMs)}
                           ageLabels={ageLabels}
                           dragging={draggingId === row.id}
                           cleared={!!clearedOf(row, workflow)}
@@ -1313,7 +1318,7 @@ const EngagementCard = React.memo(function EngagementCard({
   overdueLabel: string
   verifiedLabels: { badge: string; tooltip: string }
   showVerified: boolean
-  /** Calendar days in the current status, or null when the age is meaningless. */
+  /** Calendar days in "Klar för granskning", or null when the age isn't tracked. */
   ageDays: number | null
   ageLabels: { dayShort: string; tooltip: string }
 }) {
@@ -1349,14 +1354,13 @@ const EngagementCard = React.memo(function EngagementCard({
           <Badge
             variant="outline"
             className={cn(
-              "shrink-0 gap-1 px-1.5 text-[10px] tabular-nums",
+              "shrink-0 px-1.5 text-[10px] tabular-nums",
               ageDays! >= AGE_LATE_DAYS
                 ? "border-semantic-error/40 text-semantic-error"
                 : "border-semantic-warning/40 text-semantic-warning",
             )}
             title={`${ageLabels.tooltip}: ${ageDays}`}
           >
-            <Hourglass className="size-3" />
             {ageDays}
             {ageLabels.dayShort}
           </Badge>
