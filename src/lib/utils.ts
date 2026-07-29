@@ -26,6 +26,16 @@ export function formatDateTime(date: string | Date): string {
   })
 }
 
+/**
+ * Money for display: Swedish grouping, "kr" suffix, no decimals. Amounts here
+ * are estimates and running totals — the ören only add noise. Null renders as
+ * an em dash so an unset value never reads as 0 kr.
+ */
+export function formatCurrency(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—"
+  return `${new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 0 }).format(value)} kr`
+}
+
 export function formatBytes(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—"
   if (value < 1024) return `${value} B`

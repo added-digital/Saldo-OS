@@ -47,6 +47,9 @@ export const manualLeadSchema = z.object({
   email: z.email("invalid email").max(320).optional().or(z.literal("")).nullable(),
   phone: z.string().trim().max(50).optional().or(z.literal("")).nullable(),
   note: z.string().trim().max(5000).optional().or(z.literal("")).nullable(),
+  // Estimated annual value in SEK. Bounded to the NUMERIC(12,2) column and to
+  // non-negative, matching the CHECK constraint in migration 00106.
+  dealValue: z.number().min(0).max(9_999_999_999).optional().nullable(),
   bolagsverketData: z.record(z.string(), z.unknown()).optional().nullable(),
 })
 

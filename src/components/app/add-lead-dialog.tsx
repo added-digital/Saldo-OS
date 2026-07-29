@@ -62,7 +62,20 @@ const EMPTY_FORM = {
   contactRole: "",
   email: "",
   phone: "",
+  dealValue: "",
   note: "",
+}
+
+/**
+ * Digits out of whatever was typed — "45 000", "45.000 kr" and "45000" all mean
+ * the same thing to someone entering a deal value. Empty input stays null so an
+ * unset value is never stored as 0.
+ */
+function parseDealValue(input: string): number | null {
+  const digits = input.replace(/[^\d]/g, "")
+  if (!digits) return null
+  const value = Number(digits)
+  return Number.isFinite(value) ? value : null
 }
 
 /** Map an existing lead's columns onto the form fields. */
@@ -78,6 +91,7 @@ function formFromLead(lead: WebsiteLead): typeof EMPTY_FORM {
     contactRole: lead.contact_role ?? "",
     email: lead.email ?? "",
     phone: lead.phone ?? "",
+    dealValue: lead.deal_value != null ? String(lead.deal_value) : "",
     // For manual leads `message` is the free-text note. Website leads carry
     // the visitor's original message, which must not be edited here.
     note: lead.source === "manual" ? lead.message : "",
@@ -235,6 +249,7 @@ function AddLeadDialog({
           contact_role: form.contactRole.trim() || null,
           email: form.email.trim() || null,
           phone: form.phone.trim() || null,
+          deal_value: parseDealValue(form.dealValue),
         }
         if (lead.source === "manual") {
           update.message = form.note.trim()
@@ -274,6 +289,7 @@ function AddLeadDialog({
           contactRole: form.contactRole || null,
           email: form.email || null,
           phone: form.phone || null,
+          dealValue: parseDealValue(form.dealValue),
           note: form.note || null,
           bolagsverketData:
             lookup.kind === "found" ? bolagsverketData : null,
@@ -461,6 +477,22 @@ function AddLeadDialog({
                 />
               </div>
             </div>
+          </div>
+
+          {/* What the deal is worth. Free-typed — "45 000" and "45000 kr" are
+              both read as digits — and left empty when nobody has estimated it
+              yet, which is not the same as a deal worth nothing. */}
+          <div className="space-y-2">
+            <Label htmlFor="lead-deal-value">
+              {t("leads.add.dealValue", "Deal value (SEK/year)")}
+            </Label>
+            <Input
+              id="lead-deal-value"
+              inputMode="numeric"
+              value={form.dealValue}
+              onChange={(e) => set("dealValue")(e.target.value)}
+              placeholder={t("leads.add.dealValuePlaceholder", "e.g. 45 000")}
+            />
           </div>
 
           {!isEdit || lead?.source === "manual" ? (

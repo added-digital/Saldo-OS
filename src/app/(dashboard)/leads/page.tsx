@@ -22,7 +22,7 @@ import {
   LOGGABLE_ACTIONS,
 } from "@/lib/lead-activity";
 import { createClient } from "@/lib/supabase/client";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import type {
   LeadActivityType,
   WebsiteLead,
@@ -759,6 +759,13 @@ const LeadCard = React.memo(function LeadCard({
           {lead.name}
         </p>
         <div className="flex shrink-0 items-center gap-1">
+          {/* The number carries the card, so it gets weight rather than the
+              muted treatment the other meta lines use. */}
+          {lead.deal_value != null ? (
+            <span className="text-xs font-semibold tabular-nums text-foreground">
+              {formatCurrency(lead.deal_value)}
+            </span>
+          ) : null}
           {lead.source === "manual" ? (
             <Badge variant="outline" className="gap-1 font-normal text-[10px]">
               <UserPen className="size-3" />

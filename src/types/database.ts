@@ -593,6 +593,8 @@ export interface WebsiteLead {
   created_by: string | null
   /** Assigned customer manager (profiles.id). Null = unassigned. Migration 00104. */
   customer_manager_id: string | null
+  /** Estimated annual deal value in SEK. Null = not estimated. Migration 00106. */
+  deal_value: number | null
   bolagsverket_data: Record<string, unknown> | null
   /** Manual board-column ordering (see migration 00103). Null = never ordered. */
   board_position?: number | null

@@ -16,6 +16,7 @@ import {
   UserPen,
   UserRound,
   BadgeCheck,
+  Banknote,
   Trash2,
   Pencil,
   Check,
@@ -25,7 +26,7 @@ import {
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { useUser } from "@/hooks/use-user";
 import type { WebsiteLead, WebsiteLeadStatus } from "@/types/database";
 import { AddLeadDialog } from "@/components/app/add-lead-dialog";
@@ -580,6 +581,29 @@ export default function LeadDetailPage({
                   </Command>
                 </PopoverContent>
               </Popover>
+            </div>
+
+            {/* Deal value sits with the manager rather than in the company
+                block: both are things staff decide about the lead, not facts
+                that came in with it. Always rendered, so an unestimated lead
+                still advertises that the field exists. */}
+            <div className="flex items-center justify-between gap-2 border-t pt-3">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Banknote className="size-4 shrink-0" />
+                <span className="text-xs font-medium uppercase tracking-wide">
+                  {t("leads.detail.dealValue", "Deal value")}
+                </span>
+              </div>
+              <span
+                className={cn(
+                  "tabular-nums",
+                  lead.deal_value == null && "text-muted-foreground",
+                )}
+              >
+                {lead.deal_value != null
+                  ? formatCurrency(lead.deal_value)
+                  : t("leads.detail.dealValueUnset", "Not estimated")}
+              </span>
             </div>
 
             <div className="flex items-center gap-2 border-t pt-3">

@@ -101,6 +101,7 @@ export async function POST(request: NextRequest) {
         address_postal_code: orNull(input.addressPostalCode),
         address_city: orNull(input.addressCity),
         contact_role: orNull(input.contactRole),
+        deal_value: input.dealValue ?? null,
         bolagsverket_data: input.bolagsverketData ?? null,
         created_by: user.id,
         // Manual leads need no notification email — the creator already knows.
