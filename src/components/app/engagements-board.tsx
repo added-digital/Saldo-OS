@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, Building2, User as UserIcon, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark } from "lucide-react"
+import { Plus, CalendarClock, User as UserIcon, UserPlus, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -544,6 +544,7 @@ export function EngagementsBoard() {
     }),
     [t],
   )
+  const fiscalYearLabel = t("engagements.card.fiscalYear", "Fiscal year end")
   // Day-count badge wording — the count itself is per card.
   const ageLabels = React.useMemo(
     () => ({
@@ -918,6 +919,7 @@ export function EngagementsBoard() {
                           row={row}
                           ageDays={daysInStatus(row, workflow, nowMs)}
                           ageLabels={ageLabels}
+                          fiscalYearLabel={fiscalYearLabel}
                           dragging={draggingId === row.id}
                           cleared={!!clearedOf(row, workflow)}
                           // Clearing is allowed from ANY column (not just the
@@ -1309,6 +1311,7 @@ const EngagementCard = React.memo(function EngagementCard({
   showVerified,
   ageDays,
   ageLabels,
+  fiscalYearLabel,
 }: {
   row: EngagementBoardRow
   dragging: boolean
@@ -1325,6 +1328,8 @@ const EngagementCard = React.memo(function EngagementCard({
   /** Calendar days in "Klar för granskning", or null when the age isn't tracked. */
   ageDays: number | null
   ageLabels: { dayShort: string; tooltip: string }
+  /** Tooltip for the fiscal-year-end line ("Bokslutsdatum"). */
+  fiscalYearLabel: string
 }) {
   const stale = ageDays != null && ageDays >= AGE_WARN_DAYS
   return (
@@ -1335,25 +1340,21 @@ const EngagementCard = React.memo(function EngagementCard({
       onDragEnd={onDragEnd}
       onClick={() => onClick(row.id)}
       className={cn(
-        "cursor-pointer rounded-md border bg-background p-2.5 text-left shadow-sm transition-opacity hover:border-border-strong",
+        // A fixed floor keeps every card the same box whether or not it has a
+        // co-helper, an INK2 stage or a deadline — a ragged column is far
+        // harder to scan than a little whitespace.
+        "flex min-h-[6.75rem] cursor-pointer flex-col gap-1.5 rounded-md border bg-background p-2.5 text-left shadow-sm transition-opacity hover:border-border-strong",
         // Let the browser skip layout/paint for off-screen cards — cuts the
         // reflow cost when overlays (Select/Sheet) lock the page on open.
-        "[content-visibility:auto] [contain-intrinsic-size:auto_92px]",
+        "[content-visibility:auto] [contain-intrinsic-size:auto_108px]",
         dragging && "opacity-50",
         cleared && "opacity-60",
       )}
     >
-      <div className="flex items-start justify-between gap-2">
+      {/* Line 1 — who, plus the flags and the one action. The action sits last
+          so the tap target is always in the same corner on every card. */}
+      <div className="flex items-start justify-between gap-1.5">
         <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{row.customer_name}</p>
-        {showVerified && row.annual_report_registered_bv_at ? (
-          <span
-            className="mt-0.5 shrink-0 text-semantic-success"
-            title={`${verifiedLabels.tooltip} · ${new Date(row.annual_report_registered_bv_at).toLocaleDateString("sv-SE")}`}
-            aria-label={verifiedLabels.tooltip}
-          >
-            <Landmark className="size-4" />
-          </span>
-        ) : null}
         {stale ? (
           <Badge
             variant="outline"
@@ -1369,11 +1370,14 @@ const EngagementCard = React.memo(function EngagementCard({
             {ageLabels.dayShort}
           </Badge>
         ) : null}
-        {cleared ? (
-          <Badge variant="secondary" className="shrink-0 gap-1 text-[10px]">
-            <CheckCircle2 className="size-3" />
-            {clearLabels.badge}
-          </Badge>
+        {showVerified && row.annual_report_registered_bv_at ? (
+          <span
+            className="mt-0.5 shrink-0 text-semantic-success"
+            title={`${verifiedLabels.tooltip} · ${new Date(row.annual_report_registered_bv_at).toLocaleDateString("sv-SE")}`}
+            aria-label={verifiedLabels.tooltip}
+          >
+            <Landmark className="size-4" />
+          </span>
         ) : null}
         {canClear ? (
           <button
@@ -1396,29 +1400,46 @@ const EngagementCard = React.memo(function EngagementCard({
         ) : null}
       </div>
 
-      {/* Row 1: consultant + group together */}
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      {/* Line 2 — which bokslut this card is: the fiscal year end, then the
+          group. Same "date · office" shape as the detail sheet header, and no
+          icons, so it reads as identity rather than as another status. */}
+      <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className="shrink-0 tabular-nums text-foreground/70" title={fiscalYearLabel}>
+          {row.fiscal_year_end}
+        </span>
+        {row.group_name ? (
+          <>
+            <span aria-hidden>·</span>
+            <span className="truncate">{row.group_name}</span>
+          </>
+        ) : null}
+      </div>
+
+      {/* Line 3 — the people on it. The co-helper keeps a distinct icon so the
+          two names never read as one list. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {row.consultant_name ? (
-          <span className="inline-flex items-center gap-1">
-            <UserIcon className="size-3" />
-            {row.consultant_name}
+          <span className="inline-flex min-w-0 items-center gap-1">
+            <UserIcon className="size-3 shrink-0" />
+            <span className="truncate">{row.consultant_name}</span>
           </span>
         ) : null}
-        {row.group_name ? (
-          <span className="inline-flex items-center gap-1">
-            <Building2 className="size-3" />
-            {row.group_name}
+        {row.co_consultant_name ? (
+          <span className="inline-flex min-w-0 items-center gap-1">
+            <UserPlus className="size-3 shrink-0" />
+            <span className="truncate">{row.co_consultant_name}</span>
           </span>
         ) : null}
       </div>
 
-      {/* Row 2: co-helper + INK2 + deadline */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-        {row.co_consultant_name ? (
-          <span className="inline-flex items-center gap-1 text-muted-foreground">
-            <UserIcon className="size-3" />
-            {row.co_consultant_name}
-          </span>
+      {/* Line 4 — the trailing status strip, pushed to the bottom edge so it
+          lands on the same baseline across every card in the column. */}
+      <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        {cleared ? (
+          <Badge variant="secondary" className="gap-1 text-[10px]">
+            <CheckCircle2 className="size-3" />
+            {clearLabels.badge}
+          </Badge>
         ) : null}
         {row.ink2_status_label ? (
           <Badge variant="outline" className="text-[10px]">
@@ -1428,7 +1449,7 @@ const EngagementCard = React.memo(function EngagementCard({
         {row.deadline ? (
           <span
             className={cn(
-              "inline-flex items-center gap-1 text-[11px]",
+              "inline-flex items-center gap-1 text-[11px] tabular-nums",
               row.is_overdue ? "text-semantic-error" : "text-muted-foreground",
             )}
           >
