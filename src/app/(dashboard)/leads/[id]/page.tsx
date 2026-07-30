@@ -33,6 +33,7 @@ import { AddLeadDialog } from "@/components/app/add-lead-dialog";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
 import { LeadActivityLog } from "@/components/app/lead-activity-log";
 import { LeadAttachments } from "@/components/app/lead-attachments";
+import { purgeAttachmentObjects } from "@/lib/attachments";
 import { PageHeader } from "@/components/app/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -310,6 +311,9 @@ export default function LeadDetailPage({
     if (!lead) return;
     setDeleting(true);
     const supabase = createClient();
+    // Clear the stored files first: the metadata rows cascade with the lead, and
+    // once they're gone nothing records which objects to remove.
+    await purgeAttachmentObjects(supabase, "lead_attachments", "lead_id", lead.id);
     // Empty result + no error = RLS blocked the delete (policy not applied).
     const { data, error } = await supabase
       .from("website_leads")

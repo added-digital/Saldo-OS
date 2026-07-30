@@ -23,6 +23,7 @@ import {
 } from "@/lib/lead-activity";
 import { createClient } from "@/lib/supabase/client";
 import { cn, formatCurrency } from "@/lib/utils";
+import { purgeAttachmentObjects } from "@/lib/attachments";
 import type {
   LeadActivityType,
   WebsiteLead,
@@ -221,6 +222,14 @@ export default function LeadsPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     const supabase = createClient();
+    // Stored files go first — their metadata rows cascade with the lead, and
+    // after that nothing records which objects belonged to it.
+    await purgeAttachmentObjects(
+      supabase,
+      "lead_attachments",
+      "lead_id",
+      deleteTarget.id,
+    );
     // Empty result + no error = RLS blocked the delete (policy not applied).
     const { data: deleted, error } = await supabase
       .from("website_leads")

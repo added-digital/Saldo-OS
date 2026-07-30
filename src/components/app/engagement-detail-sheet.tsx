@@ -13,6 +13,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   STORAGE_BUCKET,
   fileExtension,
+  purgeAttachmentObjects,
 } from "@/lib/attachments"
 import { deadlineForFiscalYearEnd } from "@/lib/engagements/fiscal-year"
 import { useTranslation } from "@/hooks/use-translation"
@@ -425,6 +426,16 @@ export function EngagementDetailSheet({
     if (!row) return
     setDeleting(true)
     const supabase = createClient()
+    // Stored files first — the attachment rows cascade with the engagement, and
+    // after that nothing records which objects to remove from the bucket.
+    // The cast keeps tsc from re-deriving postgrest's generics through this
+    // file's already very deep types (TS2589); the shape is what purge needs.
+    await purgeAttachmentObjects(
+      supabase as unknown as Parameters<typeof purgeAttachmentObjects>[0],
+      "engagement_attachments",
+      "engagement_id",
+      row.id,
+    )
     const { error } = await supabase.from("engagements").delete().eq("id", row.id)
     setDeleting(false)
     if (error) {
