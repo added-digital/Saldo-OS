@@ -8,6 +8,7 @@ import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
+import { useUser } from "@/hooks/use-user"
 import type { TaskBoardRow, TaskCategory, TaskStatus } from "@/types/task"
 import { PageHeader } from "@/components/app/page-header"
 import { Button } from "@/components/ui/button"
@@ -23,6 +24,12 @@ const NO_STATUS = "none"
 const ALL = "all"
 /** Sentinel for "tasks nobody has picked up" in the assignee filter. */
 const UNASSIGNED = "unassigned"
+/**
+ * Sentinel for the personal view. Deliberately wider than "assigned to me":
+ * delegating a task must not make it vanish from the delegator's board, so
+ * anything you created counts as yours too.
+ */
+const MINE = "mine"
 
 /** Cost centre carries the customer↔manager link, so the create dialog can
  *  resolve a customer's manager the same way the bokslut board does. */
@@ -90,6 +97,7 @@ function applyStatus(row: TaskBoardRow, status: TaskStatus | null): TaskBoardRow
 
 export function TasksBoard() {
   const { t } = useTranslation()
+  const { user } = useUser()
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -179,19 +187,36 @@ export function TasksBoard() {
     const list = Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) =>
       a.name.localeCompare(b.name),
     )
-    return [{ id: UNASSIGNED, name: t("tasks.unassigned", "Unassigned") }, ...list]
-  }, [rows, t])
+    // "Mine" leads the list — it is the shortcut people reach for — and is only
+    // offered once we know who is signed in.
+    return [
+      ...(user?.id ? [{ id: MINE, name: t("tasks.filter.mine", "My tasks") }] : []),
+      { id: UNASSIGNED, name: t("tasks.unassigned", "Unassigned") },
+      ...list,
+    ]
+  }, [rows, user, t])
 
   // Deferred so typing stays responsive — filtering runs at low priority.
   const deferredQuery = React.useDeferredValue(query)
   const q = deferredQuery.trim().toLowerCase()
 
+  const matchesAssignee = React.useCallback(
+    (r: TaskBoardRow) => {
+      if (filterAssignee === ALL) return true
+      if (filterAssignee === UNASSIGNED) return r.assignee_id == null
+      if (filterAssignee === MINE) {
+        return r.assignee_id === user?.id || r.created_by === user?.id
+      }
+      return r.assignee_id === filterAssignee
+    },
+    [filterAssignee, user],
+  )
+
   const filteredRows = React.useMemo(
     () =>
       rows.filter(
         (r) =>
-          (filterAssignee === ALL ||
-            (filterAssignee === UNASSIGNED ? r.assignee_id == null : r.assignee_id === filterAssignee)) &&
+          matchesAssignee(r) &&
           (filterCategories.length === 0 ||
             (r.category_id != null && filterCategories.includes(r.category_id))) &&
           (!filterOverdue || r.is_overdue) &&
@@ -200,7 +225,7 @@ export function TasksBoard() {
             (r.customer_name ?? "").toLowerCase().includes(q) ||
             (r.description ?? "").toLowerCase().includes(q)),
       ),
-    [rows, filterAssignee, filterCategories, filterOverdue, q],
+    [rows, matchesAssignee, filterCategories, filterOverdue, q],
   )
 
   const overdueCount = React.useMemo(() => rows.filter((r) => r.is_overdue).length, [rows])
