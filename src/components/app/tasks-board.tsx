@@ -8,7 +8,6 @@ import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
-import { useUser } from "@/hooks/use-user"
 import type { TaskBoardRow, TaskCategory, TaskStatus } from "@/types/task"
 import { PageHeader } from "@/components/app/page-header"
 import { Button } from "@/components/ui/button"
@@ -91,7 +90,6 @@ function applyStatus(row: TaskBoardRow, status: TaskStatus | null): TaskBoardRow
 
 export function TasksBoard() {
   const { t } = useTranslation()
-  const { user } = useUser()
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -158,15 +156,6 @@ export function TasksBoard() {
     const target = searchParams.get("task")
     if (target && rows.some((r) => r.id === target)) setDetailId(target)
   }, [searchParams, rows])
-
-  // Land on your own work: if the signed-in user is on any task, preselect them
-  // in the assignee filter. Applied once; they can switch to All.
-  const scopeAppliedRef = React.useRef(false)
-  React.useEffect(() => {
-    if (scopeAppliedRef.current || !user?.id || rows.length === 0) return
-    scopeAppliedRef.current = true
-    if (rows.some((r) => r.assignee_id === user.id)) setFilterAssignee(user.id)
-  }, [user, rows])
 
   const statusById = React.useMemo(() => new Map(statuses.map((s) => [s.id, s])), [statuses])
 
