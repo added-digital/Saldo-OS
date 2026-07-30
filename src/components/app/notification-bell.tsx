@@ -78,16 +78,19 @@ export function NotificationBell() {
     }
     if (n.type === "lead_assignment" && n.lead_id) {
       router.push(`/leads/${n.lead_id}`)
+    } else if (n.type === "task_assignment" && n.task_id) {
+      router.push(`/uppgifter?task=${n.task_id}`)
     } else if (n.engagement_id) {
       router.push(`/bokslut?engagement=${n.engagement_id}`)
     }
   }
 
   const messageFor = React.useCallback(
-    (n: AppNotification) =>
-      n.type === "lead_assignment"
-        ? t("notifications.assignedLead", "assigned a lead to you")
-        : t("notifications.mentionedYou", "mentioned you in a comment"),
+    (n: AppNotification) => {
+      if (n.type === "lead_assignment") return t("notifications.assignedLead", "assigned a lead to you")
+      if (n.type === "task_assignment") return t("notifications.assignedTask", "assigned a task to you")
+      return t("notifications.mentionedYou", "mentioned you in a comment")
+    },
     [t],
   )
 
