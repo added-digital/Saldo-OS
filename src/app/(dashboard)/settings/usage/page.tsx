@@ -37,11 +37,14 @@ import { getRoleLabel } from "@/lib/utils";
 // ── Shapes returned by /api/usage/summary ────────────────────────────────────
 interface UsageSummary {
   generatedAt: string;
+  /** "sessions" = real activity recency; "sign_in" = degraded fallback. */
+  activitySource: "sessions" | "sign_in";
   activeUsers: {
     total: number;
     daily: number;
     weekly: number;
     monthly: number;
+    neverSignedIn: number;
   };
   lastSeen: Array<{
     id: string;
@@ -49,6 +52,7 @@ interface UsageSummary {
     email: string | null;
     role: string | null;
     is_active: boolean | null;
+    last_active_at: string | null;
     last_sign_in_at: string | null;
   }>;
   newUsersByMonth: Array<{ month: string; count: number }>;
@@ -114,7 +118,9 @@ export default function UsagePage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/usage/summary");
+        // No-store: these numbers are "right now", so a cached response is
+        // worse than a slower one.
+        const res = await fetch("/api/usage/summary", { cache: "no-store" });
         if (!res.ok) {
           const body = (await res.json().catch(() => null)) as {
             error?: string;
@@ -178,7 +184,7 @@ export default function UsagePage() {
           <>
             <StatCard
               icon={Users}
-              label={t("usage.stat.totalUsers", "Total users")}
+              label={t("usage.stat.totalUsers", "Enabled users")}
               value={data.activeUsers.total}
             />
             <StatCard
@@ -199,6 +205,27 @@ export default function UsagePage() {
           </>
         )}
       </div>
+
+      {/* Say where the numbers come from. "Active" counts a used session, which
+          is not the same as a fresh login — and if the session source is
+          unavailable the figures degrade to sign-ins, which is worth admitting
+          on screen rather than quietly reporting a smaller number. */}
+      {!loading && data ? (
+        <p className="text-xs text-muted-foreground">
+          {data.activitySource === "sessions"
+            ? t(
+                "usage.note.sessions",
+                "Active = used the app in the window (session activity), not necessarily a fresh sign-in.",
+              )
+            : t(
+                "usage.note.signInFallback",
+                "Session data unavailable — figures fall back to last sign-in and under-count real use.",
+              )}
+          {data.activeUsers.neverSignedIn > 0
+            ? ` · ${data.activeUsers.neverSignedIn} ${t("usage.note.neverSignedIn", "invited, never signed in")}`
+            : ""}
+        </p>
+      ) : null}
 
       {/* ── Charts ────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -271,11 +298,14 @@ export default function UsagePage() {
             <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[28%]">{t("usage.table.name", "Name")}</TableHead>
-                  <TableHead className="w-[34%]">{t("usage.table.email", "Email")}</TableHead>
-                  <TableHead className="w-[18%]">{t("usage.table.role", "Role")}</TableHead>
-                  <TableHead className="w-[20%] text-right">
-                    {t("usage.table.lastSeen", "Last sign-in")}
+                  <TableHead className="w-[24%]">{t("usage.table.name", "Name")}</TableHead>
+                  <TableHead className="w-[28%]">{t("usage.table.email", "Email")}</TableHead>
+                  <TableHead className="w-[14%]">{t("usage.table.role", "Role")}</TableHead>
+                  <TableHead className="w-[17%] text-right">
+                    {t("usage.table.lastActive", "Last active")}
+                  </TableHead>
+                  <TableHead className="w-[17%] text-right">
+                    {t("usage.table.lastSignIn", "Last sign-in")}
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -286,12 +316,19 @@ export default function UsagePage() {
                     <TableCell className="truncate text-muted-foreground">{u.email ?? "—"}</TableCell>
                     <TableCell className="truncate">{u.role ? getRoleLabel(u.role) : "—"}</TableCell>
                     <TableCell className="whitespace-nowrap text-right">
-                      {u.last_sign_in_at ? (
-                        formatDateTime(u.last_sign_in_at)
+                      {u.last_active_at ? (
+                        formatDateTime(u.last_active_at)
                       ) : (
                         <span className="text-muted-foreground">
                           {t("usage.table.never", "Never")}
                         </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right text-muted-foreground">
+                      {u.last_sign_in_at ? (
+                        formatDateTime(u.last_sign_in_at)
+                      ) : (
+                        t("usage.table.never", "Never")
                       )}
                     </TableCell>
                   </TableRow>

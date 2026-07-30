@@ -4,16 +4,22 @@ import { createAdminClient } from "@/lib/supabase/admin"
 import type { Profile } from "@/types/database"
 
 /**
- * Phase 0 "free stats" for the admin Settings > Usage tab.
- *
- * Everything here is derived from data we ALREADY have — no event tracking yet:
- *   • Active users come from Supabase Auth `last_sign_in_at` (service-role only,
- *     so this must run server-side with the admin client).
+ * Stats for the admin Settings > Usage tab, all derived from data we already
+ * have — no event tracking of our own:
+ *   • Activity recency comes from `auth.sessions` via admin_user_activity()
+ *     (migration 00107). A session's updated_at moves as the session is used,
+ *     which is what "active" means. `last_sign_in_at` is kept alongside it but
+ *     only ever reported as what it is — the last full re-authentication. It
+ *     does NOT move on a silent token refresh, so using it to count active
+ *     users under-counted the real number several times over.
  *   • Record counts are cheap `head: true` COUNT queries on existing tables.
  *
  * Admin-gated the same way as /api/users/invite: verify the caller's profile
  * role === "admin" before doing anything with the service-role client.
  */
+
+// Session recency is the live number on the page — never serve a cached copy.
+export const dynamic = "force-dynamic"
 
 // Tables surfaced as "record counts". Keep this list curated — these are the
 // domain objects an admin cares about, not every internal table.
@@ -94,18 +100,59 @@ export async function GET() {
     (profileRows ?? []).map((p) => [p.id, p])
   )
 
+  // ── Real activity recency (auth.sessions, via migration 00107) ─────────────
+  type ActivityRow = {
+    user_id: string
+    last_active_at: string | null
+    active_sessions: number
+  }
+  const { data: activityRows, error: activityError } = await admin.rpc(
+    "admin_user_activity" as never
+  )
+  // A missing/failed function must not blank the page: fall back to sign-in
+  // recency and say so, rather than silently reporting zeroes as if nobody
+  // had used the app.
+  const activityById = new Map<string, ActivityRow>(
+    ((activityRows ?? []) as unknown as ActivityRow[]).map((r) => [r.user_id, r])
+  )
+  const activitySource: "sessions" | "sign_in" = activityError ? "sign_in" : "sessions"
+
   const now = Date.now()
   const within = (iso: string | null | undefined, days: number) =>
     !!iso && now - new Date(iso).getTime() <= days * DAY_MS
 
-  const activeUsers = {
-    total: authUsers.length,
-    daily: authUsers.filter((u) => within(u.last_sign_in_at, 1)).length,
-    weekly: authUsers.filter((u) => within(u.last_sign_in_at, 7)).length,
-    monthly: authUsers.filter((u) => within(u.last_sign_in_at, 30)).length,
+  /**
+   * The most recent trace of a user, whichever source saw them last. Sessions
+   * are the real signal, but they are pruned on sign-out and expiry — so for
+   * someone who signed in and then logged out, the sign-in is the newer (and
+   * only) evidence. Taking the max keeps both cases right.
+   */
+  const lastActiveOf = (u: AuthUser): string | null => {
+    const session = activityById.get(u.id)?.last_active_at ?? null
+    const signIn = u.last_sign_in_at ?? null
+    if (!session) return signIn
+    if (!signIn) return session
+    return new Date(session) > new Date(signIn) ? session : signIn
   }
 
-  // Per-user last-seen list, most recent first (nulls last).
+  // "Total" is the seats in use: profiles that are still enabled. Counting every
+  // auth row inflated it with invitees who never signed in and with people whose
+  // profile has since been deactivated.
+  const enabledUsers = authUsers.filter(
+    (u) => profileById.get(u.id)?.is_active !== false
+  )
+
+  const activeUsers = {
+    total: enabledUsers.length,
+    daily: enabledUsers.filter((u) => within(lastActiveOf(u), 1)).length,
+    weekly: enabledUsers.filter((u) => within(lastActiveOf(u), 7)).length,
+    monthly: enabledUsers.filter((u) => within(lastActiveOf(u), 30)).length,
+    /** Invited but never authenticated once — nothing to do with activity. */
+    neverSignedIn: enabledUsers.filter((u) => !u.last_sign_in_at).length,
+  }
+
+  // Per-user list, most recently active first (nulls last). Both timestamps are
+  // reported so the table can label them honestly.
   const lastSeen = authUsers
     .map((u) => {
       const p = profileById.get(u.id)
@@ -115,12 +162,13 @@ export async function GET() {
         email: (p?.email as string | null) ?? u.email ?? null,
         role: (p?.role as string | null) ?? null,
         is_active: (p?.is_active as boolean | null) ?? null,
+        last_active_at: lastActiveOf(u),
         last_sign_in_at: u.last_sign_in_at ?? null,
       }
     })
     .sort((a, b) => {
-      const ta = a.last_sign_in_at ? new Date(a.last_sign_in_at).getTime() : 0
-      const tb = b.last_sign_in_at ? new Date(b.last_sign_in_at).getTime() : 0
+      const ta = a.last_active_at ? new Date(a.last_active_at).getTime() : 0
+      const tb = b.last_active_at ? new Date(b.last_active_at).getTime() : 0
       return tb - ta
     })
 
@@ -151,6 +199,8 @@ export async function GET() {
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
+    /** Which signal the activity numbers came from, so the UI can qualify them. */
+    activitySource,
     activeUsers,
     lastSeen,
     newUsersByMonth,
