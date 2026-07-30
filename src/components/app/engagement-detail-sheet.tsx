@@ -7,6 +7,13 @@ import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn, formatBytes } from "@/lib/utils"
+import {
+  ALLOWED_ATTACHMENT_EXTENSIONS,
+  ATTACHMENT_ACCEPT,
+  MAX_ATTACHMENT_BYTES,
+  STORAGE_BUCKET,
+  fileExtension,
+} from "@/lib/attachments"
 import { deadlineForFiscalYearEnd } from "@/lib/engagements/fiscal-year"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
@@ -44,35 +51,6 @@ import {
 } from "@/components/ui/select"
 
 const NONE = "none"
-
-const STORAGE_BUCKET =
-  process.env.NEXT_PUBLIC_SUPABASE_FILES_BUCKET ?? "crm-files"
-
-// Attachment upload constraints (mirrors the product decision: 25 MB, common
-// document types). Enforced client-side; the storage RLS prefix gates access.
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
-const ALLOWED_ATTACHMENT_EXTENSIONS = [
-  "pdf",
-  "doc",
-  "docx",
-  "xls",
-  "xlsx",
-  "ppt",
-  "pptx",
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "csv",
-  "txt",
-  "zip",
-]
-
-function fileExtension(name: string): string {
-  const dot = name.lastIndexOf(".")
-  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : ""
-}
 
 // Click-cycle order for a checklist value: unset → yes → no → na → unset.
 const CYCLE: Array<ChecklistValue | undefined> = [undefined, "yes", "no", "na"]
@@ -805,7 +783,7 @@ export function EngagementDetailSheet({
               type="file"
               multiple
               className="hidden"
-              accept={ALLOWED_ATTACHMENT_EXTENSIONS.map((e) => `.${e}`).join(",")}
+              accept={ATTACHMENT_ACCEPT}
               onChange={(e) => handleUploadFiles(e.target.files)}
             />
 

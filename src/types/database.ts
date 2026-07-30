@@ -624,6 +624,19 @@ export interface LeadActivity {
   created_at: string
 }
 
+/** A file attached to a lead. Mirrors migration 00108. */
+export interface LeadAttachment {
+  id: string
+  lead_id: string
+  /** Object name within the crm-files bucket: leads/<lead_id>/<uuid>.<ext> */
+  storage_path: string
+  file_name: string
+  file_type: string | null
+  file_size: number | null
+  uploaded_by: string | null
+  created_at: string
+}
+
 export type EmailEventType = "open" | "click"
 
 export interface EmailEvent {

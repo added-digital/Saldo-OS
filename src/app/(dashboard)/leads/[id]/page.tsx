@@ -32,6 +32,7 @@ import type { WebsiteLead, WebsiteLeadStatus } from "@/types/database";
 import { AddLeadDialog } from "@/components/app/add-lead-dialog";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
 import { LeadActivityLog } from "@/components/app/lead-activity-log";
+import { LeadAttachments } from "@/components/app/lead-attachments";
 import { PageHeader } from "@/components/app/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -477,6 +478,8 @@ export default function LeadDetailPage({
               </CardContent>
             </Card>
           ) : null}
+
+          <LeadAttachments leadId={lead.id} />
 
           <LeadActivityLog
             leadId={lead.id}
