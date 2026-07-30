@@ -428,14 +428,7 @@ export function EngagementDetailSheet({
     const supabase = createClient()
     // Stored files first — the attachment rows cascade with the engagement, and
     // after that nothing records which objects to remove from the bucket.
-    // The cast keeps tsc from re-deriving postgrest's generics through this
-    // file's already very deep types (TS2589); the shape is what purge needs.
-    await purgeAttachmentObjects(
-      supabase as unknown as Parameters<typeof purgeAttachmentObjects>[0],
-      "engagement_attachments",
-      "engagement_id",
-      row.id,
-    )
+    await purgeAttachmentObjects(supabase, "engagement_attachments", "engagement_id", row.id)
     const { error } = await supabase.from("engagements").delete().eq("id", row.id)
     setDeleting(false)
     if (error) {

@@ -41,6 +41,12 @@ export function fileExtension(name: string): string {
  * Enough of the Supabase client for the purge below — keeps this file free of a
  * hard dependency on the generated Database type. PromiseLike, not Promise:
  * postgrest returns a thenable query builder, which awaits the same way.
+ *
+ * Deliberately NOT the parameter type: structurally matching a real
+ * SupabaseClient against this makes tsc re-derive postgrest's generics and blow
+ * the instantiation-depth limit (TS2589) in the larger call sites. The client
+ * comes in as `unknown` and is narrowed here instead — one cast in one place,
+ * rather than a cast at every caller.
  */
 type StorageCapableClient = {
   from: (table: string) => {
@@ -72,11 +78,12 @@ type StorageCapableClient = {
  * Returns how many objects it removed so callers can log rather than surface it.
  */
 export async function purgeAttachmentObjects(
-  supabase: StorageCapableClient,
+  client: unknown,
   table: "lead_attachments" | "engagement_attachments",
   parentColumn: "lead_id" | "engagement_id",
   parentId: string,
 ): Promise<number> {
+  const supabase = client as StorageCapableClient
   const { data, error } = await supabase
     .from(table)
     .select("storage_path")
