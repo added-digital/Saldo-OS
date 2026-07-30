@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, CalendarClock, User as UserIcon, UserPlus, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark } from "lucide-react"
+import { Plus, CalendarClock, History, User as UserIcon, UserPlus, Search, AlertTriangle, ClipboardList, CheckCircle2, RotateCcw, Check, EyeOff, Eye, X, Landmark } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
@@ -127,6 +127,38 @@ function daysInStatus(
   const ms = nowMs - new Date(changed).getTime()
   if (!Number.isFinite(ms)) return null
   return ms <= 0 ? 0 : Math.floor(ms / 86_400_000)
+}
+
+/** Compact unit labels for the "moved N ago" marker. */
+type SinceLabels = {
+  today: string
+  day: string
+  week: string
+  month: string
+  year: string
+  tooltip: string
+}
+
+/**
+ * How long ago the status last moved, in one or two characters: "idag", "6 d",
+ * "3 v", "5 mån", "2 år". The unit coarsens as the age grows, which is exactly
+ * how the team talks about it — nobody needs "43 days" when "6 v" answers the
+ * question. Null when the row was never stamped.
+ */
+function formatStatusAge(
+  changedAt: string | null,
+  nowMs: number,
+  labels: SinceLabels,
+): string | null {
+  if (!changedAt) return null
+  const ms = nowMs - new Date(changedAt).getTime()
+  if (!Number.isFinite(ms)) return null
+  const days = ms <= 0 ? 0 : Math.floor(ms / 86_400_000)
+  if (days === 0) return labels.today
+  if (days < 7) return `${days} ${labels.day}`
+  if (days < 30) return `${Math.floor(days / 7)} ${labels.week}`
+  if (days < 365) return `${Math.floor(days / 30)} ${labels.month}`
+  return `${Math.floor(days / 365)} ${labels.year}`
 }
 
 /**
@@ -545,6 +577,17 @@ export function EngagementsBoard() {
     [t],
   )
   const fiscalYearLabel = t("engagements.card.fiscalYear", "Fiscal year end")
+  const sinceLabels = React.useMemo<SinceLabels>(
+    () => ({
+      today: t("engagements.since.today", "today"),
+      day: t("engagements.since.day", "d"),
+      week: t("engagements.since.week", "w"),
+      month: t("engagements.since.month", "mo"),
+      year: t("engagements.since.year", "y"),
+      tooltip: t("engagements.since.tooltip", "Last status change"),
+    }),
+    [t],
+  )
   // Day-count badge wording — the count itself is per card.
   const ageLabels = React.useMemo(
     () => ({
@@ -920,6 +963,9 @@ export function EngagementsBoard() {
                           ageDays={daysInStatus(row, workflow, nowMs)}
                           ageLabels={ageLabels}
                           fiscalYearLabel={fiscalYearLabel}
+                          statusChangedAt={statusChangedAtOf(row, workflow)}
+                          sinceLabels={sinceLabels}
+                          nowMs={nowMs}
                           dragging={draggingId === row.id}
                           cleared={!!clearedOf(row, workflow)}
                           // Clearing is allowed from ANY column (not just the
@@ -1312,6 +1358,9 @@ const EngagementCard = React.memo(function EngagementCard({
   ageDays,
   ageLabels,
   fiscalYearLabel,
+  statusChangedAt,
+  sinceLabels,
+  nowMs,
 }: {
   row: EngagementBoardRow
   dragging: boolean
@@ -1330,8 +1379,16 @@ const EngagementCard = React.memo(function EngagementCard({
   ageLabels: { dayShort: string; tooltip: string }
   /** Tooltip for the fiscal-year-end line ("Bokslutsdatum"). */
   fiscalYearLabel: string
+  /** When this card last moved status, in the active workflow. */
+  statusChangedAt: string | null
+  sinceLabels: SinceLabels
+  nowMs: number
 }) {
   const stale = ageDays != null && ageDays >= AGE_WARN_DAYS
+  // The coloured day badge on a stale review card already *is* the time since
+  // the status moved — showing the neutral marker beside it would say the same
+  // thing twice, so it stands down there.
+  const since = stale ? null : formatStatusAge(statusChangedAt, nowMs, sinceLabels)
   return (
     <div
       draggable
@@ -1456,6 +1513,18 @@ const EngagementCard = React.memo(function EngagementCard({
             <CalendarClock className="size-3" />
             {row.deadline}
             {row.is_overdue ? ` · ${overdueLabel}` : ""}
+          </span>
+        ) : null}
+        {/* How long the card has sat where it is. Pushed to the far right so it
+            reads as a timestamp on the card rather than as another status, and
+            kept to a couple of characters — the exact date is in the tooltip. */}
+        {since ? (
+          <span
+            className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] tabular-nums text-muted-foreground"
+            title={`${sinceLabels.tooltip}: ${new Date(statusChangedAt!).toLocaleDateString("sv-SE")}`}
+          >
+            <History className="size-3" />
+            {since}
           </span>
         ) : null}
       </div>
