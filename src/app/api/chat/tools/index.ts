@@ -337,7 +337,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       "  - 'turnover_per_hour' → effective hourly rate (turnover ÷ hours). " +
       "Use only for explicit margin/profitability-per-engagement questions.\n" +
       "  - 'contract_value' → annualized recurring contract value (årsavtal). " +
-      "Read live from contract_accruals (per-contract total_ex_vat × billing " +
+      "Read live from contract_accruals (per-contract total_ex_vat_sek × billing " +
       "frequency, summed per active contract). This is the truth — the " +
       "monthly KPI rollup understates it for many customers.\n" +
       "  - 'hours' → total billed hours.\n" +

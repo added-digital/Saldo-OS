@@ -11,7 +11,7 @@
  *
  * Rules:
  *   - Sum over `is_active = true` contracts only.
- *   - Annualize via `annualizeContractTotal(total_ex_vat, period)`:
+ *   - Annualize via `annualizeContractTotal(total_ex_vat_sek, period)`:
  *       period '1' → ×12 (monthly)
  *       period '3' → ×4  (quarterly)
  *       else       → ×1  (annual / unknown)
@@ -38,7 +38,7 @@ type CustomerIdRow = {
 
 type AccrualRow = {
   fortnox_customer_number: string | null;
-  total_ex_vat: number | null;
+  total_ex_vat_sek: number | null;
   period: string | null;
 };
 
@@ -147,7 +147,7 @@ export async function fetchAnnualizedContractValuesByCustomerId(
     const { rows, error } = await drainPages<AccrualRow>(() =>
       supabase
         .from("contract_accruals")
-        .select("fortnox_customer_number, total_ex_vat, period")
+        .select("fortnox_customer_number, total_ex_vat_sek, period")
         .in("fortnox_customer_number", chunk)
         .eq("is_active", true),
     );
@@ -160,7 +160,7 @@ export async function fetchAnnualizedContractValuesByCustomerId(
     }
     for (const row of rows) {
       if (!row.fortnox_customer_number) continue;
-      const annualized = annualizeContractTotal(row.total_ex_vat, row.period);
+      const annualized = annualizeContractTotal(row.total_ex_vat_sek, row.period);
       const prev = annualizedByFortnox.get(row.fortnox_customer_number) ?? 0;
       annualizedByFortnox.set(
         row.fortnox_customer_number,

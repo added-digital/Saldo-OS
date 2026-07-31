@@ -15,6 +15,21 @@ export function invoiceTurnoverStrictExVat(input: {
   return { amount: null, fromTotal: false };
 }
 
+/**
+ * SEK projection of the ex-VAT turnover. `total_ex_vat_sek` is a generated
+ * column, so it is present whenever `total_ex_vat` is; the fallback only covers
+ * callers that select the raw column alone (SEK invoices, where the two are
+ * equal anyway).
+ */
+export function invoiceTurnoverSek(input: {
+  total_ex_vat: number | null;
+  total_ex_vat_sek?: number | null;
+}): number | null {
+  if (input.total_ex_vat_sek != null) return Number(input.total_ex_vat_sek);
+  if (input.total_ex_vat != null) return Number(input.total_ex_vat);
+  return null;
+}
+
 export function mapInvoicesToDetailRows(
   invoices: InvoiceDetailSource[],
   options?: {
@@ -53,6 +68,7 @@ export function mapInvoicesToDetailRows(
       invoiceDate: invoice.invoice_date,
       dueDate: includeDueDate ? invoice.due_date ?? null : null,
       turnover: turnover.amount,
+      turnoverSek: invoiceTurnoverSek(invoice),
       turnoverFromTotal: turnover.fromTotal,
       currencyCode: invoice.currency_code ?? "SEK",
       status,

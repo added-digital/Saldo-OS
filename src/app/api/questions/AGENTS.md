@@ -21,7 +21,7 @@ Question routes handle generated SQL and document/CRM RAG flows. They predate or
 - Avoid personal contact detail exposure unless a route explicitly allows it.
 
 ## Reporting Rules
-- Use `total_ex_vat` for turnover and active contracts for contract KPIs.
+- Use `total_ex_vat_sek` for turnover and active contracts for contract KPIs.
 - Prefer `customer_kpis` for monthly KPI totals.
 - Do not use raw invoice rows for high-level KPI totals unless clearly labeled as raw.
 

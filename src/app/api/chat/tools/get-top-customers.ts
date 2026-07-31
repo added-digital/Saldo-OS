@@ -703,7 +703,7 @@ function formatRow(
 // contract_value helper — reads `contract_accruals` directly and annualizes.
 //
 // Mirrors what the dashboard's `/reports` page does for its KPI card
-// (annualizeContractTotal of total_ex_vat over period, filtered by
+// (annualizeContractTotal of total_ex_vat_sek over period, filtered by
 // is_active=true, summed per customer). Bypasses the broken customer_kpis
 // rollup until the sync is repaired.
 // ---------------------------------------------------------------------------
@@ -718,7 +718,7 @@ type CustomerScopeRow = {
 
 type ContractAccrualRow = {
   fortnox_customer_number: string | null;
-  total_ex_vat: number | null;
+  total_ex_vat_sek: number | null;
   period: string | null;
 };
 
@@ -799,7 +799,7 @@ async function runContractValuePath(opts: ContractValuePathInput) {
       "contract_accruals (live, sum of annualized active contracts per customer)",
     notes: [
       "contract_value is computed live from contract_accruals: SUM of " +
-        "annualizeContractTotal(total_ex_vat, period) across is_active=true " +
+        "annualizeContractTotal(total_ex_vat_sek, period) across is_active=true " +
         "contracts per customer. Period codes: '1' → ×12 (monthly), '3' → ×4 " +
         "(quarterly), else ×1 (annual).",
     ],
@@ -823,7 +823,7 @@ async function runContractValuePath(opts: ContractValuePathInput) {
     const { rows, error } = await drainPages<ContractAccrualRow>(() =>
       supabase
         .from("contract_accruals")
-        .select("fortnox_customer_number, total_ex_vat, period")
+        .select("fortnox_customer_number, total_ex_vat_sek, period")
         .in("fortnox_customer_number", chunk)
         .eq("is_active", true),
     );
@@ -831,7 +831,7 @@ async function runContractValuePath(opts: ContractValuePathInput) {
 
     for (const row of rows) {
       if (!row.fortnox_customer_number) continue;
-      const annualized = annualizeContractTotal(row.total_ex_vat, row.period);
+      const annualized = annualizeContractTotal(row.total_ex_vat_sek, row.period);
       const prev = sumsByFortnox.get(row.fortnox_customer_number) ?? 0;
       sumsByFortnox.set(row.fortnox_customer_number, prev + annualized);
     }

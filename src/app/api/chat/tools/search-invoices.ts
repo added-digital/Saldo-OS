@@ -29,7 +29,8 @@ export const searchInvoices: ToolHandler<SearchInvoicesInput> = async (
     .from("invoices")
     .select(
       "id, document_number, customer_id, customer_name, invoice_date, " +
-        "final_pay_date, total_ex_vat, total, currency_code",
+        "final_pay_date, total_ex_vat, total, total_ex_vat_sek, total_sek, " +
+        "currency_code",
       // total_count surfaces the unfiltered-by-pagination row count so the
       // model knows when its slice is a partial view.
       { count: "exact" },
@@ -60,6 +61,10 @@ export const searchInvoices: ToolHandler<SearchInvoicesInput> = async (
     final_pay_date: string | null;
     total_ex_vat: number | null;
     total: number | null;
+    // Amounts above are as invoiced (currency_code); these are the SEK values
+    // the reports aggregate, so the model never sums EUR into a kronor answer.
+    total_ex_vat_sek: number | null;
+    total_sek: number | null;
     currency_code: string;
   };
   const rawRows = (data ?? []) as unknown as InvoiceRow[];
@@ -70,6 +75,8 @@ export const searchInvoices: ToolHandler<SearchInvoicesInput> = async (
     due_date: row.final_pay_date ?? null,
     total_ex_vat: row.total_ex_vat,
     total: row.total,
+    total_ex_vat_sek: row.total_ex_vat_sek,
+    total_sek: row.total_sek,
     currency_code: row.currency_code,
   }));
 

@@ -213,7 +213,9 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
 
       type InvoiceRow = {
         customer_id: string | null;
-        total_ex_vat: number | null;
+        // SEK projection: invoices may be issued in EUR/USD and the summary is
+        // always reported in kronor.
+        total_ex_vat_sek: number | null;
       };
 
       const invoicesByCustomer = new Map<
@@ -228,7 +230,7 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
             turnover: 0,
             invoiceCount: 0,
           };
-          prev.turnover += Number(row.total_ex_vat ?? 0);
+          prev.turnover += Number(row.total_ex_vat_sek ?? 0);
           prev.invoiceCount += 1;
           invoicesByCustomer.set(row.customer_id, prev);
         }
@@ -239,7 +241,7 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
           const { rows, error } = await drainPages<InvoiceRow>(() =>
             supabase
               .from("invoices")
-              .select("customer_id, total_ex_vat")
+              .select("customer_id, total_ex_vat_sek")
               .gte("invoice_date", monthStart)
               .lte("invoice_date", monthEnd),
           );
@@ -253,7 +255,7 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
             const { rows, error } = await drainPages<InvoiceRow>(() =>
               supabase
                 .from("invoices")
-                .select("customer_id, total_ex_vat")
+                .select("customer_id, total_ex_vat_sek")
                 .gte("invoice_date", monthStart)
                 .lte("invoice_date", monthEnd)
                 .in("customer_id", chunk),
@@ -478,7 +480,7 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
   // annualized contract commitment for many customers (top customer reported
   // as 183 666 kr/år when the raw-derived value is 1 288 866). Until the
   // sync is fixed we recompute contract_value here the same way the reports
-  // dashboard does: SUM(annualizeContractTotal(total_ex_vat, period)) across
+  // dashboard does: SUM(annualizeContractTotal(total_ex_vat_sek, period)) across
   // is_active=true rows in contract_accruals, scoped to the in-scope
   // customers.
   // -------------------------------------------------------------------------
@@ -586,12 +588,12 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
         for (const chunk of chunkArray(fortnoxNumbers, 100)) {
           const { rows, error } = await drainPages<{
             fortnox_customer_number: string | null;
-            total_ex_vat: number | null;
+            total_ex_vat_sek: number | null;
             period: string | null;
           }>(() =>
             supabase
               .from("contract_accruals")
-              .select("fortnox_customer_number, total_ex_vat, period")
+              .select("fortnox_customer_number, total_ex_vat_sek, period")
               .in("fortnox_customer_number", chunk)
               .eq("is_active", true),
           );
@@ -599,7 +601,7 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
           for (const row of rows) {
             if (!row.fortnox_customer_number) continue;
             const annualized = annualizeContractTotal(
-              row.total_ex_vat,
+              row.total_ex_vat_sek,
               row.period,
             );
             const prev =

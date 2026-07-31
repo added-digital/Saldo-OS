@@ -30,9 +30,13 @@ invoices
 - customer_name (text)
 - fortnox_customer_number (text)
 - invoice_date (date)
-- total_ex_vat (numeric)
-- total (numeric)
-- balance (numeric)
+- currency_code (text)
+- total_ex_vat (numeric, in currency_code)
+- total (numeric, in currency_code)
+- balance (numeric, in currency_code)
+- total_ex_vat_sek (numeric, converted to SEK)
+- total_sek (numeric, converted to SEK)
+- balance_sek (numeric, converted to SEK)
 
 time_reports
 - id (uuid)
@@ -53,8 +57,11 @@ contract_accruals
 - is_active (boolean)
 - start_date (date)
 - end_date (date)
-- total_ex_vat (numeric)
-- total (numeric)
+- currency_code (text)
+- total_ex_vat (numeric, in currency_code)
+- total (numeric, in currency_code)
+- total_ex_vat_sek (numeric, converted to SEK)
+- total_sek (numeric, converted to SEK)
 - period (text)
 
 customer_kpis
@@ -94,6 +101,7 @@ Rules:
 - Use only SELECT queries.
 - Use only listed tables.
 - If user/profile filter is required, use placeholder {user_id}.
-- Prefer ex-VAT values (`total_ex_vat`) for turnover whenever available.
+- Prefer ex-VAT values for turnover whenever available.
+- Always SUM the `_sek` columns (`total_ex_vat_sek`, `total_sek`, `balance_sek`). The plain columns are in each document's own currency and must never be summed across customers.
 - Use active contracts only (`is_active = true`) for contract totals and KPI-related contract logic.
 - Use LIMIT in result sets.

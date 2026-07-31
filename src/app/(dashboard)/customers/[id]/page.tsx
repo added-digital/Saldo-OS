@@ -94,7 +94,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
-import { formatDate } from "@/lib/utils"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  BASE_CURRENCY,
+  SUPPORTED_CURRENCIES,
+  formatDate,
+  normalizeCurrencyCode,
+} from "@/lib/utils"
 
 type ContactWithLink = CustomerContact & {
   link_id: string
@@ -133,6 +145,9 @@ export default function CustomerDetailPage({
     if (searchParams.get("onboarding") === "1") setOnboarding(true)
   }, [searchParams])
   const [customer, setCustomer] = React.useState<Customer | null>(null)
+  const [savingCurrency, setSavingCurrency] = React.useState(false)
+  // code -> SEK per unit, for the "1 EUR = 11.30 kr" hint under the picker.
+  const [currencyRates, setCurrencyRates] = React.useState<Record<string, number>>({})
   const [accountManager, setAccountManager] = React.useState<Profile | null>(
     null,
   )
@@ -185,6 +200,17 @@ export default function CustomerDetailPage({
 
     const c = customerData as unknown as Customer | null
     setCustomer(c)
+
+    const { data: rateRows } = await supabase
+      .from("currency_rates")
+      .select("code, rate_to_sek")
+    setCurrencyRates(
+      Object.fromEntries(
+        ((rateRows ?? []) as Array<{ code: string; rate_to_sek: number }>).map(
+          (row) => [row.code, Number(row.rate_to_sek)],
+        ),
+      ),
+    )
 
     // Active SIE connection? Drives the "Sync Customer" vs "Connected" button.
     const { count: sieCount } = await supabase
@@ -845,6 +871,33 @@ export default function CustomerDetailPage({
     if (ok) toast.success(t("customers.detail.changesSaved", "Changes saved"))
   }
 
+  // Flagging the currency only changes what NEW documents without a currency of
+  // their own fall back to, plus how amounts are labelled here. Invoices already
+  // synced keep the currency and rate Fortnox gave them.
+  async function handleCurrencyChange(nextCurrency: string) {
+    if (!customer) return
+    const previous = customer.default_currency
+    setSavingCurrency(true)
+    setCustomer({ ...customer, default_currency: nextCurrency })
+
+    const supabase = createClient()
+    const { error } = await supabase
+      .from("customers")
+      .update({ default_currency: nextCurrency } as never)
+      .eq("id", id)
+    setSavingCurrency(false)
+
+    if (error) {
+      setCustomer({ ...customer, default_currency: previous })
+      toast.error(
+        t("customers.detail.currencySaveFailed", "Failed to update currency"),
+      )
+      return
+    }
+
+    toast.success(t("customers.detail.currencySaved", "Currency updated"))
+  }
+
   function handleDiscardAll() {
     setPendingSegmentAdds([])
     setPendingSegmentRemoveIds([])
@@ -1370,6 +1423,51 @@ export default function CustomerDetailPage({
             </div>
 
             <Separator />
+
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">
+                {t("customers.detail.currency", "Invoicing currency")}
+              </p>
+              <Select
+                value={normalizeCurrencyCode(customer.default_currency)}
+                onValueChange={handleCurrencyChange}
+                disabled={savingCurrency}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SUPPORTED_CURRENCIES.map((code) => (
+                    <SelectItem key={code} value={code}>
+                      {code}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {normalizeCurrencyCode(customer.default_currency) === BASE_CURRENCY
+                  ? t(
+                      "customers.detail.currencyHintBase",
+                      "Invoiced in kronor. Reports show amounts as invoiced.",
+                    )
+                  : t(
+                      "customers.detail.currencyHintForeign",
+                      "Invoiced in {currency}. Reports convert to SEK at {rate} kr per {currency}.",
+                    )
+                      .replace(
+                        /\{currency\}/g,
+                        normalizeCurrencyCode(customer.default_currency),
+                      )
+                      .replace(
+                        "{rate}",
+                        String(
+                          currencyRates[
+                            normalizeCurrencyCode(customer.default_currency)
+                          ] ?? "—",
+                        ),
+                      )}
+              </p>
+            </div>
 
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">

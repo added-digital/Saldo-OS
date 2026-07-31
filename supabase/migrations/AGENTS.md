@@ -23,7 +23,7 @@ Migrations define schema, RLS policies, sync orchestration, reporting/KPI functi
 - Use `gen_random_uuid()` UUID primary keys unless an existing table pattern differs.
 - Include `created_at` and `updated_at` where mutable app records need audit timestamps.
 - Reuse `update_updated_at()` triggers for mutable tables.
-- Reporting totals should preserve `total_ex_vat` and active-contract KPI rules.
+- Reporting totals should preserve ex-VAT and active-contract KPI rules, and sum the `_sek` columns so foreign-currency documents convert (migration 00110).
 - SQL functions used by generated SQL/RAG must remain read-only or tightly allowlisted.
 
 ## Sync And Vector Rules

@@ -432,10 +432,10 @@ function buildGeneralReportFallbackSql(input: {
       "SELECT",
       "  (SELECT COUNT(*) FROM scoped_customers) AS active_customers,",
       "  (SELECT COUNT(*) FROM current_month) AS current_month_invoice_count,",
-      "  (SELECT COALESCE(SUM(total_ex_vat), 0) FROM current_month) AS current_month_turnover_ex_vat,",
-      "  (SELECT COALESCE(SUM(balance), 0) FROM current_month) AS current_month_outstanding_balance,",
+      "  (SELECT COALESCE(SUM(total_ex_vat_sek), 0) FROM current_month) AS current_month_turnover_ex_vat,",
+      "  (SELECT COALESCE(SUM(balance_sek), 0) FROM current_month) AS current_month_outstanding_balance,",
       "  (SELECT COUNT(*) FROM rolling_12) AS rolling_12_invoice_count,",
-      "  (SELECT COALESCE(SUM(total_ex_vat), 0) FROM rolling_12) AS rolling_12_turnover_ex_vat",
+      "  (SELECT COALESCE(SUM(total_ex_vat_sek), 0) FROM rolling_12) AS rolling_12_turnover_ex_vat",
       "LIMIT 1",
     ].join("\n");
   }
@@ -466,10 +466,10 @@ function buildGeneralReportFallbackSql(input: {
     "SELECT",
     "  (SELECT COUNT(*) FROM active_customers) AS active_customers,",
     "  (SELECT COUNT(*) FROM current_month) AS current_month_invoice_count,",
-    "  (SELECT COALESCE(SUM(total_ex_vat), 0) FROM current_month) AS current_month_turnover_ex_vat,",
-    "  (SELECT COALESCE(SUM(balance), 0) FROM current_month) AS current_month_outstanding_balance,",
+    "  (SELECT COALESCE(SUM(total_ex_vat_sek), 0) FROM current_month) AS current_month_turnover_ex_vat,",
+    "  (SELECT COALESCE(SUM(balance_sek), 0) FROM current_month) AS current_month_outstanding_balance,",
     "  (SELECT COUNT(*) FROM rolling_12) AS rolling_12_invoice_count,",
-    "  (SELECT COALESCE(SUM(total_ex_vat), 0) FROM rolling_12) AS rolling_12_turnover_ex_vat",
+    "  (SELECT COALESCE(SUM(total_ex_vat_sek), 0) FROM rolling_12) AS rolling_12_turnover_ex_vat",
     "LIMIT 1",
   ].join("\n");
 }
@@ -1509,7 +1509,8 @@ async function callOpenAiForSql(input: {
     "If the question is not about CRM or reporting data, return JSON with sql as an empty string.",
     "Never query or return direct personal contact details such as email addresses, phone numbers, linkedin links, or free-text notes.",
     "Do not use contact tables for this endpoint.",
-    "For turnover values, prefer total_ex_vat when available.",
+    "For turnover values, prefer total_ex_vat_sek (SEK) when available; "
+    + "total_ex_vat is in the invoice's own currency_code.",
     "For contract totals or KPI questions, use active contract_accruals only.",
     "For monthly/rolling KPI reporting questions, prefer customer_kpis (period_type = 'month') for invoice_count, turnover, and hours so results align with the Reports dashboard.",
     ...scopeInstructions,

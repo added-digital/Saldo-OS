@@ -290,7 +290,7 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
 
       type InvoiceRow = {
         customer_id: string | null;
-        total_ex_vat: number | null;
+        total_ex_vat_sek: number | null;
       };
 
       const invoicesByCustomer = new Map<
@@ -303,7 +303,7 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
           const { rows, error } = await drainPages<InvoiceRow>(() =>
             supabase
               .from("invoices")
-              .select("customer_id, total_ex_vat")
+              .select("customer_id, total_ex_vat_sek")
               .gte("invoice_date", monthStart)
               .lte("invoice_date", monthEnd)
               .in("customer_id", chunk),
@@ -315,7 +315,7 @@ export const getKpiByConsultant: ToolHandler<GetKpiByConsultantInput> = async (
               turnover: 0,
               invoiceCount: 0,
             };
-            prev.turnover += Number(row.total_ex_vat ?? 0);
+            prev.turnover += Number(row.total_ex_vat_sek ?? 0);
             prev.invoiceCount += 1;
             invoicesByCustomer.set(row.customer_id, prev);
           }

@@ -22,7 +22,7 @@ This file applies to `src/app/(dashboard)` and its subdirectories unless a deepe
 - Prefer `useTranslation` with fallback strings for visible dashboard copy.
 
 ## Data Display Rules
-- Prefer ex-VAT turnover values (`total_ex_vat`) whenever available.
+- Prefer ex-VAT turnover values whenever available, and aggregate `total_ex_vat_sek` so EUR/USD invoices convert to kronor.
 - Month labels should be English 3-letter format with leading capital letter.
 - For unknown cost center fallback text, include identifier when available.
 - Contract-related KPI totals should represent active contracts.

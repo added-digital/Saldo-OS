@@ -175,6 +175,11 @@ Deno.serve(async (req) => {
             continue
           }
 
+          const currencyCode =
+            c.Currency != null
+              ? String(c.Currency).trim().toUpperCase() || "SEK"
+              : "SEK"
+
           const mapped = {
             fortnox_customer_number: (c.CustomerNumber as string) ?? "",
             contract_number: contractNumber,
@@ -188,7 +193,13 @@ Deno.serve(async (req) => {
             is_active: true,
             total_ex_vat: resolveExVatTotal(c),
             total: c.Total != null ? Number(c.Total) : null,
-            currency_code: (c.Currency as string) ?? "SEK",
+            currency_code: currencyCode,
+            // Contracts carry no CurrencyRate in Fortnox (they are forward-
+            // looking, not booked), so the rate is left to the stamp_currency_rate
+            // trigger, which applies the current currency_rates value. Sending
+            // null also lets an edited rate re-stamp the row later.
+            currency_rate: null,
+            currency_rate_source: null,
             raw_data: c,
           }
 
@@ -248,7 +259,7 @@ Deno.serve(async (req) => {
       while (true) {
         const { data: contractRows, error: contractError } = await supabase
           .from("contract_accruals")
-          .select("fortnox_customer_number, total_ex_vat, period, is_active")
+          .select("fortnox_customer_number, total_ex_vat_sek, period, is_active")
           .order("id", { ascending: true })
           .range(offset, offset + KPI_BATCH_SIZE - 1)
 
@@ -258,7 +269,7 @@ Deno.serve(async (req) => {
 
         const rows = (contractRows ?? []) as Array<{
           fortnox_customer_number: string | null
-          total_ex_vat: number | null
+          total_ex_vat_sek: number | null
           period: string | null
           is_active: boolean
         }>
@@ -270,7 +281,7 @@ Deno.serve(async (req) => {
           const existing = valueByCustomer.get(row.fortnox_customer_number) ?? 0
           valueByCustomer.set(
             row.fortnox_customer_number,
-            existing + annualizeContractTotal(row.total_ex_vat, row.period)
+            existing + annualizeContractTotal(row.total_ex_vat_sek, row.period)
           )
         }
 
