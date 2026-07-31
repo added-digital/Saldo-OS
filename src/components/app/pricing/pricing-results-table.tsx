@@ -178,7 +178,23 @@ export function PricingResultsTable({
           (r.databaseNumber !== "" && digits !== "" && r.databaseNumber.includes(digits)) ||
           (r.fortnoxCustomerNumber ?? "").toLowerCase().includes(q),
       )
-    if (onlyReview) list = list.filter((r) => r.missingConfig || r.dirty)
+    // "Att granska / ändrade" is the working list: everything that still needs a
+    // human decision this month, plus whatever you have edited but not saved.
+    //   • missingConfig — never configured, i.e. the "Ny" badge
+    //   • nvrOnly       — Digital Aktiebok and nothing else on their name
+    //   • Kolla upp / Avtal Fortnox — statuses that mean "unresolved"
+    //   • dirty         — local unsaved edits, so a row can't vanish mid-edit
+    // Statuses that represent a settled decision (OK, Faktureras ej, ÅR, …) stay
+    // out; reach those through the Status filter.
+    if (onlyReview)
+      list = list.filter(
+        (r) =>
+          r.missingConfig ||
+          r.nvrOnly ||
+          r.status === "Kolla upp" ||
+          r.status === "Avtal Fortnox" ||
+          r.dirty,
+      )
     if (onlyLoss) list = list.filter((r) => netOf(r) < 0)
     if (statusFilter.length)
       list = list.filter((r) => r.status != null && statusFilter.includes(r.status))
