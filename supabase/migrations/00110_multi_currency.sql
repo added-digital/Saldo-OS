@@ -180,14 +180,20 @@ BEGIN
   -- pass had already filled in and silently fall back to today's table rate —
   -- and finalized invoices are skipped by the detail pass, so it would never
   -- come back. Keep the booked rate unless the currency itself changed.
-  IF TG_OP = 'UPDATE'
-     AND NEW.currency_rate IS NULL
-     AND OLD.currency_rate_source = 'fortnox'
-     AND OLD.currency_code = NEW.currency_code
-  THEN
-    NEW.currency_rate := OLD.currency_rate;
-    NEW.currency_rate_source := 'fortnox';
-    RETURN NEW;
+  --
+  -- OLD is only touchable under TG_OP = 'UPDATE'; on INSERT it is unassigned
+  -- and any reference raises. SQL does not promise short-circuit evaluation of
+  -- AND, so the TG_OP test has to be its own enclosing IF rather than another
+  -- conjunct beside OLD.
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.currency_rate IS NULL
+       AND OLD.currency_rate_source = 'fortnox'
+       AND OLD.currency_code = NEW.currency_code
+    THEN
+      NEW.currency_rate := OLD.currency_rate;
+      NEW.currency_rate_source := 'fortnox';
+      RETURN NEW;
+    END IF;
   END IF;
 
   IF NEW.currency_rate IS NULL OR NEW.currency_rate <= 0 THEN
