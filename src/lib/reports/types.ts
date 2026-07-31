@@ -173,10 +173,7 @@ export type InvoiceDetailRow = {
   customerName?: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
-  /** As invoiced, in `currencyCode`. */
   turnover: number | null;
-  /** The same amount converted to SEK. Equals `turnover` for SEK invoices. */
-  turnoverSek: number | null;
   turnoverFromTotal: boolean;
   currencyCode: string;
   status?: "paid" | "pending" | "overdue";
@@ -190,8 +187,6 @@ export type InvoiceDetailSource = {
   due_date?: string | null;
   total_ex_vat: number | null;
   total: number | null;
-  total_ex_vat_sek?: number | null;
-  total_sek?: number | null;
   currency_code: string | null;
   balance?: number | null;
 };

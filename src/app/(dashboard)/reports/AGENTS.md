@@ -15,7 +15,7 @@ Reports are the largest dashboard hotspot. Keep new business rules in `src/lib/r
 | Shared table | `src/components/app/data-table.tsx` |
 
 ## Data Rules
-- Use `total_ex_vat_sek` for turnover totals and label any exception clearly. Per-document tables may show the amount as invoiced, with the currency named.
+- Use `total_ex_vat` for turnover and label any exception clearly.
 - Contract KPI totals use active contracts only.
 - Customer matching may require both `customer_id` and Fortnox customer number.
 - Deduplicate invoice aggregates by invoice id when joining detail/row data.

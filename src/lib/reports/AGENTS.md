@@ -19,7 +19,7 @@ Reporting helpers back the dashboard reports page and API/chat KPI tools. Keep b
 | `accruals.ts` | Contract total annualization. |
 
 ## Data Rules
-- Use ex-VAT turnover (`total_ex_vat_sek` for anything summed); do not fall back to gross `total` unless the UI explicitly labels that difference.
+- Use `total_ex_vat` for turnover; do not fall back to gross `total` unless the UI explicitly labels that difference.
 - Contract KPI totals use active contracts only.
 - Customer matching may require both `customer_id` and Fortnox customer number.
 - Deduplicate invoice aggregates by invoice id when joining through row/detail data.

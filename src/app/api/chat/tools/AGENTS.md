@@ -21,7 +21,7 @@ This directory registers Anthropic tool schemas and handlers for authenticated C
 ## Reporting Rules
 - KPI totals come from `customer_kpis` or dashboard-aligned rollups.
 - `search_invoices` is for raw row listing, not totals or rankings.
-- Use `total_ex_vat_sek` (SEK) for turnover, active customer filters, active contract policy, and Fortnox cost-center ownership consistently.
+- Use `total_ex_vat`, active customer filters, active contract policy, and Fortnox cost-center ownership consistently.
 
 ## Anti-Patterns
 - Do not add verbose tool results that bloat model context.

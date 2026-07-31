@@ -80,11 +80,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  cn,
-  formatAmountInCurrency,
-  isBaseCurrency,
-} from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/use-translation";
 import {
   REPORTS_MANAGER_ALIAS,
@@ -1048,52 +1044,29 @@ export default function ReportsPage() {
     );
   }
 
-/**
- * `currency` is only passed by the per-document tables. Aggregates are always
- * SEK, so leaving it out keeps the plain kronor rendering; a foreign-currency
- * document instead leads with the amount as invoiced and shows the SEK value it
- * contributes to the totals underneath.
- */
 function renderTurnoverCell(
   value: number | null,
   onClick?: () => void,
   showNotExVatLabel = false,
-  currency?: { code: string | null; sekValue: number | null },
 ) {
   if (value == null) {
     return <span className="text-muted-foreground">{t("reports.missing", "missing")}</span>;
   }
 
-  const foreign = currency != null && !isBaseCurrency(currency.code);
-  const baseText = foreign
-    ? formatAmountInCurrency(value, currency?.code)
-    : sekFormatter.format(value);
-  const valueText = `${baseText}${showNotExVatLabel ? ` ${t("reports.notExVat", "(NOT ex VAT)")}` : ""}`;
+  const valueText = `${sekFormatter.format(value)}${showNotExVatLabel ? ` ${t("reports.notExVat", "(NOT ex VAT)")}` : ""}`;
 
-  const body =
-    value === 0 || !onClick ? (
-      <span>{valueText}</span>
-    ) : (
-      <button
-        type="button"
-        onClick={onClick}
-        className="font-medium underline underline-offset-2 hover:text-foreground"
-      >
-        {valueText}
-      </button>
-    );
-
-  if (!foreign) return body;
+  if (value === 0 || !onClick) {
+    return <span>{valueText}</span>;
+  }
 
   return (
-    <span className="flex flex-col leading-tight">
-      {body}
-      <span className="text-xs text-muted-foreground">
-        {currency?.sekValue != null
-          ? `≈ ${sekFormatter.format(currency.sekValue)}`
-          : t("reports.currency.noRate", "no rate")}
-      </span>
-    </span>
+    <button
+      type="button"
+      onClick={onClick}
+      className="font-medium underline underline-offset-2 hover:text-foreground"
+    >
+      {valueText}
+    </button>
   );
 }
 
@@ -1716,8 +1689,6 @@ function renderWorkloadShareCell(percentage: number) {
       due_date: string | null;
       total_ex_vat: number | null;
       total: number | null;
-      total_ex_vat_sek: number | null;
-      total_sek: number | null;
       currency_code: string | null;
     }> = [];
 
@@ -1725,7 +1696,7 @@ function renderWorkloadShareCell(percentage: number) {
       supabase
         .from("invoices")
         .select(
-          "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, total_ex_vat_sek, total_sek, currency_code, balance",
+          "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, currency_code, balance",
         ),
     );
 
@@ -1743,8 +1714,6 @@ function renderWorkloadShareCell(percentage: number) {
         due_date: string | null;
         total_ex_vat: number | null;
         total: number | null;
-        total_ex_vat_sek: number | null;
-        total_sek: number | null;
         currency_code: string | null;
       }>;
     }
@@ -1754,7 +1723,7 @@ function renderWorkloadShareCell(percentage: number) {
         supabase
           .from("invoices")
           .select(
-            "id, document_number, customer_name, invoice_date, total_ex_vat, total, total_ex_vat_sek, total_sek, currency_code, balance",
+            "id, document_number, customer_name, invoice_date, total_ex_vat, total, currency_code, balance",
           ),
       );
 
@@ -1770,8 +1739,6 @@ function renderWorkloadShareCell(percentage: number) {
         invoice_date: string | null;
         total_ex_vat: number | null;
         total: number | null;
-        total_ex_vat_sek: number | null;
-        total_sek: number | null;
         currency_code: string | null;
       }>;
 
@@ -1812,7 +1779,7 @@ function renderWorkloadShareCell(percentage: number) {
     const { data, error } = await createClient()
       .from("contract_accruals")
       .select(
-        "id, contract_number, description, period, start_date, end_date, total_ex_vat, total, total_ex_vat_sek, total_sek, currency_code, is_active",
+        "id, contract_number, description, period, start_date, end_date, total_ex_vat, total, is_active",
       )
       .eq("fortnox_customer_number", customer.fortnox_customer_number)
       .order("start_date", { ascending: false });
@@ -1863,8 +1830,6 @@ function renderWorkloadShareCell(percentage: number) {
       due_date: string | null;
       total_ex_vat: number | null;
       total: number | null;
-      total_ex_vat_sek: number | null;
-      total_sek: number | null;
       currency_code: string | null;
     }> = [];
 
@@ -1872,7 +1837,7 @@ function renderWorkloadShareCell(percentage: number) {
       supabase
         .from("invoices")
         .select(
-          "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, total_ex_vat_sek, total_sek, currency_code, balance",
+          "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, currency_code, balance",
         ),
     );
 
@@ -1890,8 +1855,6 @@ function renderWorkloadShareCell(percentage: number) {
         due_date: string | null;
         total_ex_vat: number | null;
         total: number | null;
-        total_ex_vat_sek: number | null;
-        total_sek: number | null;
         currency_code: string | null;
       }>;
     }
@@ -1901,7 +1864,7 @@ function renderWorkloadShareCell(percentage: number) {
         supabase
           .from("invoices")
           .select(
-            "id, document_number, customer_name, invoice_date, total_ex_vat, total, total_ex_vat_sek, total_sek, currency_code, balance",
+            "id, document_number, customer_name, invoice_date, total_ex_vat, total, currency_code, balance",
           ),
       );
 
@@ -1917,8 +1880,6 @@ function renderWorkloadShareCell(percentage: number) {
         invoice_date: string | null;
         total_ex_vat: number | null;
         total: number | null;
-        total_ex_vat_sek: number | null;
-        total_sek: number | null;
         currency_code: string | null;
       }>;
 
@@ -1978,8 +1939,6 @@ function renderWorkloadShareCell(percentage: number) {
       due_date: string | null;
       total_ex_vat: number | null;
       total: number | null;
-      total_ex_vat_sek: number | null;
-      total_sek: number | null;
       currency_code: string | null;
     }> = [];
 
@@ -1987,7 +1946,7 @@ function renderWorkloadShareCell(percentage: number) {
       supabase
         .from("invoices")
         .select(
-          "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, total_ex_vat_sek, total_sek, currency_code, balance",
+          "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, currency_code, balance",
         ),
     );
 
@@ -2005,8 +1964,6 @@ function renderWorkloadShareCell(percentage: number) {
         due_date: string | null;
         total_ex_vat: number | null;
         total: number | null;
-        total_ex_vat_sek: number | null;
-        total_sek: number | null;
         currency_code: string | null;
       }>;
     }
@@ -2016,7 +1973,7 @@ function renderWorkloadShareCell(percentage: number) {
         supabase
           .from("invoices")
           .select(
-            "id, document_number, customer_name, invoice_date, total_ex_vat, total, total_ex_vat_sek, total_sek, currency_code, balance",
+            "id, document_number, customer_name, invoice_date, total_ex_vat, total, currency_code, balance",
           ),
       );
 
@@ -2032,8 +1989,6 @@ function renderWorkloadShareCell(percentage: number) {
         invoice_date: string | null;
         total_ex_vat: number | null;
         total: number | null;
-        total_ex_vat_sek: number | null;
-        total_sek: number | null;
         currency_code: string | null;
       }>).map((invoice) => ({
         ...invoice,
@@ -2136,8 +2091,6 @@ function renderWorkloadShareCell(percentage: number) {
         due_date: string | null;
         total_ex_vat: number | null;
         total: number | null;
-        total_ex_vat_sek: number | null;
-        total_sek: number | null;
         currency_code: string | null;
         balance: number | null;
       }>(() =>
@@ -2145,7 +2098,7 @@ function renderWorkloadShareCell(percentage: number) {
           supabase
             .from("invoices")
             .select(
-              "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, total_ex_vat_sek, total_sek, currency_code, balance",
+              "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, currency_code, balance",
             ),
         ),
       );
@@ -2180,8 +2133,6 @@ function renderWorkloadShareCell(percentage: number) {
         due_date: string | null;
         total_ex_vat: number | null;
         total: number | null;
-        total_ex_vat_sek: number | null;
-        total_sek: number | null;
         currency_code: string | null;
         balance: number | null;
       }>(() =>
@@ -2189,7 +2140,7 @@ function renderWorkloadShareCell(percentage: number) {
           supabase
             .from("invoices")
             .select(
-              "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, total_ex_vat_sek, total_sek, currency_code, balance",
+              "id, document_number, customer_name, invoice_date, due_date, total_ex_vat, total, currency_code, balance",
             )
             .in("fortnox_customer_number", chunk),
         ),
@@ -2733,7 +2684,7 @@ function renderWorkloadShareCell(percentage: number) {
 
         const { data: contractRows, error: contractError } = await supabase
           .from("contract_accruals")
-          .select("total_ex_vat_sek, total_sek, period")
+          .select("total_ex_vat, total, period")
           .in("fortnox_customer_number", numberChunk)
           .eq("is_active", true);
 
@@ -2742,16 +2693,13 @@ function renderWorkloadShareCell(percentage: number) {
         }
 
         const rows = (contractRows ?? []) as Array<{
-          total_ex_vat_sek: number | null;
-          total_sek: number | null;
+          total_ex_vat: number | null;
+          total: number | null;
           period: string | null;
         }>;
 
         for (const row of rows) {
-          contractValue += annualizeContractTotal(
-            row.total_ex_vat_sek,
-            row.period,
-          );
+          contractValue += annualizeContractTotal(row.total_ex_vat, row.period);
         }
       }
 
@@ -3385,11 +3333,11 @@ function renderWorkloadShareCell(percentage: number) {
         const rows = await fetchAllPages<{
           id: string;
           customer_id: string | null;
-          total_ex_vat_sek: number | null;
+          total_ex_vat: number | null;
         }>(() =>
           supabase
             .from("invoices")
-            .select("id, customer_id, total_ex_vat_sek")
+            .select("id, customer_id, total_ex_vat")
             .in("customer_id", idChunk)
             .gte("invoice_date", rollingWindow.from)
             .lte("invoice_date", rollingWindow.to),
@@ -3402,7 +3350,7 @@ function renderWorkloadShareCell(percentage: number) {
           const current =
             totalsByCustomer.get(row.customer_id) ??
             createEmptySummaryRow(row.customer_id);
-          current.turnover += Number(row.total_ex_vat_sek ?? 0);
+          current.turnover += Number(row.total_ex_vat ?? 0);
           totalsByCustomer.set(row.customer_id, current);
         }
       }
@@ -3419,11 +3367,11 @@ function renderWorkloadShareCell(percentage: number) {
           id: string;
           customer_id: string | null;
           fortnox_customer_number: string | null;
-          total_ex_vat_sek: number | null;
+          total_ex_vat: number | null;
         }>(() =>
           supabase
             .from("invoices")
-            .select("id, customer_id, fortnox_customer_number, total_ex_vat_sek")
+            .select("id, customer_id, fortnox_customer_number, total_ex_vat")
             .in("fortnox_customer_number", numberChunk)
             .gte("invoice_date", rollingWindow.from)
             .lte("invoice_date", rollingWindow.to),
@@ -3439,7 +3387,7 @@ function renderWorkloadShareCell(percentage: number) {
           const targetCustomerIds = customerIdsByNumber.get(customerNumber);
           if (!targetCustomerIds || targetCustomerIds.length === 0) continue;
 
-          const amount = Number(row.total_ex_vat_sek ?? 0);
+          const amount = Number(row.total_ex_vat ?? 0);
 
           for (const customerId of targetCustomerIds) {
             const current =
@@ -3473,7 +3421,7 @@ function renderWorkloadShareCell(percentage: number) {
 
         const { data, error } = await supabase
           .from("contract_accruals")
-          .select("fortnox_customer_number, total_ex_vat_sek, total_sek, period")
+          .select("fortnox_customer_number, total_ex_vat, total, period")
           .in("fortnox_customer_number", numberChunk)
           .eq("is_active", true);
 
@@ -3485,8 +3433,8 @@ function renderWorkloadShareCell(percentage: number) {
 
         const rows = (data ?? []) as Array<{
           fortnox_customer_number: string | null;
-          total_ex_vat_sek: number | null;
-          total_sek: number | null;
+          total_ex_vat: number | null;
+          total: number | null;
           period: string | null;
         }>;
 
@@ -3497,10 +3445,7 @@ function renderWorkloadShareCell(percentage: number) {
           const targetCustomerIds = customerIdsByContractNumber.get(contractNumber);
           if (!targetCustomerIds || targetCustomerIds.length === 0) continue;
 
-          const annualized = annualizeContractTotal(
-            row.total_ex_vat_sek,
-            row.period,
-          );
+          const annualized = annualizeContractTotal(row.total_ex_vat, row.period);
 
           for (const customerId of targetCustomerIds) {
             const current =
@@ -3736,7 +3681,7 @@ function renderWorkloadShareCell(percentage: number) {
 
       let invoiceQuery = supabase
         .from("invoices")
-        .select("document_number, invoice_date, currency_rate")
+        .select("document_number, invoice_date")
         .gte("invoice_date", rollingWindow.from)
         .lte("invoice_date", rollingWindow.to);
 
@@ -3762,21 +3707,15 @@ function renderWorkloadShareCell(percentage: number) {
       }
 
       const invoiceMonthByNumber = new Map<string, string>();
-      // invoice_rows carry line amounts in the invoice's own currency and have
-      // no rate of their own, so the parent invoice's rate is carried over here
-      // to keep the article-group turnover in SEK like every other figure.
-      const invoiceRateByNumber = new Map<string, number>();
       const invoiceNumbers: string[] = [];
       for (const row of (invoiceRows ?? []) as Array<{
         document_number: string | null;
         invoice_date: string | null;
-        currency_rate: number | null;
       }>) {
         const invoiceNumber = normalizeIdentifier(row.document_number);
         const monthKey = (row.invoice_date ?? "").slice(0, 7);
         if (!invoiceNumber || !monthKey) continue;
         invoiceMonthByNumber.set(invoiceNumber, monthKey);
-        invoiceRateByNumber.set(invoiceNumber, Number(row.currency_rate ?? 1));
         invoiceNumbers.push(invoiceNumber);
       }
 
@@ -3874,9 +3813,7 @@ function renderWorkloadShareCell(percentage: number) {
           groupedInvoiceRows.push({
             monthKey,
             groupValue,
-            turnover:
-              Number(row.total_ex_vat ?? 0) *
-              (invoiceRateByNumber.get(invoiceNumber) ?? 1),
+            turnover: Number(row.total_ex_vat ?? 0),
           });
           groupValueSet.add(groupValue);
         }
@@ -4099,21 +4036,14 @@ function renderWorkloadShareCell(percentage: number) {
 
       const invoiceNumbersSet = new Set<string>();
       const seenInvoiceIds = new Set<string>();
-      // Line amounts are in the invoice currency; the parent invoice's rate
-      // converts them to SEK (invoice_rows has no currency of its own).
-      const invoiceRateByNumber = new Map<string, number>();
 
       for (const idChunk of customerIdChunks) {
         if (cancelled) return;
 
-        const rows = await fetchAllPages<{
-          id: string;
-          document_number: string | null;
-          currency_rate: number | null;
-        }>(() =>
+        const rows = await fetchAllPages<{ id: string; document_number: string | null }>(() =>
           supabase
             .from("invoices")
-            .select("id, document_number, currency_rate")
+            .select("id, document_number")
             .in("customer_id", idChunk)
             .gte("invoice_date", rollingWindow.from)
             .lte("invoice_date", rollingWindow.to),
@@ -4124,21 +4054,16 @@ function renderWorkloadShareCell(percentage: number) {
           const documentNumber = row.document_number?.trim();
           if (!documentNumber) continue;
           invoiceNumbersSet.add(documentNumber);
-          invoiceRateByNumber.set(documentNumber, Number(row.currency_rate ?? 1));
         }
       }
 
       for (const numberChunk of customerNumberChunks) {
         if (cancelled) return;
 
-        const rows = await fetchAllPages<{
-          id: string;
-          document_number: string | null;
-          currency_rate: number | null;
-        }>(() =>
+        const rows = await fetchAllPages<{ id: string; document_number: string | null }>(() =>
           supabase
             .from("invoices")
-            .select("id, document_number, currency_rate")
+            .select("id, document_number")
             .in("fortnox_customer_number", numberChunk)
             .gte("invoice_date", rollingWindow.from)
             .lte("invoice_date", rollingWindow.to),
@@ -4151,7 +4076,6 @@ function renderWorkloadShareCell(percentage: number) {
           const documentNumber = row.document_number?.trim();
           if (!documentNumber) continue;
           invoiceNumbersSet.add(documentNumber);
-          invoiceRateByNumber.set(documentNumber, Number(row.currency_rate ?? 1));
         }
       }
 
@@ -4243,9 +4167,7 @@ function renderWorkloadShareCell(percentage: number) {
           const groupName =
             mapping?.groupName ??
             t("reports.articleGroups.unmapped", "Unmapped");
-          const turnoverExVat =
-            Number(row.total_ex_vat ?? 0) *
-            (invoiceNumber ? invoiceRateByNumber.get(invoiceNumber) ?? 1 : 1);
+          const turnoverExVat = Number(row.total_ex_vat ?? 0);
           const quantity = Number(row.quantity ?? 0);
 
           totalTurnoverExVat += turnoverExVat;
@@ -4738,16 +4660,9 @@ function renderWorkloadShareCell(percentage: number) {
       header: t("reports.columns.total", "Total"),
       size: 140,
       enableSorting: false,
-      // As contracted, in the contract's own currency.
       cell: ({ row }) =>
-        renderTurnoverCell(
-          Number(row.original.total_ex_vat ?? 0),
-          undefined,
-          false,
-          {
-            code: row.original.currency_code,
-            sekValue: row.original.total_ex_vat_sek,
-          },
+        sekFormatter.format(
+                  Number(row.original.total_ex_vat ?? 0),
         ),
     },
     {
@@ -4755,13 +4670,12 @@ function renderWorkloadShareCell(percentage: number) {
       header: t("reports.columns.annualized", "Annualized"),
       size: 160,
       enableSorting: false,
-      // Always SEK: this is the number that rolls up into Avtalsvärde/ARR.
       cell: ({ row }) =>
         sekFormatter.format(
-          annualizeContractTotal(
-            row.original.total_ex_vat_sek,
-            row.original.period,
-          ),
+                  annualizeContractTotal(
+                    row.original.total_ex_vat,
+                    row.original.period,
+                  ),
         ),
     },
     {
@@ -4884,10 +4798,6 @@ function renderWorkloadShareCell(percentage: number) {
           row.original.turnover,
           undefined,
           row.original.turnoverFromTotal,
-          {
-            code: row.original.currencyCode,
-            sekValue: row.original.turnoverSek,
-          },
         ),
     },
     {

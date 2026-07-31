@@ -59,7 +59,7 @@ LSP codemap unavailable: `typescript-language-server` is not installed in this e
 - i18n: every user-facing string uses `t("scope.key", "English fallback")` from `useTranslation`, AND the key must be added to both the `en` and `sv` dictionaries in `src/config/i18n.ts`. Missing `sv` entries are bugs. Applies to placeholders, toasts, empty states, aria-labels.
 
 ## DATA RULES
-- Turnover values should use ex-VAT source fields when available. Aggregate the SEK projections (`total_ex_vat_sek`, `total_sek`, `balance_sek`); the plain columns are in each document's own `currency_code` and must never be summed across customers (migration 00110).
+- Turnover values should use ex-VAT source fields, especially `total_ex_vat`, when available.
 - Contract totals and KPIs should be based on active contracts only.
 - UI labels say "cost center", not "contributor".
 - Reporting ownership maps through Fortnox cost centers where no direct FK exists.

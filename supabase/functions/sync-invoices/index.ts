@@ -44,8 +44,6 @@ type InvoiceInsert = {
   total: number | null;
   balance: number | null;
   currency_code: string;
-  currency_rate: number | null;
-  currency_rate_source: "fortnox" | "table" | null;
 };
 
 function logSyncEvent(event: string, context: Record<string, unknown>) {
@@ -95,26 +93,6 @@ function resolveInvoiceTotals(record: Record<string, unknown>): {
     totalVat,
     totalExVat,
   };
-}
-
-// The rate Fortnox booked the invoice at, normalised to "SEK per 1 unit of the
-// invoice currency". Fortnox quotes some currencies per 100 units (CurrencyUnit
-// = 100), so the unit has to divide out. Returns null when Fortnox sends no rate
-// — the list endpoint often omits it and only the invoice detail carries it —
-// and the DB trigger then falls back to the currency_rates table.
-function resolveCurrencyRate(
-  record: Record<string, unknown>,
-  currencyCode: string,
-): number | null {
-  if (currencyCode === "SEK") return 1;
-
-  const rate = readNumberField(record, ["CurrencyRate"]);
-  if (rate == null || rate <= 0) return null;
-
-  const unit = readNumberField(record, ["CurrencyUnit"]);
-  if (unit == null || unit <= 0) return rate;
-
-  return rate / unit;
 }
 
 function resolveInvoiceRowQuantity(
@@ -392,11 +370,6 @@ Deno.serve(async (req) => {
           }
 
           const totals = resolveInvoiceTotals(inv);
-          const currencyCode =
-            inv.Currency != null
-              ? String(inv.Currency).trim().toUpperCase() || "SEK"
-              : "SEK";
-          const currencyRate = resolveCurrencyRate(inv, currencyCode);
 
           parsedInvoices.push({
             documentNumber,
@@ -416,9 +389,7 @@ Deno.serve(async (req) => {
               total_ex_vat: totals.totalExVat,
               total: totals.total,
               balance: inv.Balance != null ? Number(inv.Balance) : null,
-              currency_code: currencyCode,
-              currency_rate: currencyRate,
-              currency_rate_source: currencyRate != null ? "fortnox" : null,
+              currency_code: inv.Currency != null ? String(inv.Currency) : "SEK",
             },
           });
 
@@ -514,8 +485,6 @@ Deno.serve(async (req) => {
         total: number | null;
         total_vat: number | null;
         total_ex_vat: number | null;
-        currency_code: string | null;
-        currency_rate: number | null;
       }> = [];
 
       for (let i = 0; i < detailChunk.length; i += DETAIL_BATCH_SIZE) {
@@ -535,17 +504,11 @@ Deno.serve(async (req) => {
               detailFetched++;
 
               const enrichedTotals = resolveInvoiceTotals(detail);
-              const detailCurrency =
-                detail.Currency != null
-                  ? String(detail.Currency).trim().toUpperCase() || "SEK"
-                  : "SEK";
               detailTotalsUpdates.push({
                 document_number: docNum,
                 total: enrichedTotals.total,
                 total_vat: enrichedTotals.totalVat,
                 total_ex_vat: enrichedTotals.totalExVat,
-                currency_code: detailCurrency,
-                currency_rate: resolveCurrencyRate(detail, detailCurrency),
               });
             }
           } catch (detailError) {
@@ -619,23 +582,12 @@ Deno.serve(async (req) => {
 
       if (detailTotalsUpdates.length > 0) {
         for (const upd of detailTotalsUpdates) {
-          // The detail payload is the only place Fortnox exposes CurrencyRate,
-          // so this pass upgrades the row from the currency_rates fallback to
-          // the rate the invoice was actually booked at. Leaving currency_rate
-          // out when the detail has none keeps whatever is already on the row.
           const { error: updError } = await supabase
             .from("invoices")
             .update({
               total: upd.total,
               total_vat: upd.total_vat,
               total_ex_vat: upd.total_ex_vat,
-              ...(upd.currency_code ? { currency_code: upd.currency_code } : {}),
-              ...(upd.currency_rate != null
-                ? {
-                    currency_rate: upd.currency_rate,
-                    currency_rate_source: "fortnox",
-                  }
-                : {}),
             } as never)
             .eq("document_number", upd.document_number as never);
 
@@ -766,7 +718,7 @@ Deno.serve(async (req) => {
       while (true) {
         const { data: kpiRows, error: kpiError } = await supabase
           .from("invoices")
-          .select("fortnox_customer_number, total_ex_vat_sek")
+          .select("fortnox_customer_number, total_ex_vat")
           .range(kpiOffset, kpiOffset + KPI_BATCH_SIZE - 1);
 
         if (kpiError) {
@@ -775,7 +727,7 @@ Deno.serve(async (req) => {
 
         const rows = (kpiRows ?? []) as Array<{
           fortnox_customer_number: string | null;
-          total_ex_vat_sek: number | null;
+          total_ex_vat: number | null;
         }>;
         if (rows.length === 0) break;
 
@@ -784,7 +736,7 @@ Deno.serve(async (req) => {
           const existing = turnoverByCustomer.get(
             row.fortnox_customer_number,
           ) ?? { turnover: 0, count: 0 };
-          existing.turnover += Number(row.total_ex_vat_sek ?? 0);
+          existing.turnover += Number(row.total_ex_vat ?? 0);
           existing.count += 1;
           turnoverByCustomer.set(row.fortnox_customer_number, existing);
         }

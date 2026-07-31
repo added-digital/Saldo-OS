@@ -79,7 +79,7 @@ export const getCustomerOverview: ToolHandler<GetCustomerOverviewInput> = async 
       fortnoxCustomerNumber
         ? supabase
             .from("contract_accruals")
-            .select("id, contract_number, total_ex_vat, total_ex_vat_sek, currency_code, period, end_date", {
+            .select("id, contract_number, total_ex_vat, period, end_date", {
               count: "exact",
             })
             .eq("is_active", true)
@@ -129,14 +129,11 @@ export const getCustomerOverview: ToolHandler<GetCustomerOverviewInput> = async 
     : null;
 
   // Annotate each contract sample row with its annualized value so the
-  // model sees per-contract SEK/år alongside the amount as contracted.
-  // The annualized figure is always SEK; total_ex_vat is in currency_code.
+  // model sees per-contract SEK/år alongside the raw total_ex_vat.
   type ContractSampleRow = {
     id: string;
     contract_number: string;
     total_ex_vat: number | null;
-    total_ex_vat_sek: number | null;
-    currency_code: string | null;
     period: string | null;
     end_date: string | null;
   };
@@ -144,7 +141,7 @@ export const getCustomerOverview: ToolHandler<GetCustomerOverviewInput> = async 
     ((contractsRes.data ?? []) as unknown as ContractSampleRow[]).slice(0, 5)
   ).map((row) => ({
     ...row,
-    annualized_value: annualizeContractTotal(row.total_ex_vat_sek, row.period),
+    annualized_value: annualizeContractTotal(row.total_ex_vat, row.period),
     annualized_value_unit: "SEK/år",
   }));
 

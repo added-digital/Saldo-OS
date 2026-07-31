@@ -70,8 +70,6 @@ export interface Customer {
   start_date: string | null
   fortnox_active: boolean | null
   fortnox_cost_center: string | null
-  /** ISO-4217 code this customer is normally invoiced in. 'SEK' unless flagged. */
-  default_currency: string
   total_turnover: number | null
   invoice_count: number | null
   total_hours: number | null
@@ -222,15 +220,6 @@ export interface AuditLogEntry {
   created_at: string
 }
 
-/** FX rates used to express foreign-currency documents in SEK (migration 00110). */
-export interface CurrencyRate {
-  code: string
-  /** SEK per 1 unit of `code`. SEK itself is always 1. */
-  rate_to_sek: number
-  updated_by: string | null
-  updated_at: string
-}
-
 export interface Invoice {
   id: string
   document_number: string
@@ -244,13 +233,6 @@ export interface Invoice {
   total: number | null
   balance: number | null
   currency_code: string
-  /** SEK per 1 unit of `currency_code`, frozen at the rate the invoice was booked at. */
-  currency_rate: number | null
-  currency_rate_source: "fortnox" | "manual" | "table" | null
-  /** Generated: the amount above converted to SEK. Aggregations use these. */
-  total_sek: number | null
-  total_ex_vat_sek: number | null
-  balance_sek: number | null
   created_at: string
   updated_at: string
 }
@@ -337,10 +319,6 @@ export interface ContractAccrual {
   total_ex_vat: number | null
   total: number | null
   currency_code: string
-  currency_rate: number | null
-  currency_rate_source: "fortnox" | "manual" | "table" | null
-  total_sek: number | null
-  total_ex_vat_sek: number | null
   raw_data: Record<string, unknown> | null
   created_at: string
   updated_at: string
@@ -697,7 +675,7 @@ export interface Database {
       }
       customers: {
         Row: Customer
-        Insert: Omit<Customer, "id" | "created_at" | "updated_at" | "bokslut_setup" | "needs_segmentation" | "saldoavtal_date" | "fixed_monthly_price" | "bokslut_relevant" | "default_currency">
+        Insert: Omit<Customer, "id" | "created_at" | "updated_at" | "bokslut_setup" | "needs_segmentation" | "saldoavtal_date" | "fixed_monthly_price" | "bokslut_relevant">
         Update: Partial<Omit<Customer, "id" | "created_at" | "updated_at">>
       }
       segments: {
@@ -720,16 +698,10 @@ export interface Database {
         Insert: Omit<AuditLogEntry, "id" | "created_at">
         Update: never
       }
-      currency_rates: {
-        Row: CurrencyRate
-        Insert: Omit<CurrencyRate, "updated_at">
-        Update: Partial<Omit<CurrencyRate, "code">>
-      }
       invoices: {
         Row: Invoice
-        // *_sek are GENERATED columns: readable, never writable.
-        Insert: Omit<Invoice, "id" | "created_at" | "updated_at" | "total_sek" | "total_ex_vat_sek" | "balance_sek">
-        Update: Partial<Omit<Invoice, "id" | "created_at" | "updated_at" | "total_sek" | "total_ex_vat_sek" | "balance_sek">>
+        Insert: Omit<Invoice, "id" | "created_at" | "updated_at">
+        Update: Partial<Omit<Invoice, "id" | "created_at" | "updated_at">>
       }
       invoice_rows: {
         Row: InvoiceRow
@@ -758,8 +730,8 @@ export interface Database {
       }
       contract_accruals: {
         Row: ContractAccrual
-        Insert: Omit<ContractAccrual, "id" | "created_at" | "updated_at" | "total_sek" | "total_ex_vat_sek">
-        Update: Partial<Omit<ContractAccrual, "id" | "created_at" | "updated_at" | "total_sek" | "total_ex_vat_sek">>
+        Insert: Omit<ContractAccrual, "id" | "created_at" | "updated_at">
+        Update: Partial<Omit<ContractAccrual, "id" | "created_at" | "updated_at">>
       }
       customer_contacts: {
         Row: CustomerContact

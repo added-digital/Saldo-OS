@@ -515,8 +515,8 @@ async function fetchInvoiceBatch(
     customer_id: string | null
     fortnox_customer_number: string | null
     invoice_date: string | null
-    total_ex_vat_sek: number | null
-    total_sek: number | null
+    total_ex_vat: number | null
+    total: number | null
   }>
   fetched: number
 }> {
@@ -524,8 +524,8 @@ async function fetchInvoiceBatch(
     customer_id: string | null
     fortnox_customer_number: string | null
     invoice_date: string | null
-    total_ex_vat_sek: number | null
-    total_sek: number | null
+    total_ex_vat: number | null
+    total: number | null
   }> = []
 
   let offset = startOffset
@@ -536,7 +536,7 @@ async function fetchInvoiceBatch(
 
     const { data, error } = await supabase
       .from("invoices")
-      .select("customer_id, fortnox_customer_number, invoice_date, total_ex_vat_sek, total_sek")
+      .select("customer_id, fortnox_customer_number, invoice_date, total_ex_vat, total")
       .order("id", { ascending: true })
       .range(offset, offset + pageSize - 1)
 
@@ -548,8 +548,8 @@ async function fetchInvoiceBatch(
       customer_id: string | null
       fortnox_customer_number: string | null
       invoice_date: string | null
-      total_ex_vat_sek: number | null
-      total_sek: number | null
+      total_ex_vat: number | null
+      total: number | null
     }>
 
     rows.push(...pageRows)
@@ -633,8 +633,8 @@ async function fetchContractBatch(
     fortnox_customer_number: string | null
     start_date: string | null
     end_date: string | null
-    total_ex_vat_sek: number | null
-    total_sek: number | null
+    total_ex_vat: number | null
+    total: number | null
     period: string | null
     is_active: boolean
   }>
@@ -644,8 +644,8 @@ async function fetchContractBatch(
     fortnox_customer_number: string | null
     start_date: string | null
     end_date: string | null
-    total_ex_vat_sek: number | null
-    total_sek: number | null
+    total_ex_vat: number | null
+    total: number | null
     period: string | null
     is_active: boolean
   }> = []
@@ -658,7 +658,7 @@ async function fetchContractBatch(
 
     const { data, error } = await supabase
       .from("contract_accruals")
-      .select("fortnox_customer_number, start_date, end_date, total_ex_vat_sek, total_sek, period, is_active")
+      .select("fortnox_customer_number, start_date, end_date, total_ex_vat, total, period, is_active")
       .order("id", { ascending: true })
       .range(offset, offset + pageSize - 1)
 
@@ -670,8 +670,8 @@ async function fetchContractBatch(
       fortnox_customer_number: string | null
       start_date: string | null
       end_date: string | null
-      total_ex_vat_sek: number | null
-      total_sek: number | null
+      total_ex_vat: number | null
+      total: number | null
       period: string | null
       is_active: boolean
     }>
@@ -842,7 +842,7 @@ Deno.serve(async (req) => {
 
         if (!customer) continue
 
-        const amount = Number(row.total_ex_vat_sek ?? 0)
+        const amount = Number(row.total_ex_vat ?? 0)
         const totals = getCustomerTotalsDelta(customerTotals, customer.id)
         totals.total_turnover += amount
         totals.invoice_count += 1
@@ -1106,7 +1106,7 @@ Deno.serve(async (req) => {
 
         if (!customer) continue
 
-        const annualizedValue = annualizeContractTotal(row.total_ex_vat_sek, row.period)
+        const annualizedValue = annualizeContractTotal(row.total_ex_vat, row.period)
         if (annualizedValue === 0) continue
 
         const totals = getCustomerTotalsDelta(customerTotals, customer.id)

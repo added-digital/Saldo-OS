@@ -196,8 +196,6 @@ interface OverdueInvoiceRow {
   due_date: string | null
   total: number | null
   balance: number | null
-  /** `balance` converted to SEK — the only basis on which mixed currencies add up. */
-  balance_sek: number | null
   currency_code: string | null
 }
 
@@ -421,7 +419,7 @@ export default function CustomersPage() {
 
       let query = supabase
         .from("invoices")
-        .select("id, document_number, invoice_date, due_date, total, balance, balance_sek, currency_code")
+        .select("id, document_number, invoice_date, due_date, total, balance, currency_code")
         .gt("balance", 0)
         .lt("due_date", cutoffIso)
         .order("due_date", { ascending: true })
@@ -866,15 +864,9 @@ export default function CustomersPage() {
               </span>
               <span className="font-medium">
                 {t("customers.dialog.overdue.total", "Total")}:{" "}
-                {/* Summed in SEK: a customer can hold invoices in more than one
-                    currency, and the old "use the first row's code" total was
-                    wrong the moment it did. */}
                 {formatInvoiceAmount(
-                  overdueInvoiceRows.reduce(
-                    (sum, invoice) => sum + (invoice.balance_sek ?? invoice.balance ?? 0),
-                    0
-                  ),
-                  "SEK"
+                  overdueInvoiceRows.reduce((sum, invoice) => sum + (invoice.balance ?? 0), 0),
+                  overdueInvoiceRows[0]?.currency_code ?? "SEK"
                 )}
               </span>
             </div>

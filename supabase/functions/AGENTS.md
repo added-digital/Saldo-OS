@@ -20,7 +20,7 @@ This file applies to `supabase/functions` and nested function directories unless
 - Function names and sync step names must stay compatible with database dispatch to `/functions/v1/sync-${step_name}`.
 
 ## Data Mapping Rules
-- Use ex-VAT fields when available for turnover-related persistence. Persist amounts as invoiced plus `currency_code`/`currency_rate`; roll up from `total_ex_vat_sek`.
+- Use ex-VAT fields when available for turnover-related persistence (`total_ex_vat` conventions).
 - Contract sync should only persist active contracts and normalize status consistently.
 - Keep fallback handling explicit for missing fields from provider payloads.
 
