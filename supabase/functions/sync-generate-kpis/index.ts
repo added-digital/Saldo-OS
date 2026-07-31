@@ -1,5 +1,6 @@
 import { createAdminClient } from "../_shared/supabase.ts"
 import { updateSyncJob, corsHeaders } from "../_shared/sync-helpers.ts"
+import { loadCurrencyRates, toSek } from "../_shared/currency.ts"
 
 declare const Deno: {
   serve: (handler: (req: Request) => Response | Promise<Response>) => void
@@ -517,6 +518,7 @@ async function fetchInvoiceBatch(
     invoice_date: string | null
     total_ex_vat: number | null
     total: number | null
+    currency_code: string | null
   }>
   fetched: number
 }> {
@@ -526,6 +528,7 @@ async function fetchInvoiceBatch(
     invoice_date: string | null
     total_ex_vat: number | null
     total: number | null
+    currency_code: string | null
   }> = []
 
   let offset = startOffset
@@ -536,7 +539,7 @@ async function fetchInvoiceBatch(
 
     const { data, error } = await supabase
       .from("invoices")
-      .select("customer_id, fortnox_customer_number, invoice_date, total_ex_vat, total")
+      .select("customer_id, fortnox_customer_number, invoice_date, total_ex_vat, total, currency_code")
       .order("id", { ascending: true })
       .range(offset, offset + pageSize - 1)
 
@@ -550,6 +553,7 @@ async function fetchInvoiceBatch(
       invoice_date: string | null
       total_ex_vat: number | null
       total: number | null
+      currency_code: string | null
     }>
 
     rows.push(...pageRows)
@@ -637,6 +641,7 @@ async function fetchContractBatch(
     total: number | null
     period: string | null
     is_active: boolean
+    currency_code: string | null
   }>
   fetched: number
 }> {
@@ -648,6 +653,7 @@ async function fetchContractBatch(
     total: number | null
     period: string | null
     is_active: boolean
+    currency_code: string | null
   }> = []
 
   let offset = startOffset
@@ -658,7 +664,7 @@ async function fetchContractBatch(
 
     const { data, error } = await supabase
       .from("contract_accruals")
-      .select("fortnox_customer_number, start_date, end_date, total_ex_vat, total, period, is_active")
+      .select("fortnox_customer_number, start_date, end_date, total_ex_vat, total, period, is_active, currency_code")
       .order("id", { ascending: true })
       .range(offset, offset + pageSize - 1)
 
@@ -674,6 +680,7 @@ async function fetchContractBatch(
       total: number | null
       period: string | null
       is_active: boolean
+      currency_code: string | null
     }>
 
     rows.push(...pageRows)
@@ -826,6 +833,7 @@ Deno.serve(async (req) => {
     if (phase === "invoices") {
       const { customerById, customerByNumber } = await loadCustomerMappings(supabase)
       const { rows, fetched } = await fetchInvoiceBatch(supabase, offset)
+      const currencyRates = await loadCurrencyRates(supabase)
 
       const customerTotals = new Map<string, CustomerTotalsDelta>()
       const periodKpis = new Map<string, PeriodKpiDelta>()
@@ -842,7 +850,9 @@ Deno.serve(async (req) => {
 
         if (!customer) continue
 
-        const amount = Number(row.total_ex_vat ?? 0)
+        // EUR-invoiced customers keep their Fortnox amounts untouched; only
+        // this rollup expresses them in the kronor everything is reported in.
+        const amount = toSek(row.total_ex_vat, row.currency_code, currencyRates)
         const totals = getCustomerTotalsDelta(customerTotals, customer.id)
         totals.total_turnover += amount
         totals.invoice_count += 1
@@ -1088,6 +1098,7 @@ Deno.serve(async (req) => {
     if (phase === "contracts") {
       const { customerById, customerByNumber } = await loadCustomerMappings(supabase)
       const { rows, fetched } = await fetchContractBatch(supabase, offset)
+      const currencyRates = await loadCurrencyRates(supabase)
 
       const customerTotals = new Map<string, CustomerTotalsDelta>()
       const periodKpis = new Map<string, PeriodKpiDelta>()
@@ -1106,7 +1117,10 @@ Deno.serve(async (req) => {
 
         if (!customer) continue
 
-        const annualizedValue = annualizeContractTotal(row.total_ex_vat, row.period)
+        const annualizedValue = annualizeContractTotal(
+          toSek(row.total_ex_vat, row.currency_code, currencyRates),
+          row.period,
+        )
         if (annualizedValue === 0) continue
 
         const totals = getCustomerTotalsDelta(customerTotals, customer.id)

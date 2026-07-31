@@ -1,5 +1,6 @@
 import { createAdminClient } from "../_shared/supabase.ts"
 import { getFortnoxClient, updateSyncJob, delay, corsHeaders } from "../_shared/sync-helpers.ts"
+import { loadCurrencyRates, toSek } from "../_shared/currency.ts"
 
 declare const Deno: {
   serve: (handler: (req: Request) => Response | Promise<Response>) => void
@@ -243,12 +244,13 @@ Deno.serve(async (req) => {
       }
 
       const valueByCustomer = new Map<string, number>()
+      const currencyRates = await loadCurrencyRates(supabase)
       let offset = 0
 
       while (true) {
         const { data: contractRows, error: contractError } = await supabase
           .from("contract_accruals")
-          .select("fortnox_customer_number, total_ex_vat, period, is_active")
+          .select("fortnox_customer_number, total_ex_vat, period, is_active, currency_code")
           .order("id", { ascending: true })
           .range(offset, offset + KPI_BATCH_SIZE - 1)
 
@@ -261,6 +263,7 @@ Deno.serve(async (req) => {
           total_ex_vat: number | null
           period: string | null
           is_active: boolean
+          currency_code: string | null
         }>
         if (rows.length === 0) break
 
@@ -270,7 +273,11 @@ Deno.serve(async (req) => {
           const existing = valueByCustomer.get(row.fortnox_customer_number) ?? 0
           valueByCustomer.set(
             row.fortnox_customer_number,
-            existing + annualizeContractTotal(row.total_ex_vat, row.period)
+            existing +
+              annualizeContractTotal(
+                toSek(row.total_ex_vat, row.currency_code, currencyRates),
+                row.period,
+              )
           )
         }
 

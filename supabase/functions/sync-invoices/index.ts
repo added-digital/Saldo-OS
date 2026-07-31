@@ -6,6 +6,7 @@ import {
   corsHeaders,
 } from "../_shared/sync-helpers.ts";
 import { FortnoxApiError } from "../_shared/fortnox-client.ts";
+import { loadCurrencyRates, toSek } from "../_shared/currency.ts";
 
 declare const Deno: {
   serve: (handler: (req: Request) => Response | Promise<Response>) => void;
@@ -713,12 +714,13 @@ Deno.serve(async (req) => {
         string,
         { turnover: number; count: number }
       >();
+      const currencyRates = await loadCurrencyRates(supabase);
       let kpiOffset = 0;
 
       while (true) {
         const { data: kpiRows, error: kpiError } = await supabase
           .from("invoices")
-          .select("fortnox_customer_number, total_ex_vat")
+          .select("fortnox_customer_number, total_ex_vat, currency_code")
           .range(kpiOffset, kpiOffset + KPI_BATCH_SIZE - 1);
 
         if (kpiError) {
@@ -728,6 +730,7 @@ Deno.serve(async (req) => {
         const rows = (kpiRows ?? []) as Array<{
           fortnox_customer_number: string | null;
           total_ex_vat: number | null;
+          currency_code: string | null;
         }>;
         if (rows.length === 0) break;
 
@@ -736,7 +739,13 @@ Deno.serve(async (req) => {
           const existing = turnoverByCustomer.get(
             row.fortnox_customer_number,
           ) ?? { turnover: 0, count: 0 };
-          existing.turnover += Number(row.total_ex_vat ?? 0);
+          // Foreign-currency invoices are stored as Fortnox delivered them;
+          // the kronor figure is produced here, at rollup time.
+          existing.turnover += toSek(
+            row.total_ex_vat,
+            row.currency_code,
+            currencyRates,
+          );
           existing.count += 1;
           turnoverByCustomer.set(row.fortnox_customer_number, existing);
         }
