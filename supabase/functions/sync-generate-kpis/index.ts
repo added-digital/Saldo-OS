@@ -10,6 +10,17 @@ const KPI_BATCH_SIZE = 20000
 const MAPPING_BATCH_SIZE = 20000
 const QUERY_PAGE_SIZE = 1000
 
+// One accumulate_* call per batch used to send every rolled-up row in a single
+// INSERT ... ON CONFLICT. A full batch produces tens of thousands of rows, and
+// the first invoice batch lands right after the list phase deleted all of
+// customer_kpis — so that one statement ran against a table full of dead
+// tuples and regularly tripped the statement timeout ("canceling statement due
+// to statement timeout"), failing the whole step at offset 0.
+//
+// The rows are pre-aggregated in memory, so splitting them across several calls
+// changes nothing about the result: each chunk is an independent accumulation.
+const ACCUMULATE_CHUNK_SIZE = 2000
+
 type Phase = "list" | "invoices" | "time" | "contracts" | "finalize"
 
 type CustomerRef = {
@@ -28,6 +39,14 @@ type JobState = {
     invoices: number
     time: number
     contracts: number
+  }
+  // Last id read per source table. Batches resume with `id > cursor` rather
+  // than a row offset: OFFSET 60000 makes Postgres walk every skipped row, and
+  // the deep batches of a 100k-row table timed out on the read alone.
+  cursors: {
+    invoices: string | null
+    time: string | null
+    contracts: string | null
   }
 }
 
@@ -122,6 +141,10 @@ function annualizeContractTotal(total: number | null, period: string | null): nu
 function getJobState(payload: Record<string, unknown> | null | undefined): JobState {
   const counts = (payload?.counts as Record<string, unknown> | undefined) ?? {}
   const processed = (payload?.processed as Record<string, unknown> | undefined) ?? {}
+  const cursors = (payload?.cursors as Record<string, unknown> | undefined) ?? {}
+
+  const readCursor = (value: unknown): string | null =>
+    typeof value === "string" && value.length > 0 ? value : null
 
   return {
     counts: {
@@ -133,6 +156,11 @@ function getJobState(payload: Record<string, unknown> | null | undefined): JobSt
       invoices: Number(processed.invoices ?? 0),
       time: Number(processed.time ?? 0),
       contracts: Number(processed.contracts ?? 0),
+    },
+    cursors: {
+      invoices: readCursor(cursors.invoices),
+      time: readCursor(cursors.time),
+      contracts: readCursor(cursors.contracts),
     },
   }
 }
@@ -160,6 +188,27 @@ function computeProgress(state: JobState, done = false): number {
 
   const ratio = Math.min(totalProcessed(state), total) / total
   return Math.max(5, Math.min(99, Math.round(5 + ratio * 94)))
+}
+
+// Sends pre-aggregated rollup rows to one of the accumulate_* functions in
+// ACCUMULATE_CHUNK_SIZE slices, so no single statement grows large enough to
+// hit the statement timeout. `context` is the message prefix the sync history
+// shows when a chunk fails.
+async function accumulateRows(
+  supabase: ReturnType<typeof createAdminClient>,
+  fn: "accumulate_customer_totals_rows" | "accumulate_customer_kpi_rows" | "accumulate_manager_time_kpi_rows",
+  rows: unknown[],
+  context: string,
+) {
+  for (let start = 0; start < rows.length; start += ACCUMULATE_CHUNK_SIZE) {
+    const chunk = rows.slice(start, start + ACCUMULATE_CHUNK_SIZE)
+
+    const { error } = await supabase.rpc(fn, { rows: chunk })
+
+    if (error) {
+      throw new Error(`${context}: ${error.message}`)
+    }
+  }
 }
 
 function normalizeIdentifier(value: string | null | undefined): string {
@@ -510,9 +559,10 @@ function resolveReporterManagerId(
 
 async function fetchInvoiceBatch(
   supabase: ReturnType<typeof createAdminClient>,
-  startOffset: number,
+  startCursor: string | null,
 ): Promise<{
   rows: Array<{
+    id: string
     customer_id: string | null
     fortnox_customer_number: string | null
     invoice_date: string | null
@@ -521,8 +571,10 @@ async function fetchInvoiceBatch(
     currency_code: string | null
   }>
   fetched: number
+  nextCursor: string | null
 }> {
   const rows: Array<{
+    id: string
     customer_id: string | null
     fortnox_customer_number: string | null
     invoice_date: string | null
@@ -531,23 +583,30 @@ async function fetchInvoiceBatch(
     currency_code: string | null
   }> = []
 
-  let offset = startOffset
+  let cursor = startCursor
 
   while (rows.length < KPI_BATCH_SIZE) {
     const remaining = KPI_BATCH_SIZE - rows.length
     const pageSize = Math.min(QUERY_PAGE_SIZE, remaining)
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("invoices")
-      .select("customer_id, fortnox_customer_number, invoice_date, total_ex_vat, total, currency_code")
+      .select("id, customer_id, fortnox_customer_number, invoice_date, total_ex_vat, total, currency_code")
       .order("id", { ascending: true })
-      .range(offset, offset + pageSize - 1)
+      .limit(pageSize)
+
+    if (cursor) {
+      query = query.gt("id", cursor)
+    }
+
+    const { data, error } = await query
 
     if (error) {
       throw new Error(`Failed to read invoices for KPI generation: ${error.message}`)
     }
 
     const pageRows = (data ?? []) as Array<{
+      id: string
       customer_id: string | null
       fortnox_customer_number: string | null
       invoice_date: string | null
@@ -557,21 +616,22 @@ async function fetchInvoiceBatch(
     }>
 
     rows.push(...pageRows)
-    offset += pageRows.length
+    cursor = pageRows.at(-1)?.id ?? cursor
 
     if (pageRows.length < pageSize) {
       break
     }
   }
 
-  return { rows, fetched: rows.length }
+  return { rows, fetched: rows.length, nextCursor: cursor }
 }
 
 async function fetchTimeBatch(
   supabase: ReturnType<typeof createAdminClient>,
-  startOffset: number,
+  startCursor: string | null,
 ): Promise<{
   rows: Array<{
+    id: string
     customer_id: string | null
     fortnox_customer_number: string | null
     report_date: string | null
@@ -581,8 +641,10 @@ async function fetchTimeBatch(
     hours: number | null
   }>
   fetched: number
+  nextCursor: string | null
 }> {
   const rows: Array<{
+    id: string
     customer_id: string | null
     fortnox_customer_number: string | null
     report_date: string | null
@@ -592,23 +654,30 @@ async function fetchTimeBatch(
     hours: number | null
   }> = []
 
-  let offset = startOffset
+  let cursor = startCursor
 
   while (rows.length < KPI_BATCH_SIZE) {
     const remaining = KPI_BATCH_SIZE - rows.length
     const pageSize = Math.min(QUERY_PAGE_SIZE, remaining)
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("time_reports")
-      .select("customer_id, fortnox_customer_number, report_date, employee_id, employee_name, entry_type, hours")
+      .select("id, customer_id, fortnox_customer_number, report_date, employee_id, employee_name, entry_type, hours")
       .order("id", { ascending: true })
-      .range(offset, offset + pageSize - 1)
+      .limit(pageSize)
+
+    if (cursor) {
+      query = query.gt("id", cursor)
+    }
+
+    const { data, error } = await query
 
     if (error) {
       throw new Error(`Failed to read time reports for KPI generation: ${error.message}`)
     }
 
     const pageRows = (data ?? []) as Array<{
+      id: string
       customer_id: string | null
       fortnox_customer_number: string | null
       report_date: string | null
@@ -619,21 +688,22 @@ async function fetchTimeBatch(
     }>
 
     rows.push(...pageRows)
-    offset += pageRows.length
+    cursor = pageRows.at(-1)?.id ?? cursor
 
     if (pageRows.length < pageSize) {
       break
     }
   }
 
-  return { rows, fetched: rows.length }
+  return { rows, fetched: rows.length, nextCursor: cursor }
 }
 
 async function fetchContractBatch(
   supabase: ReturnType<typeof createAdminClient>,
-  startOffset: number,
+  startCursor: string | null,
 ): Promise<{
   rows: Array<{
+    id: string
     fortnox_customer_number: string | null
     start_date: string | null
     end_date: string | null
@@ -644,8 +714,10 @@ async function fetchContractBatch(
     currency_code: string | null
   }>
   fetched: number
+  nextCursor: string | null
 }> {
   const rows: Array<{
+    id: string
     fortnox_customer_number: string | null
     start_date: string | null
     end_date: string | null
@@ -656,23 +728,30 @@ async function fetchContractBatch(
     currency_code: string | null
   }> = []
 
-  let offset = startOffset
+  let cursor = startCursor
 
   while (rows.length < KPI_BATCH_SIZE) {
     const remaining = KPI_BATCH_SIZE - rows.length
     const pageSize = Math.min(QUERY_PAGE_SIZE, remaining)
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("contract_accruals")
-      .select("fortnox_customer_number, start_date, end_date, total_ex_vat, total, period, is_active, currency_code")
+      .select("id, fortnox_customer_number, start_date, end_date, total_ex_vat, total, period, is_active, currency_code")
       .order("id", { ascending: true })
-      .range(offset, offset + pageSize - 1)
+      .limit(pageSize)
+
+    if (cursor) {
+      query = query.gt("id", cursor)
+    }
+
+    const { data, error } = await query
 
     if (error) {
       throw new Error(`Failed to read contracts for KPI generation: ${error.message}`)
     }
 
     const pageRows = (data ?? []) as Array<{
+      id: string
       fortnox_customer_number: string | null
       start_date: string | null
       end_date: string | null
@@ -684,14 +763,14 @@ async function fetchContractBatch(
     }>
 
     rows.push(...pageRows)
-    offset += pageRows.length
+    cursor = pageRows.at(-1)?.id ?? cursor
 
     if (pageRows.length < pageSize) {
       break
     }
   }
 
-  return { rows, fetched: rows.length }
+  return { rows, fetched: rows.length, nextCursor: cursor }
 }
 
 async function countRows(supabase: ReturnType<typeof createAdminClient>, table: "invoices" | "time_reports" | "contract_accruals") {
@@ -761,6 +840,7 @@ Deno.serve(async (req) => {
       const nextState: JobState = {
         counts: { invoices, time, contracts },
         processed: { invoices: 0, time: 0, contracts: 0 },
+        cursors: { invoices: null, time: null, contracts: null },
       }
 
       await updateSyncJob(supabase, jobId, {
@@ -813,6 +893,7 @@ Deno.serve(async (req) => {
           step_label: "Generate KPIs",
           counts: nextState.counts,
           processed: nextState.processed,
+          cursors: nextState.cursors,
         },
         batch_phase: nextPhase,
         batch_offset: 0,
@@ -832,7 +913,7 @@ Deno.serve(async (req) => {
 
     if (phase === "invoices") {
       const { customerById, customerByNumber } = await loadCustomerMappings(supabase)
-      const { rows, fetched } = await fetchInvoiceBatch(supabase, offset)
+      const { rows, fetched, nextCursor } = await fetchInvoiceBatch(supabase, state.cursors.invoices)
       const currencyRates = await loadCurrencyRates(supabase)
 
       const customerTotals = new Map<string, CustomerTotalsDelta>()
@@ -863,27 +944,19 @@ Deno.serve(async (req) => {
         })
       }
 
-      const customerTotalRows = Array.from(customerTotals.values())
-      if (customerTotalRows.length > 0) {
-        const { error } = await supabase.rpc("accumulate_customer_totals_rows", {
-          rows: customerTotalRows,
-        })
+      await accumulateRows(
+        supabase,
+        "accumulate_customer_totals_rows",
+        Array.from(customerTotals.values()),
+        "Failed accumulating customer totals for invoices",
+      )
 
-        if (error) {
-          throw new Error(`Failed accumulating customer totals for invoices: ${error.message}`)
-        }
-      }
-
-      const periodRows = Array.from(periodKpis.values())
-      if (periodRows.length > 0) {
-        const { error } = await supabase.rpc("accumulate_customer_kpi_rows", {
-          rows: periodRows,
-        })
-
-        if (error) {
-          throw new Error(`Failed accumulating period KPIs for invoices: ${error.message}`)
-        }
-      }
+      await accumulateRows(
+        supabase,
+        "accumulate_customer_kpi_rows",
+        Array.from(periodKpis.values()),
+        "Failed accumulating period KPIs for invoices",
+      )
 
       const nextProcessed = Math.min(state.processed.invoices + fetched, state.counts.invoices)
       const nextState: JobState = {
@@ -893,6 +966,7 @@ Deno.serve(async (req) => {
           time: state.processed.time,
           contracts: state.processed.contracts,
         },
+        cursors: { ...state.cursors, invoices: nextCursor },
       }
 
       const done = fetched < KPI_BATCH_SIZE || nextProcessed >= state.counts.invoices
@@ -913,6 +987,7 @@ Deno.serve(async (req) => {
           step_label: "Generate KPIs",
           counts: nextState.counts,
           processed: nextState.processed,
+          cursors: nextState.cursors,
         },
         batch_phase: nextPhase,
         batch_offset: nextOffset,
@@ -940,7 +1015,7 @@ Deno.serve(async (req) => {
         managerByName,
       } = await loadManagerMappings(supabase)
 
-      const { rows, fetched } = await fetchTimeBatch(supabase, offset)
+      const { rows, fetched, nextCursor } = await fetchTimeBatch(supabase, state.cursors.time)
 
       const customerTotals = new Map<string, CustomerTotalsDelta>()
       const periodKpis = new Map<string, PeriodKpiDelta>()
@@ -1015,38 +1090,26 @@ Deno.serve(async (req) => {
         managerKpi.other_hours += isOtherHours ? amount : 0
       }
 
-      const customerTotalRows = Array.from(customerTotals.values())
-      if (customerTotalRows.length > 0) {
-        const { error } = await supabase.rpc("accumulate_customer_totals_rows", {
-          rows: customerTotalRows,
-        })
+      await accumulateRows(
+        supabase,
+        "accumulate_customer_totals_rows",
+        Array.from(customerTotals.values()),
+        "Failed accumulating customer totals for time",
+      )
 
-        if (error) {
-          throw new Error(`Failed accumulating customer totals for time: ${error.message}`)
-        }
-      }
+      await accumulateRows(
+        supabase,
+        "accumulate_customer_kpi_rows",
+        Array.from(periodKpis.values()),
+        "Failed accumulating period KPIs for time",
+      )
 
-      const periodRows = Array.from(periodKpis.values())
-      if (periodRows.length > 0) {
-        const { error } = await supabase.rpc("accumulate_customer_kpi_rows", {
-          rows: periodRows,
-        })
-
-        if (error) {
-          throw new Error(`Failed accumulating period KPIs for time: ${error.message}`)
-        }
-      }
-
-      const managerRows = Array.from(managerPeriodKpis.values())
-      if (managerRows.length > 0) {
-        const { error } = await supabase.rpc("accumulate_manager_time_kpi_rows", {
-          rows: managerRows,
-        })
-
-        if (error) {
-          throw new Error(`Failed accumulating manager KPIs for time: ${error.message}`)
-        }
-      }
+      await accumulateRows(
+        supabase,
+        "accumulate_manager_time_kpi_rows",
+        Array.from(managerPeriodKpis.values()),
+        "Failed accumulating manager KPIs for time",
+      )
 
       const nextProcessed = Math.min(state.processed.time + fetched, state.counts.time)
       const nextState: JobState = {
@@ -1056,6 +1119,7 @@ Deno.serve(async (req) => {
           time: nextProcessed,
           contracts: state.processed.contracts,
         },
+        cursors: { ...state.cursors, time: nextCursor },
       }
 
       const done = fetched < KPI_BATCH_SIZE || nextProcessed >= state.counts.time
@@ -1076,6 +1140,7 @@ Deno.serve(async (req) => {
           step_label: "Generate KPIs",
           counts: nextState.counts,
           processed: nextState.processed,
+          cursors: nextState.cursors,
         },
         batch_phase: nextPhase,
         batch_offset: nextOffset,
@@ -1097,7 +1162,7 @@ Deno.serve(async (req) => {
 
     if (phase === "contracts") {
       const { customerById, customerByNumber } = await loadCustomerMappings(supabase)
-      const { rows, fetched } = await fetchContractBatch(supabase, offset)
+      const { rows, fetched, nextCursor } = await fetchContractBatch(supabase, state.cursors.contracts)
       const currencyRates = await loadCurrencyRates(supabase)
 
       const customerTotals = new Map<string, CustomerTotalsDelta>()
@@ -1133,27 +1198,19 @@ Deno.serve(async (req) => {
         })
       }
 
-      const customerTotalRows = Array.from(customerTotals.values())
-      if (customerTotalRows.length > 0) {
-        const { error } = await supabase.rpc("accumulate_customer_totals_rows", {
-          rows: customerTotalRows,
-        })
+      await accumulateRows(
+        supabase,
+        "accumulate_customer_totals_rows",
+        Array.from(customerTotals.values()),
+        "Failed accumulating customer totals for contracts",
+      )
 
-        if (error) {
-          throw new Error(`Failed accumulating customer totals for contracts: ${error.message}`)
-        }
-      }
-
-      const periodRows = Array.from(periodKpis.values())
-      if (periodRows.length > 0) {
-        const { error } = await supabase.rpc("accumulate_customer_kpi_rows", {
-          rows: periodRows,
-        })
-
-        if (error) {
-          throw new Error(`Failed accumulating period KPIs for contracts: ${error.message}`)
-        }
-      }
+      await accumulateRows(
+        supabase,
+        "accumulate_customer_kpi_rows",
+        Array.from(periodKpis.values()),
+        "Failed accumulating period KPIs for contracts",
+      )
 
       const nextProcessed = Math.min(state.processed.contracts + fetched, state.counts.contracts)
       const nextState: JobState = {
@@ -1163,6 +1220,7 @@ Deno.serve(async (req) => {
           time: state.processed.time,
           contracts: nextProcessed,
         },
+        cursors: { ...state.cursors, contracts: nextCursor },
       }
 
       const done = fetched < KPI_BATCH_SIZE || nextProcessed >= state.counts.contracts
@@ -1181,6 +1239,7 @@ Deno.serve(async (req) => {
           step_label: "Generate KPIs",
           counts: nextState.counts,
           processed: nextState.processed,
+          cursors: nextState.cursors,
         },
         batch_phase: nextPhase,
         batch_offset: nextOffset,
@@ -1208,6 +1267,7 @@ Deno.serve(async (req) => {
           time: state.counts.time,
           contracts: state.counts.contracts,
         },
+        cursors: state.cursors,
       }
 
       await updateSyncJob(supabase, jobId, {
