@@ -1,4 +1,9 @@
-import { annualizeContractTotal, chunkArray } from "@/lib/reports";
+import {
+  annualizeContractTotal,
+  chunkArray,
+  loadCurrencyRates,
+  toSek,
+} from "@/lib/reports";
 
 import {
   accessRestricted,
@@ -720,6 +725,7 @@ type ContractAccrualRow = {
   fortnox_customer_number: string | null;
   total_ex_vat: number | null;
   period: string | null;
+  currency_code: string | null;
 };
 
 interface ContractValuePathInput {
@@ -819,11 +825,14 @@ async function runContractValuePath(opts: ContractValuePathInput) {
   // ranking and letting single-contract customers bubble into the top-N.
   // ---------------------------------------------------------------------------
   const sumsByFortnox = new Map<string, number>();
+  // Contract amounts are in Fortnox's invoicing currency; the ranking is in
+  // kronor, so convert before summing.
+  const currencyRates = await loadCurrencyRates(supabase);
   for (const chunk of chunkArray(fortnoxNumbers, 100)) {
     const { rows, error } = await drainPages<ContractAccrualRow>(() =>
       supabase
         .from("contract_accruals")
-        .select("fortnox_customer_number, total_ex_vat, period")
+        .select("fortnox_customer_number, total_ex_vat, period, currency_code")
         .in("fortnox_customer_number", chunk)
         .eq("is_active", true),
     );
@@ -831,7 +840,10 @@ async function runContractValuePath(opts: ContractValuePathInput) {
 
     for (const row of rows) {
       if (!row.fortnox_customer_number) continue;
-      const annualized = annualizeContractTotal(row.total_ex_vat, row.period);
+      const annualized = annualizeContractTotal(
+        toSek(row.total_ex_vat, row.currency_code, currencyRates),
+        row.period,
+      );
       const prev = sumsByFortnox.get(row.fortnox_customer_number) ?? 0;
       sumsByFortnox.set(row.fortnox_customer_number, prev + annualized);
     }

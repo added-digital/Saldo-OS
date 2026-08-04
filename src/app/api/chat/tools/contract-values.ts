@@ -21,7 +21,12 @@
  * scope simply won't be returned.
  */
 
-import { annualizeContractTotal, chunkArray } from "@/lib/reports";
+import {
+  annualizeContractTotal,
+  chunkArray,
+  loadCurrencyRates,
+  toSek,
+} from "@/lib/reports";
 
 import type { SupabaseServerClient } from "./types";
 
@@ -40,6 +45,7 @@ type AccrualRow = {
   fortnox_customer_number: string | null;
   total_ex_vat: number | null;
   period: string | null;
+  currency_code: string | null;
 };
 
 /**
@@ -143,11 +149,14 @@ export async function fetchAnnualizedContractValuesByCustomerId(
   // ---------------------------------------------------------------------------
   const fortnoxNumbers = Array.from(new Set(fortnoxByCustomerId.values()));
   const annualizedByFortnox = new Map<string, number>();
+  // Contracts carry Fortnox's own currency. Everything reported here is in
+  // kronor, so convert before summing — the same step the KPI rollup does.
+  const currencyRates = await loadCurrencyRates(supabase);
   for (const chunk of chunkArray(fortnoxNumbers, CHUNK)) {
     const { rows, error } = await drainPages<AccrualRow>(() =>
       supabase
         .from("contract_accruals")
-        .select("fortnox_customer_number, total_ex_vat, period")
+        .select("fortnox_customer_number, total_ex_vat, period, currency_code")
         .in("fortnox_customer_number", chunk)
         .eq("is_active", true),
     );
@@ -160,7 +169,10 @@ export async function fetchAnnualizedContractValuesByCustomerId(
     }
     for (const row of rows) {
       if (!row.fortnox_customer_number) continue;
-      const annualized = annualizeContractTotal(row.total_ex_vat, row.period);
+      const annualized = annualizeContractTotal(
+        toSek(row.total_ex_vat, row.currency_code, currencyRates),
+        row.period,
+      );
       const prev = annualizedByFortnox.get(row.fortnox_customer_number) ?? 0;
       annualizedByFortnox.set(
         row.fortnox_customer_number,

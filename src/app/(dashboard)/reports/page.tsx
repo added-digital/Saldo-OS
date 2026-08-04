@@ -122,7 +122,11 @@ import {
   matchesMetric,
   createEmptyMonthlyTimeReportingRows,
   annualizeContractTotal,
+  loadCurrencyRates,
+  toSek,
+  BASE_CURRENCY,
 } from "@/lib/reports";
+import type { CurrencyRates } from "@/lib/reports";
 import type {
   ComparisonMode,
   ReportingWindowMode,
@@ -492,6 +496,12 @@ export default function ReportsPage() {
   const [customerAccruals, setCustomerAccruals] = React.useState<
     ContractAccrual[]
   >([]);
+  // Per-contract rows are shown in the invoice currency's kronor equivalent,
+  // matching the totals above them. Until the rates land every amount converts
+  // at 1, which is right for every SEK contract.
+  const [currencyRates, setCurrencyRates] = React.useState<CurrencyRates>(
+    () => new Map([[BASE_CURRENCY, 1]]),
+  );
   const [customerMonthlyEconomicsLoading, setCustomerMonthlyEconomicsLoading] =
     React.useState(false);
   const [customerMonthlyEconomicsRows, setCustomerMonthlyEconomicsRows] =
@@ -609,6 +619,18 @@ export default function ReportsPage() {
         .reverse(),
     [previousTurnoverByMonthRows, turnoverByMonthRows],
   );
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    loadCurrencyRates(createClient()).then((rates) => {
+      if (!cancelled) setCurrencyRates(rates);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   React.useEffect(() => {
     const saved = parseSavedReportsFilters(
@@ -2679,12 +2701,16 @@ function renderWorkloadShareCell(percentage: number) {
         200,
       );
 
+      // Avtalsvärde is read live rather than from the rollup, so the EUR →
+      // SEK conversion the rollup applies has to happen here too.
+      const contractCurrencyRates = await loadCurrencyRates(supabase);
+
       for (const numberChunk of contractCustomerNumberChunks) {
         if (cancelled) return;
 
         const { data: contractRows, error: contractError } = await supabase
           .from("contract_accruals")
-          .select("total_ex_vat, total, period")
+          .select("total_ex_vat, total, period, currency_code")
           .in("fortnox_customer_number", numberChunk)
           .eq("is_active", true);
 
@@ -2696,10 +2722,14 @@ function renderWorkloadShareCell(percentage: number) {
           total_ex_vat: number | null;
           total: number | null;
           period: string | null;
+          currency_code: string | null;
         }>;
 
         for (const row of rows) {
-          contractValue += annualizeContractTotal(row.total_ex_vat, row.period);
+          contractValue += annualizeContractTotal(
+            toSek(row.total_ex_vat, row.currency_code, contractCurrencyRates),
+            row.period,
+          );
         }
       }
 
@@ -3416,12 +3446,14 @@ function renderWorkloadShareCell(percentage: number) {
         200,
       );
 
+      const currencyRates = await loadCurrencyRates(supabase);
+
       for (const numberChunk of contractCustomerNumberChunks) {
         if (cancelled) return;
 
         const { data, error } = await supabase
           .from("contract_accruals")
-          .select("fortnox_customer_number, total_ex_vat, total, period")
+          .select("fortnox_customer_number, total_ex_vat, total, period, currency_code")
           .in("fortnox_customer_number", numberChunk)
           .eq("is_active", true);
 
@@ -3436,6 +3468,7 @@ function renderWorkloadShareCell(percentage: number) {
           total_ex_vat: number | null;
           total: number | null;
           period: string | null;
+          currency_code: string | null;
         }>;
 
         for (const row of rows) {
@@ -3445,7 +3478,10 @@ function renderWorkloadShareCell(percentage: number) {
           const targetCustomerIds = customerIdsByContractNumber.get(contractNumber);
           if (!targetCustomerIds || targetCustomerIds.length === 0) continue;
 
-          const annualized = annualizeContractTotal(row.total_ex_vat, row.period);
+          const annualized = annualizeContractTotal(
+            toSek(row.total_ex_vat, row.currency_code, currencyRates),
+            row.period,
+          );
 
           for (const customerId of targetCustomerIds) {
             const current =
@@ -4662,7 +4698,11 @@ function renderWorkloadShareCell(percentage: number) {
       enableSorting: false,
       cell: ({ row }) =>
         sekFormatter.format(
-                  Number(row.original.total_ex_vat ?? 0),
+                  toSek(
+                    row.original.total_ex_vat,
+                    row.original.currency_code,
+                    currencyRates,
+                  ),
         ),
     },
     {
@@ -4673,7 +4713,11 @@ function renderWorkloadShareCell(percentage: number) {
       cell: ({ row }) =>
         sekFormatter.format(
                   annualizeContractTotal(
-                    row.original.total_ex_vat,
+                    toSek(
+                      row.original.total_ex_vat,
+                      row.original.currency_code,
+                      currencyRates,
+                    ),
                     row.original.period,
                   ),
         ),

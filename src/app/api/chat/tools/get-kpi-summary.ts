@@ -1,4 +1,9 @@
-import { annualizeContractTotal, chunkArray } from "@/lib/reports";
+import {
+  annualizeContractTotal,
+  chunkArray,
+  loadCurrencyRates,
+  toSek,
+} from "@/lib/reports";
 
 import { drainPages } from "./contract-values";
 import type { ToolHandler } from "./types";
@@ -578,6 +583,9 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
     const annualizedByFortnox = new Map<string, number>();
     if (fortnoxNumbers.length > 0) {
       try {
+        // Contract amounts stay in Fortnox's invoicing currency; this summary
+        // reports kronor, so convert before summing.
+        const currencyRates = await loadCurrencyRates(supabase);
         // Chunked AND paginated. With 5-10 contracts per customer typical,
         // a chunk of 100 customers can produce >1000 contract rows, and
         // PostgREST's default cap would silently lose contracts —
@@ -588,10 +596,13 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
             fortnox_customer_number: string | null;
             total_ex_vat: number | null;
             period: string | null;
+            currency_code: string | null;
           }>(() =>
             supabase
               .from("contract_accruals")
-              .select("fortnox_customer_number, total_ex_vat, period")
+              .select(
+                "fortnox_customer_number, total_ex_vat, period, currency_code",
+              )
               .in("fortnox_customer_number", chunk)
               .eq("is_active", true),
           );
@@ -599,7 +610,7 @@ export const getKpiSummary: ToolHandler<GetKpiSummaryInput> = async (
           for (const row of rows) {
             if (!row.fortnox_customer_number) continue;
             const annualized = annualizeContractTotal(
-              row.total_ex_vat,
+              toSek(row.total_ex_vat, row.currency_code, currencyRates),
               row.period,
             );
             const prev =

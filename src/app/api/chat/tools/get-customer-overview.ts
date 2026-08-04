@@ -1,4 +1,8 @@
-import { annualizeContractTotal } from "@/lib/reports";
+import {
+  annualizeContractTotal,
+  loadCurrencyRates,
+  toSek,
+} from "@/lib/reports";
 
 import { fetchAnnualizedContractValuesByCustomerId } from "./contract-values";
 import type { ToolHandler } from "./types";
@@ -79,9 +83,10 @@ export const getCustomerOverview: ToolHandler<GetCustomerOverviewInput> = async 
       fortnoxCustomerNumber
         ? supabase
             .from("contract_accruals")
-            .select("id, contract_number, total_ex_vat, period, end_date", {
-              count: "exact",
-            })
+            .select(
+              "id, contract_number, total_ex_vat, period, end_date, currency_code",
+              { count: "exact" },
+            )
             .eq("is_active", true)
             .eq("fortnox_customer_number", fortnoxCustomerNumber)
         : Promise.resolve({ data: [], count: 0, error: null }),
@@ -136,12 +141,19 @@ export const getCustomerOverview: ToolHandler<GetCustomerOverviewInput> = async 
     total_ex_vat: number | null;
     period: string | null;
     end_date: string | null;
+    currency_code: string | null;
   };
+  // The annualized figure is quoted in SEK/år, so a EUR contract has to be
+  // converted first — `total_ex_vat` itself stays as Fortnox delivered it.
+  const currencyRates = await loadCurrencyRates(supabase);
   const contractsSample = (
     ((contractsRes.data ?? []) as unknown as ContractSampleRow[]).slice(0, 5)
   ).map((row) => ({
     ...row,
-    annualized_value: annualizeContractTotal(row.total_ex_vat, row.period),
+    annualized_value: annualizeContractTotal(
+      toSek(row.total_ex_vat, row.currency_code, currencyRates),
+      row.period,
+    ),
     annualized_value_unit: "SEK/år",
   }));
 
