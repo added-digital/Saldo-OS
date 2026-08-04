@@ -279,7 +279,11 @@ RETURNS TABLE (
 
   fixed_monthly_price NUMERIC,
   note TEXT,
-  position DOUBLE PRECISION
+  -- Quoted: `position` is a col_name_keyword. Postgres accepts it as a table
+  -- column (tasks.position, engagements' board position) but rejects it bare as
+  -- a function output parameter name. Quoting keeps the returned field called
+  -- `position`, so the client type is unaffected.
+  "position" DOUBLE PRECISION
 )
 LANGUAGE sql
 STABLE
