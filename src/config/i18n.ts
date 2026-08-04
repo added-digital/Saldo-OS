@@ -860,6 +860,9 @@ const dictionaries = {
     "reports.invoiceStatus.pending": "Pending",
     "reports.invoiceStatus.overdue": "Overdue",
     "kpi.labels.turnoverPerHoursAvg": "Turnover / Hours Avg (kr/h)",
+    "kpi.turnoverPerHour.hoursInPeriod": "h in period",
+    "kpi.turnoverPerHour.insufficient":
+      "Too little time reported for a meaningful rate",
     "kpi.labels.contractValue": "Contract Value (kr)",
     "settings.teams.toast.createFailed": "Failed to create team",
     "settings.teams.toast.created": "Team created",
@@ -2289,6 +2292,9 @@ const dictionaries = {
     "reports.invoiceStatus.pending": "Obetald",
     "reports.invoiceStatus.overdue": "Förfallen",
     "kpi.labels.turnoverPerHoursAvg": "Omsättning / Timmar snitt (kr/h)",
+    "kpi.turnoverPerHour.hoursInPeriod": "h i perioden",
+    "kpi.turnoverPerHour.insufficient":
+      "För få rapporterade timmar för ett rättvisande snitt",
     "kpi.labels.contractValue": "Avtalsvärde (kr)",
     "settings.teams.toast.createFailed": "Kunde inte skapa team",
     "settings.teams.toast.created": "Team skapat",

@@ -50,6 +50,14 @@ type ComparisonPillProps = {
 
 const COMPARISON_PILL_CAP = 999;
 
+// Turnover / hours divides a full period's invoicing by whatever hours happen
+// to be logged against the customer. Fixed-fee customers whose work is not
+// time-reported here end up with a handful of stray hours in the denominator —
+// one customer with a single 1,25 h entry rendered as "250 783 kr/h", which
+// reads as a real rate. Below this many hours the ratio says more about the
+// time reporting than about the customer, so the figure is withheld.
+const MIN_HOURS_FOR_RATE = 10;
+
 function ComparisonPill({ current, previous }: ComparisonPillProps) {
   const { t } = useTranslation();
 
@@ -152,6 +160,20 @@ function KpiCards({
       ? previousTurnoverPerHour
       : previousValues?.hours;
 
+  // The hours behind the ratio, always shown in kr/h mode so the reader can
+  // judge the figure — and the sole reason it is withheld when too thin.
+  const rateHasEnoughHours =
+    hoursMode !== "turnoverPerHour" || values.hours >= MIN_HOURS_FOR_RATE;
+  const hoursCaption =
+    hoursMode === "turnoverPerHour"
+      ? `${new Intl.NumberFormat("sv-SE", {
+          // Two decimals so a thin denominator reads exactly as reported
+          // (1,25 h), not rounded into looking like a rounder number.
+          maximumFractionDigits: 2,
+          minimumFractionDigits: 1,
+        }).format(values.hours)} ${t("kpi.turnoverPerHour.hoursInPeriod", "h in period")}`
+      : null;
+
   return (
     <div className={gridClassName}>
       <Card className={compact ? "gap-2" : ""}>
@@ -234,21 +256,47 @@ function KpiCards({
         </CardHeader>
         <CardContent className={cardContentClassName}>
           <div className="flex flex-wrap items-center gap-2">
-            <p className={valueClassName}>
-              <NumberFlow
-                value={thirdKpiCurrent}
-                locales="sv-SE"
-                format={{
-                  maximumFractionDigits: hoursMode === "turnoverPerHour" ? 0 : 1,
-                  minimumFractionDigits: hoursMode === "turnoverPerHour" ? 0 : 1,
-                }}
-              />
-            </p>
-            <ComparisonPill
-              current={thirdKpiCurrent}
-              previous={thirdKpiPrevious}
-            />
+            {rateHasEnoughHours ? (
+              <>
+                <p className={valueClassName}>
+                  <NumberFlow
+                    value={thirdKpiCurrent}
+                    locales="sv-SE"
+                    format={{
+                      maximumFractionDigits:
+                        hoursMode === "turnoverPerHour" ? 0 : 1,
+                      minimumFractionDigits:
+                        hoursMode === "turnoverPerHour" ? 0 : 1,
+                    }}
+                  />
+                </p>
+                <ComparisonPill
+                  current={thirdKpiCurrent}
+                  previous={thirdKpiPrevious}
+                />
+              </>
+            ) : (
+              <p
+                className={cn(valueClassName, "text-muted-foreground")}
+                title={t(
+                  "kpi.turnoverPerHour.insufficient",
+                  "Too little time reported for a meaningful rate",
+                )}
+              >
+                –
+              </p>
+            )}
           </div>
+          {hoursCaption ? (
+            <p className="mt-1 text-[11px] leading-tight text-muted-foreground">
+              {rateHasEnoughHours
+                ? hoursCaption
+                : `${hoursCaption} · ${t(
+                    "kpi.turnoverPerHour.insufficient",
+                    "Too little time reported for a meaningful rate",
+                  )}`}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
