@@ -12,6 +12,7 @@ import {
   ClipboardList,
   ListTodo,
   Inbox,
+  CalendarRange,
   type LucideIcon,
 } from "lucide-react"
 
@@ -48,6 +49,9 @@ export const navigation: NavSection[] = [
       // Ad-hoc tasks outside the recurring services (rådgivning, follow-ups),
       // handed between colleagues. Open to all staff — no scope gate.
       { label: "Tasks", href: "/uppgifter", icon: ListTodo },
+      // Beläggning — estimated workload per customer and month, with the
+      // recurring-work capture that the estimates will eventually be built on.
+      { label: "Beläggning", href: "/belaggning", icon: CalendarRange, badge: "beta" },
       // Licensfakturering — Fortnox/Reda price & discount calculator (replaces
       // the "Huvud excel" macro workbook). Admin-only.
       { label: "Licenser", href: "/licenser", icon: FileSpreadsheet, minRole: "admin" },
