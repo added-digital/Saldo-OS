@@ -3,9 +3,11 @@
 import * as React from "react"
 import {
   CalendarClock,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  Columns3,
   Lock,
   ShieldCheck,
   Sparkles,
@@ -18,6 +20,7 @@ import { useTranslation } from "@/hooks/use-translation"
 import type { ResourceBoardRow, ResourceStatus } from "@/types/resource"
 import { PageHeader } from "@/components/app/page-header"
 import { ManagerFilter } from "@/components/app/engagement-filters"
+import { BelaggningCalendar } from "@/components/app/belaggning-calendar"
 import { RecurringWorkSheet } from "@/components/app/recurring-work-sheet"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -37,8 +40,11 @@ const UNASSIGNED = "unassigned"
  * because the capacity is wrong, not because the work is.
  */
 const MONTHLY_CAPACITY_HOURS = 120
+/** ~4.33 weeks to a month; used to express the same capacity per week. */
+const WEEKS_PER_MONTH = 4.33
 
 type Consultant = { id: string; name: string }
+type ViewMode = "kalender" | "tavla"
 
 function monthLabel(year: number, month: number, locale: string) {
   return new Intl.DateTimeFormat(locale === "sv" ? "sv-SE" : "en-GB", {
@@ -75,6 +81,7 @@ export function BelaggningBoard() {
   const [statuses, setStatuses] = React.useState<ResourceStatus[]>([])
   const [consultants, setConsultants] = React.useState<Consultant[]>([])
   const [filterManager, setFilterManager] = React.useState<string>(ALL)
+  const [view, setView] = React.useState<ViewMode>("kalender")
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = React.useState<string | null>(null)
   const [captureFor, setCaptureFor] = React.useState<ResourceBoardRow | null>(null)
@@ -223,6 +230,28 @@ export function BelaggningBoard() {
   const totalPlanned = visibleRows.reduce((sum, r) => sum + Number(r.effective_hours ?? 0), 0)
   const unconfirmed = visibleRows.filter((r) => r.recurring_confirmed === 0).length
 
+  /**
+   * How many people the weekly capacity line is measured against. Once work is
+   * assigned this is simply the utförare in view. Before anything is assigned
+   * there are none — so a single-manager filter measures against that one
+   * person (their own month), and the unfiltered view against every
+   * kundansvarig present, which is the closest honest stand-in until planned
+   * absence and FTE exist as data.
+   */
+  const peopleInView = React.useMemo(() => {
+    const assignees = new Set(
+      visibleRows.map((r) => r.assignee_id).filter((id): id is string => Boolean(id)),
+    )
+    if (assignees.size > 0) return assignees.size
+    if (filterManager !== ALL) return 1
+    return Math.max(
+      new Set(
+        visibleRows.map((r) => r.kundansvarig_id).filter((id): id is string => Boolean(id)),
+      ).size,
+      1,
+    )
+  }, [visibleRows, filterManager])
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -260,6 +289,26 @@ export function BelaggningBoard() {
           allLabel={t("belaggning.filter.allManagers", "All customer managers")}
           searchPlaceholder={t("belaggning.filter.searchManager", "Search manager")}
         />
+        <div className="flex items-center gap-1 rounded-md border p-0.5">
+          <Button
+            variant={view === "kalender" ? "secondary" : "ghost"}
+            size="xs"
+            className="h-7 gap-1 px-2"
+            onClick={() => setView("kalender")}
+          >
+            <CalendarDays className="size-3.5" />
+            {t("belaggning.view.calendar", "Calendar")}
+          </Button>
+          <Button
+            variant={view === "tavla" ? "secondary" : "ghost"}
+            size="xs"
+            className="h-7 gap-1 px-2"
+            onClick={() => setView("tavla")}
+          >
+            <Columns3 className="size-3.5" />
+            {t("belaggning.view.board", "Board")}
+          </Button>
+        </div>
       </PageHeader>
 
       <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
@@ -283,6 +332,41 @@ export function BelaggningBoard() {
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-64 w-full" />
           ))}
+        </div>
+      ) : view === "kalender" ? (
+        <div className="space-y-4">
+          <BelaggningCalendar
+            rows={visibleRows}
+            year={year}
+            month={month}
+            weeklyCapacityHours={(peopleInView * MONTHLY_CAPACITY_HOURS) / WEEKS_PER_MONTH}
+            onSelect={setCaptureFor}
+          />
+
+          <div>
+            <h2 className="mb-2 text-sm font-medium">
+              {t("belaggning.calendar.customers", "Customers this month")}
+            </h2>
+            {/* A dense grid rather than one tall column: 19 customers in a
+                single strip was a list, not a plan. */}
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {visibleRows
+                .slice()
+                .sort((a, b) => Number(b.effective_hours ?? 0) - Number(a.effective_hours ?? 0))
+                .map((row) => (
+                  <CompactRow
+                    key={row.customer_id}
+                    row={row}
+                    onCapture={() => setCaptureFor(row)}
+                  />
+                ))}
+            </div>
+            {visibleRows.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                {t("belaggning.calendar.noCustomers", "No customers in this view")}
+              </p>
+            ) : null}
+          </div>
         </div>
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-4">
@@ -390,6 +474,56 @@ export function BelaggningBoard() {
           )
         }}
       />
+    </div>
+  )
+}
+
+/**
+ * One customer as a single dense line: name, hours, and only the badges that
+ * demand an action. Used by the calendar view, where the point is scanning
+ * twenty customers at once rather than reading any one of them.
+ */
+function CompactRow({
+  row,
+  onCapture,
+}: {
+  row: ResourceBoardRow
+  onCapture: () => void
+}) {
+  const { t } = useTranslation()
+  const hours = Number(row.effective_hours ?? 0)
+
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-2">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{row.customer_name}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {row.assignee_name ?? row.kundansvarig_name ?? "—"}
+        </p>
+      </div>
+
+      {row.event_label ? (
+        <span title={`${row.event_label}${row.event_due_date ? ` · ${row.event_due_date}` : ""}`}>
+          <Lock className="size-3.5 shrink-0 text-semantic-warning" />
+        </span>
+      ) : null}
+
+      {row.recurring_confirmed === 0 ? (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onCapture}
+          title={t("belaggning.card.confirmWork", "Confirm recurring work")}
+        >
+          <CircleAlert className="size-3.5 text-semantic-warning" />
+        </Button>
+      ) : (
+        <ShieldCheck className="size-3.5 shrink-0 text-semantic-success" />
+      )}
+
+      <span className="w-12 shrink-0 text-right text-sm font-semibold tabular-nums">
+        {hours >= MIN_HOURS_FOR_ESTIMATE ? `${hourFormatter.format(hours)} h` : "–"}
+      </span>
     </div>
   )
 }
