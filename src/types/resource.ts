@@ -1,6 +1,7 @@
 // Types for the Beläggning board (resursplanering).
-// Mirrors supabase/migrations/00112_resource_planning.sql. These tables aren't
-// in the generated Database type yet, so queries cast results to these.
+// Mirrors supabase/migrations/00112_resource_planning.sql,
+// 00113_resource_capacity.sql and 00114_resource_structure.sql. These tables
+// aren't in the generated Database type yet, so queries cast results to these.
 
 export type ResourceCadence = "manad" | "kvartal" | "ar" | "vid_behov"
 
@@ -10,6 +11,17 @@ export type ResourceCadence = "manad" | "kvartal" | "ar" | "vid_behov"
  * This is the distinction the board exists to support.
  */
 export type ResourceHardness = "lagstadgad" | "intern"
+
+/** Why a card carries no usable estimate. NULL = it does. */
+export type ResourceAssessmentReason =
+  | "ny_kund"
+  | "vilande"
+  | "ingen_historik"
+  | "for_lite_historik"
+
+export type ResourceEventKind = "bokslut" | "ink2" | "loner" | "moms" | "agi"
+
+export type AbsenceType = "semester" | "sjuk" | "foraldraledig" | "ovrigt"
 
 export interface ResourceStatus {
   id: string
@@ -37,6 +49,10 @@ export interface CustomerRecurringWork {
   is_active: boolean
   confirmed_at: string | null
   confirmed_by: string | null
+  /** In how many of the last 12 months this activity was logged. */
+  months_seen: number | null
+  /** How many months of history the proposal was measured over. */
+  months_total: number | null
   created_at: string
   updated_at: string
 }
@@ -61,26 +77,95 @@ export interface ResourceBoardRow {
   status_sort: number | null
   status_is_done: boolean | null
 
-  /**
-   * Mean of the last 3 complete months. Crude by design: ±38% per customer,
-   * ~17% once summed over a portfolio, which is the number the board is for.
-   */
+  /** Structural, near-stable part of the estimate. */
   lopande_estimate_hours: number
+  /** Bokslut, INK2, årsredovisning — lumpy, anchored to the fiscal year. */
+  handelsestyrt_estimate_hours: number
   /** Manager's override. NULL = the estimate stands unargued-with. */
   planned_hours: number | null
-  /** planned_hours ?? lopande_estimate_hours — what the column totals use. */
+  /** planned_hours ?? (löpande + händelsestyrt) — what the totals use. */
   effective_hours: number
 
   recurring_total: number
   recurring_confirmed: number
+  /** Up to three labels answering "vad ska göras". */
+  top_activities: string[]
 
-  /** Händelsestyrd work landing in this month, from the engagement dates. */
+  /** The month's hardest-to-move anchor for this customer. */
   event_label: string | null
   event_due_date: string | null
   event_hardness: ResourceHardness | null
+  event_kind: ResourceEventKind | null
+
+  assessment_reason: ResourceAssessmentReason | null
+  last_reported_date: string | null
+  history_months: number
 
   /** Avtalad månadsavgift, for the planerat-vs-avtalat overlay. */
   fixed_monthly_price: number | null
   note: string | null
   position: number | null
+}
+
+/** One row of `resource_month_events(year, month)`. */
+export interface ResourceMonthEvent {
+  customer_id: string
+  kind: ResourceEventKind
+  label: string
+  due_date: string
+  hardness: ResourceHardness
+  rank: number
+}
+
+/**
+ * One row of `resource_capacity(year, month)`.
+ *
+ * available_hours = (arbetsdagar − helgdagar − planerad frånvaro)
+ *                   × (weekly_hours / 5) × billable_target
+ */
+export interface ResourceCapacityRow {
+  profile_id: string
+  profile_name: string | null
+  workdays: number
+  holiday_days: number
+  absence_days: number
+  weekly_hours: number
+  billable_target: number
+  available_hours: number
+}
+
+export interface Absence {
+  id: string
+  profile_id: string
+  start_date: string
+  end_date: string
+  type: AbsenceType
+  note: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SwedishHoliday {
+  date: string
+  name: string
+  is_public_holiday: boolean
+}
+
+/** One row of `resource_unconfirmed_customers(manager_id)`. */
+export interface UnconfirmedCustomer {
+  customer_id: string
+  customer_name: string
+  proposed: number
+}
+
+/**
+ * Load thresholds, shared by the header bar and every column bar so the same
+ * number never reads as two different states.
+ */
+export function loadTone(load: number): "neutral" | "success" | "warning" | "error" {
+  if (load > 1.1) return "error"
+  if (load > 0.95) return "warning"
+  if (load >= 0.7) return "success"
+  return "neutral"
 }

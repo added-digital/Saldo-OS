@@ -1,17 +1,14 @@
 "use client"
 
 import * as React from "react"
-import { Check, Lock, Plus, Trash2 } from "lucide-react"
+import { Check, CornerDownLeft, Lock, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
-import type {
-  CustomerRecurringWork,
-  ResourceCadence,
-} from "@/types/resource"
+import type { CustomerRecurringWork, ResourceCadence } from "@/types/resource"
 import {
   Sheet,
   SheetContent,
@@ -26,40 +23,57 @@ import { Skeleton } from "@/components/ui/skeleton"
 
 const CADENCE_ORDER: ResourceCadence[] = ["manad", "kvartal", "ar", "vid_behov"]
 
+export type ConfirmQueueItem = { customer_id: string; customer_name: string }
+
 /**
- * The capture step.
+ * The capture step — and the one gate every later improvement sits behind.
  *
- * The structural drivers of löpande work — momsperiod, antal anställda,
- * bokföringsfrekvens — are not stored anywhere, which is why estimating from
- * history alone tops out at ±38% per customer. Rather than backfill them as a
- * project, this sheet proposes what the customer's own time entries say they
- * recur on and asks a human to confirm it. The first month of using the board
- * is the data collection.
+ * The structural drivers of löpande work were not stored anywhere, which is why
+ * estimating from history alone tops out at ±38% per customer. Rather than
+ * backfill them as a project, this sheet proposes what the customer's own time
+ * entries say recurs — label, typisk tid per månad, and how many of the last 12
+ * months it appeared in — and asks a human to say yes.
+ *
+ * It runs as a queue, not as a dialog you open twenty times: Enter confirms and
+ * moves to the next customer, so a twenty-customer portfolio is a few minutes
+ * rather than an afternoon. The evidence is on the row precisely so nobody has
+ * to go and look it up in Fortnox to answer.
  *
  * `Löner enligt uppdragsbrev` — one of the most-logged activities in the firm —
  * says outright that the uppdragsavtal is the ground truth for scope. The
  * proposal is a starting point for that conversation, not a substitute.
  */
 export function RecurringWorkSheet({
-  customerId,
-  customerName,
+  queue,
+  startIndex = 0,
   open,
   onOpenChange,
   onConfirmed,
 }: {
-  customerId: string | null
-  customerName: string
+  queue: ConfirmQueueItem[]
+  startIndex?: number
   open: boolean
   onOpenChange: (open: boolean) => void
-  onConfirmed: (confirmedCount: number) => void
+  onConfirmed: (customerId: string, confirmedCount: number) => void
 }) {
   const { t } = useTranslation()
   const { user } = useUser()
   const supabase = React.useMemo(() => createClient(), [])
 
+  const [index, setIndex] = React.useState(startIndex)
+  const [done, setDone] = React.useState(0)
   const [loading, setLoading] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [items, setItems] = React.useState<CustomerRecurringWork[]>([])
+
+  const current = queue[index] ?? null
+
+  React.useEffect(() => {
+    if (open) {
+      setIndex(startIndex)
+      setDone(0)
+    }
+  }, [open, startIndex])
 
   const cadenceLabels: Record<ResourceCadence, string> = React.useMemo(
     () => ({
@@ -72,10 +86,10 @@ export function RecurringWorkSheet({
   )
 
   React.useEffect(() => {
-    if (!open || !customerId) return
+    if (!open || !current) return
     let cancelled = false
 
-    const id = customerId
+    const id = current.customer_id
 
     async function load() {
       setLoading(true)
@@ -116,17 +130,17 @@ export function RecurringWorkSheet({
     return () => {
       cancelled = true
     }
-  }, [open, customerId, supabase, t])
+  }, [open, current, supabase, t])
 
   function patch(id: string, changes: Partial<CustomerRecurringWork>) {
-    setItems((current) =>
-      current.map((item) => (item.id === id ? { ...item, ...changes } : item)),
+    setItems((list) =>
+      list.map((item) => (item.id === id ? { ...item, ...changes } : item)),
     )
   }
 
   async function remove(id: string) {
     const previous = items
-    setItems((current) => current.filter((item) => item.id !== id))
+    setItems((list) => list.filter((item) => item.id !== id))
 
     const { error } = await supabase
       .from("customer_recurring_work")
@@ -139,8 +153,25 @@ export function RecurringWorkSheet({
     }
   }
 
-  async function confirmAll() {
-    if (!customerId || items.length === 0) return
+  function advance() {
+    if (index + 1 < queue.length) {
+      setIndex(index + 1)
+    } else {
+      onOpenChange(false)
+    }
+  }
+
+  async function confirmCurrent() {
+    if (!current || saving) return
+
+    // Confirming an empty list is a real answer — "this customer needs nothing
+    // recurring" — but there is no row to stamp, so it just moves on.
+    if (items.length === 0) {
+      setDone((count) => count + 1)
+      advance()
+      return
+    }
+
     setSaving(true)
 
     const stamp = new Date().toISOString()
@@ -154,8 +185,10 @@ export function RecurringWorkSheet({
       hardness: item.hardness,
       source: item.source,
       is_active: true,
+      months_seen: item.months_seen,
+      months_total: item.months_total,
       confirmed_at: stamp,
-      confirmed_by: user?.id ?? null,
+      confirmed_by: user.id,
     }))
 
     const { error } = await supabase
@@ -169,21 +202,18 @@ export function RecurringWorkSheet({
       return
     }
 
-    setItems((current) =>
-      current.map((item) => ({ ...item, confirmed_at: stamp })),
-    )
-    onConfirmed(items.length)
-    toast.success(t("belaggning.recurring.saved", "Recurring work confirmed"))
-    onOpenChange(false)
+    onConfirmed(current.customer_id, items.length)
+    setDone((count) => count + 1)
+    advance()
   }
 
   async function addBlank() {
-    if (!customerId) return
+    if (!current) return
 
     const { data, error } = await supabase
       .from("customer_recurring_work")
       .insert({
-        customer_id: customerId,
+        customer_id: current.customer_id,
         label: t("belaggning.recurring.newLabel", "New task"),
         cadence: "manad",
         hardness: "intern",
@@ -197,16 +227,24 @@ export function RecurringWorkSheet({
       return
     }
 
-    setItems((current) => [...current, data as CustomerRecurringWork])
+    setItems((list) => [...list, data as CustomerRecurringWork])
   }
-
-  const unconfirmed = items.filter((item) => item.confirmed_at === null).length
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col gap-0 sm:max-w-lg">
+      <SheetContent
+        className="flex w-full flex-col gap-0 sm:max-w-lg"
+        onKeyDown={(event) => {
+          // Enter anywhere in the sheet confirms and moves on — the whole point
+          // is that a customer takes seconds, not a round trip to the mouse.
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault()
+            void confirmCurrent()
+          }
+        }}
+      >
         <SheetHeader>
-          <SheetTitle>{customerName}</SheetTitle>
+          <SheetTitle>{current?.customer_name ?? ""}</SheetTitle>
           <SheetDescription>
             {t(
               "belaggning.recurring.description",
@@ -214,6 +252,22 @@ export function RecurringWorkSheet({
             )}
           </SheetDescription>
         </SheetHeader>
+
+        {queue.length > 1 ? (
+          <div className="space-y-1 px-4 pb-3">
+            <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-brand-primary transition-all"
+                style={{ width: `${(done / queue.length) * 100}%` }}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground tabular-nums">
+              {t("belaggning.recurring.progress", "{done} of {total} confirmed")
+                .replace("{done}", String(done))
+                .replace("{total}", String(queue.length))}
+            </p>
+          </div>
+        ) : null}
 
         <div className="flex-1 space-y-2 overflow-y-auto px-4">
           {loading ? (
@@ -307,6 +361,16 @@ export function RecurringWorkSheet({
                       : t("belaggning.hardness.intern", "Internal")}
                   </Button>
 
+                  {/* The evidence for the proposal, so the answer is one look
+                      rather than a trip to Fortnox. */}
+                  {item.months_seen && item.months_total ? (
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {t("belaggning.recurring.frequency", "{seen} of {total} months")
+                        .replace("{seen}", String(item.months_seen))
+                        .replace("{total}", String(item.months_total))}
+                    </span>
+                  ) : null}
+
                   {item.source === "derived" && !item.confirmed_at ? (
                     <Badge variant="outline" className="text-xs font-normal">
                       {t("belaggning.recurring.proposed", "Proposed")}
@@ -327,12 +391,18 @@ export function RecurringWorkSheet({
         <div className="flex items-center justify-between gap-2 border-t p-4">
           <Button variant="outline" size="sm" onClick={() => void addBlank()}>
             <Plus className="size-4" />
-            {t("belaggning.recurring.add", "Add")}
+            {t("belaggning.recurring.add", "Add task")}
           </Button>
-          <Button size="sm" onClick={() => void confirmAll()} disabled={saving || loading}>
-            {unconfirmed > 0
-              ? t("belaggning.recurring.confirmAll", "Confirm all")
-              : t("belaggning.recurring.save", "Save")}
+          <Button
+            size="sm"
+            className="gap-2"
+            onClick={() => void confirmCurrent()}
+            disabled={saving || loading}
+          >
+            {index + 1 < queue.length
+              ? t("belaggning.recurring.confirmNext", "Confirm and next")
+              : t("belaggning.recurring.confirmAll", "Confirm")}
+            <CornerDownLeft className="size-3.5 opacity-70" />
           </Button>
         </div>
       </SheetContent>
