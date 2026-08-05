@@ -1,27 +1,14 @@
 "use client"
 
 import * as React from "react"
-import { CalendarDays, ChevronDown, ChevronUp, Lock, Plane } from "lucide-react"
+import { Lock, Plane } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
-import { loadTone, type ResourceEventKind, type ResourceMonthEvent } from "@/types/resource"
-import { Button } from "@/components/ui/button"
-
-const hourFormatter = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 })
+import type { ResourceMonthEvent } from "@/types/resource"
 
 /** Monday-first, matching Swedish convention. */
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
-
-/** Anchors that represent lumpy, one-off work rather than the monthly rhythm. */
-const EVENT_KINDS: ResourceEventKind[] = ["bokslut", "ink2"]
-
-const TONE_CLASS = {
-  neutral: "bg-muted-foreground",
-  success: "bg-semantic-success",
-  warning: "bg-semantic-warning",
-  error: "bg-semantic-error",
-} as const
 
 export type CalendarEvent = ResourceMonthEvent & { customer_name: string }
 
@@ -57,30 +44,23 @@ type DayCell = {
   date: Date
   key: string
   inMonth: boolean
-  isWorkday: boolean
   holiday: string | null
   events: CalendarEvent[]
 }
 
 /**
- * Month view of a single period.
+ * Dated work, on its date. Nothing else.
  *
- * Every date drawn here is derived from something real:
+ * Every event here comes from a fact about the customer: momsperiod puts moms
+ * and AGI on the 12th (the 26th for stora företag), payroll_run_day puts lönerna
+ * on the 25th, and the engagement's own dates place bokslut and INK2.
  *
- *   moms / AGI   den 12:e (den 26:e för stora företag), from customers.moms_period
- *   löner        customers.payroll_run_day, default den 25:e
- *   bokslut      the engagement's own deadline
- *   INK2         the engagement's INK2 date, or the internal one computed from
- *                räkenskapsårsslutet
- *
- * Nothing is invented to fill the grid. A month with no derivable anchors
- * collapses to a single line and gives the space back to the customer cards,
- * because six empty week rows is not information.
- *
- * The week bar separates the two kinds of hours it is made of: anchored hours
- * sit in the week their date falls in, and everything else is a flat remainder,
- * labelled as such. A flat spread presented as a forecast implies knowledge of
- * *when* work happens that the system does not have.
+ * Löpande hours are deliberately absent. They carry no day-level signal
+ * anywhere in the data, and the week bars that used to spread them were the
+ * month total divided by workdays — identical by construction, inviting a
+ * comparison between weeks that could never come out any way but even. A grid
+ * is a claim about *when*, and the parent renders no calendar at all in a month
+ * with no derivable dates rather than offering to show an empty one.
  */
 export function BelaggningCalendar({
   year,
@@ -88,9 +68,6 @@ export function BelaggningCalendar({
   events,
   holidays,
   absences,
-  eventHoursByCustomer,
-  lopandeTotalHours,
-  monthlyAvailableHours,
   onSelect,
 }: {
   year: number
@@ -98,17 +75,10 @@ export function BelaggningCalendar({
   events: CalendarEvent[]
   holidays: Array<{ date: string; name: string }>
   absences: CalendarAbsence[]
-  /** Händelsestyrda hours per customer, placed on that customer's anchor days. */
-  eventHoursByCustomer: Record<string, number>
-  /** Everything that is not anchored — spread flat, and labelled as spread. */
-  lopandeTotalHours: number
-  monthlyAvailableHours: number
   onSelect: (customerId: string) => void
 }) {
-  const { t, language } = useTranslation()
+  const { language } = useTranslation()
   const locale = language === "sv" ? "sv-SE" : "en-GB"
-  // A month with no anchors collapses by default; opening it is a deliberate act.
-  const [expanded, setExpanded] = React.useState(false)
 
   const holidayByDate = React.useMemo(() => {
     const map = new Map<string, string>()
@@ -140,13 +110,11 @@ export function BelaggningCalendar({
       const week: DayCell[] = []
       for (let i = 0; i < 7; i += 1) {
         const key = isoDate(cursor)
-        const holiday = holidayByDate.get(key) ?? null
         week.push({
           date: new Date(cursor),
           key,
           inMonth: cursor.getMonth() === month - 1,
-          isWorkday: !isWeekend(cursor) && holiday === null,
-          holiday,
+          holiday: holidayByDate.get(key) ?? null,
           events: eventsByDay.get(key) ?? [],
         })
         cursor.setDate(cursor.getDate() + 1)
@@ -155,17 +123,6 @@ export function BelaggningCalendar({
     }
     return out
   }, [events, holidayByDate, year, month])
-
-  const workdaysInMonth = React.useMemo(
-    () =>
-      weeks.reduce(
-        (sum, week) => sum + week.filter((cell) => cell.inMonth && cell.isWorkday).length,
-        0,
-      ),
-    [weeks],
-  )
-
-  const perWorkday = workdaysInMonth > 0 ? lopandeTotalHours / workdaysInMonth : 0
 
   const weekdayNames = React.useMemo(() => {
     const formatter = new Intl.DateTimeFormat(locale, { weekday: "short" })
@@ -179,54 +136,11 @@ export function BelaggningCalendar({
   )
 
   const today = new Date()
-  const anchorCount = events.length
-
-  if (anchorCount === 0 && !expanded) {
-    // Nothing is derivable for this month, so the calendar has nothing to say.
-    // Say that in one line instead of six empty week rows.
-    return (
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
-        <CalendarDays className="size-4 shrink-0 text-muted-foreground" />
-        <span className="text-muted-foreground">
-          {t(
-            "belaggning.calendar.noAnchors",
-            "No dated work this month — the hours are running work with no fixed day.",
-          )}
-        </span>
-        <span className="tabular-nums">
-          {hourFormatter.format(lopandeTotalHours)} h
-        </span>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="ml-auto gap-1"
-          onClick={() => setExpanded(true)}
-        >
-          {t("belaggning.calendar.show", "Show calendar")}
-          <ChevronDown className="size-3.5" />
-        </Button>
-      </div>
-    )
-  }
 
   return (
     <div className="overflow-x-auto">
       <div className="min-w-[52rem]">
-        {anchorCount === 0 ? (
-          <div className="mb-2 flex justify-end">
-            <Button
-              variant="ghost"
-              size="xs"
-              className="gap-1"
-              onClick={() => setExpanded(false)}
-            >
-              {t("belaggning.calendar.hide", "Hide calendar")}
-              <ChevronUp className="size-3.5" />
-            </Button>
-          </div>
-        ) : null}
-
-        <div className="grid grid-cols-[3.5rem_repeat(7,1fr)] gap-px">
+        <div className="grid grid-cols-[3rem_repeat(7,1fr)] gap-px">
           <div />
           {weekdayNames.map((name) => (
             <div
@@ -238,31 +152,8 @@ export function BelaggningCalendar({
           ))}
         </div>
 
-        <div className="grid grid-cols-[3.5rem_repeat(7,1fr)] gap-px rounded-lg bg-border">
+        <div className="grid grid-cols-[3rem_repeat(7,1fr)] gap-px rounded-lg bg-border">
           {weeks.map((week) => {
-            const workdays = week.filter((cell) => cell.inMonth && cell.isWorkday).length
-            const spread = perWorkday * workdays
-
-            // Anchored hours land in the week their date falls in. A customer
-            // with two anchors in the month splits its händelsestyrda hours
-            // between them rather than counting twice.
-            const anchored = week.reduce((sum, cell) => {
-              for (const event of cell.events) {
-                if (!EVENT_KINDS.includes(event.kind)) continue
-                const total = eventHoursByCustomer[event.customer_id] ?? 0
-                const anchors = events.filter(
-                  (e) => e.customer_id === event.customer_id && EVENT_KINDS.includes(e.kind),
-                ).length
-                sum += anchors > 0 ? total / anchors : 0
-              }
-              return sum
-            }, 0)
-
-            const weekCapacity =
-              workdaysInMonth > 0 ? (monthlyAvailableHours * workdays) / workdaysInMonth : 0
-            const weekLoad = weekCapacity > 0 ? (spread + anchored) / weekCapacity : 0
-            const tone = loadTone(weekLoad)
-
             const weekStart = week[0].key
             const weekEnd = week[6].key
             const away = absences.filter(
@@ -271,44 +162,10 @@ export function BelaggningCalendar({
 
             return (
               <React.Fragment key={weekStart}>
-                <div className="flex flex-col justify-center gap-1 bg-background px-2 py-2">
+                <div className="flex items-center justify-center bg-background px-2 py-2">
                   <span className="text-xs font-medium text-muted-foreground">
                     v{isoWeek(week[0].date)}
                   </span>
-                  {spread + anchored > 0 ? (
-                    <>
-                      <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className={cn("h-full rounded-full", TONE_CLASS[tone])}
-                          style={{ width: `${Math.min(weekLoad * 100, 100)}%` }}
-                        />
-                      </div>
-                      <span
-                        className="text-[10px] tabular-nums text-muted-foreground"
-                        title={t(
-                          "belaggning.calendar.weekBreakdown",
-                          "{anchored} h anchored · {spread} h spread evenly",
-                        )
-                          .replace("{anchored}", hourFormatter.format(anchored))
-                          .replace("{spread}", hourFormatter.format(spread))}
-                      >
-                        {hourFormatter.format(spread + anchored)} h
-                      </span>
-                    </>
-                  ) : (
-                    // A week whose only days fall outside the month, or on a
-                    // weekend, has nothing to plan. Blank read as broken next to
-                    // its neighbours, so it says zero out loud.
-                    <span
-                      className="text-[10px] tabular-nums text-muted-foreground"
-                      title={t(
-                        "belaggning.calendar.noWorkdays",
-                        "No working days in this month",
-                      )}
-                    >
-                      0 h
-                    </span>
-                  )}
                 </div>
 
                 {week.map((cell) => {
@@ -321,7 +178,7 @@ export function BelaggningCalendar({
                     <div
                       key={cell.key}
                       className={cn(
-                        "min-h-[5.5rem] bg-background p-1.5",
+                        "min-h-[4.5rem] bg-background p-1.5",
                         !cell.inMonth && "opacity-40",
                         (isWeekend(cell.date) || cell.holiday) && "bg-muted/30",
                       )}
@@ -354,7 +211,7 @@ export function BelaggningCalendar({
                             title={`${event.customer_name} · ${event.label}`}
                           >
                             {event.hardness === "lagstadgad" ? (
-                              <Lock className="size-2.5 shrink-0 text-semantic-warning" />
+                              <Lock className="size-2.5 shrink-0 text-semantic-error" />
                             ) : null}
                             <span className="truncate text-[11px] leading-tight">
                               {event.customer_name}
@@ -387,21 +244,6 @@ export function BelaggningCalendar({
             )
           })}
         </div>
-
-        {/* The caption describes what is on screen, not what the model could
-            do in principle: promising derived dates over an empty grid was
-            worse than the empty grid. */}
-        <p className="mt-2 text-xs text-muted-foreground">
-          {anchorCount > 0
-            ? t(
-                "belaggning.calendar.anchorNote",
-                "Dates are derived from each customer's own facts: VAT period, payroll day and fiscal year end. The weekly bar is anchored work plus a flat share of the running work — a load indication, not a schedule.",
-              )
-            : t(
-                "belaggning.calendar.spreadOnlyNote",
-                "No dated work is derivable this month, so the weekly bar is the month's running hours spread evenly across working days — a load indication, not a schedule.",
-              )}
-        </p>
       </div>
     </div>
   )

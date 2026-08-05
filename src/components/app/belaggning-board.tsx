@@ -306,19 +306,6 @@ export function BelaggningBoard() {
       }))
   }, [events, rows, visibleCustomerIds])
 
-  const eventHoursByCustomer = React.useMemo(() => {
-    const map: Record<string, number> = {}
-    for (const row of visibleRows) {
-      map[row.customer_id] = Number(row.handelsestyrt_estimate_hours ?? 0)
-    }
-    return map
-  }, [visibleRows])
-
-  const lopandeTotal = visibleRows.reduce(
-    (sum, r) => sum + Number(r.lopande_estimate_hours ?? 0),
-    0,
-  )
-
   const visibleAbsences = React.useMemo<CalendarAbsence[]>(() => {
     const inView = new Set(peopleInView)
     return absences
@@ -377,16 +364,64 @@ export function BelaggningBoard() {
     ]
   }, [visibleRows, t])
 
-  /** Cards needing a decision go first — they are the ones with no number. */
-  const [needsAssessment, estimated] = React.useMemo(() => {
+  /**
+   * Three groups, always in this order, because that is the order the questions
+   * get asked in: what needs a decision, what has a date, and then the rest.
+   * A customer belongs to exactly one — the first it qualifies for.
+   */
+  const groups = React.useMemo(() => {
     const sorted = visibleRows
       .slice()
       .sort((a, b) => Number(b.effective_hours ?? 0) - Number(a.effective_hours ?? 0))
-    return [
-      sorted.filter((row) => row.assessment_reason !== null),
-      sorted.filter((row) => row.assessment_reason === null),
-    ]
+
+    const needsAssessment = sorted.filter((row) => row.assessment_reason !== null)
+    const rest = sorted.filter((row) => row.assessment_reason === null)
+
+    return {
+      needsAssessment,
+      withDeadline: rest.filter((row) => row.event_due_date !== null),
+      lopande: rest.filter((row) => row.event_due_date === null),
+    }
   }, [visibleRows])
+
+  /**
+   * The one sentence the header exists for. Whose month it is matters — a name
+   * makes it a statement about a person, and a person is who has to act on it.
+   */
+  const verdict = React.useMemo(() => {
+    if (availableHours <= 0) return null
+
+    const remaining = availableHours - totalPlanned
+    const subject =
+      peopleInView.length === 1
+        ? (capacityById.get(peopleInView[0])?.profile_name ??
+          managers.find((m) => m.id === peopleInView[0])?.name ??
+          t("belaggning.verdict.team", "The team"))
+        : t("belaggning.verdict.team", "The team")
+
+    const template =
+      remaining >= 0
+        ? t("belaggning.verdict.free", "{who} has {hours} h free in {month}")
+        : t("belaggning.verdict.over", "{who} is {hours} h over in {month}")
+
+    return {
+      over: remaining < 0,
+      text: template
+        .replace("{who}", subject)
+        .replace("{hours}", hourFormatter.format(Math.abs(remaining)))
+        .replace("{month}", monthLabel(year, month, language).replace(/\s\d{4}$/, "")),
+    }
+  }, [
+    availableHours,
+    totalPlanned,
+    peopleInView,
+    capacityById,
+    managers,
+    year,
+    month,
+    language,
+    t,
+  ])
 
   function shiftMonth(delta: number) {
     const next = new Date(year, month - 1 + delta, 1)
@@ -517,15 +552,24 @@ export function BelaggningBoard() {
       </PageHeader>
 
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-[16rem] flex-1 space-y-1">
+        {/* The sentence is the answer; the bar underneath is the evidence for
+            it. A row of statistics made the reader do this arithmetic. */}
+        <div className="min-w-[18rem] flex-1 space-y-1.5">
+          {verdict ? (
+            <p
+              className={cn(
+                "text-base font-medium",
+                verdict.over ? "text-semantic-error" : "text-semantic-success",
+              )}
+            >
+              {verdict.text}
+            </p>
+          ) : null}
           <CapacityBar
             plannedHours={totalPlanned}
             availableHours={availableHours}
             detail={headerCapacityDetail}
           />
-          <p className="text-xs text-muted-foreground">
-            {t("belaggning.summary.customers", "Customers")}: {visibleRows.length}
-          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -576,57 +620,44 @@ export function BelaggningBoard() {
         </div>
       ) : view === "kalender" ? (
         <div className="space-y-4">
-          <BelaggningCalendar
-            year={year}
-            month={month}
-            events={calendarEvents}
-            holidays={holidays}
-            absences={visibleAbsences}
-            eventHoursByCustomer={eventHoursByCustomer}
-            lopandeTotalHours={lopandeTotal}
-            monthlyAvailableHours={availableHours}
-            onSelect={(customerId) => openConfirm(customerId)}
-          />
-
-          {needsAssessment.length > 0 ? (
-            <div>
-              <h2 className="mb-2 text-sm font-medium">
-                {t("belaggning.group.needsAssessment", "Needs a decision")}{" "}
-                <span className="text-muted-foreground">({needsAssessment.length})</span>
-              </h2>
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                {needsAssessment.map((row) => (
-                  <CompactRow
-                    key={row.customer_id}
-                    row={row}
-                    locale={locale}
-                    onCapture={() => openConfirm(row.customer_id)}
-                  />
-                ))}
-              </div>
-            </div>
+          {/* No derivable dates, no calendar. Not a collapsed one, not a
+              toggle, not a caption explaining the absence — an empty grid was
+              the thing being explained away. */}
+          {calendarEvents.length > 0 ? (
+            <BelaggningCalendar
+              year={year}
+              month={month}
+              events={calendarEvents}
+              holidays={holidays}
+              absences={visibleAbsences}
+              onSelect={(customerId) => openConfirm(customerId)}
+            />
           ) : null}
 
           {/* A heading with nothing under it is a bug report, not a section. */}
-          {estimated.length > 0 ? (
-            <div>
-              <h2 className="mb-2 text-sm font-medium">
-                {t("belaggning.calendar.customers", "Customers this month")}
-              </h2>
-              {/* A dense grid rather than one tall column: 19 customers in a
-                  single strip was a list, not a plan. */}
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                {estimated.map((row) => (
-                  <CompactRow
-                    key={row.customer_id}
-                    row={row}
-                    locale={locale}
-                    onCapture={() => openConfirm(row.customer_id)}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : null}
+          <CardGroup
+            title={t("belaggning.group.needsAssessment", "Needs a decision")}
+            rows={groups.needsAssessment}
+            locale={locale}
+            onCapture={openConfirm}
+          />
+
+          <CardGroup
+            title={t("belaggning.group.deadline", "Has a deadline in {month}").replace(
+              "{month}",
+              monthLabel(year, month, language).replace(/\s\d{4}$/, ""),
+            )}
+            rows={groups.withDeadline}
+            locale={locale}
+            onCapture={openConfirm}
+          />
+
+          <CardGroup
+            title={t("belaggning.group.lopande", "Running work")}
+            rows={groups.lopande}
+            locale={locale}
+            onCapture={openConfirm}
+          />
 
           {visibleRows.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
@@ -763,6 +794,44 @@ export function BelaggningBoard() {
         month={month}
         onChanged={() => setReloadKey((key) => key + 1)}
       />
+    </div>
+  )
+}
+
+/**
+ * One titled group of cards, or nothing at all. The count belongs in the
+ * heading — it is the first thing anyone reads to decide whether to look.
+ */
+function CardGroup({
+  title,
+  rows,
+  locale,
+  onCapture,
+}: {
+  title: string
+  rows: ResourceBoardRow[]
+  locale: string
+  onCapture: (customerId: string) => void
+}) {
+  if (rows.length === 0) return null
+
+  return (
+    <div>
+      <h2 className="mb-2 text-sm font-medium">
+        {title} <span className="text-muted-foreground">({rows.length})</span>
+      </h2>
+      {/* A dense grid rather than one tall column: 19 customers in a single
+          strip was a list, not a plan. */}
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        {rows.map((row) => (
+          <CompactRow
+            key={row.customer_id}
+            row={row}
+            locale={locale}
+            onCapture={() => onCapture(row.customer_id)}
+          />
+        ))}
+      </div>
     </div>
   )
 }
