@@ -8,7 +8,7 @@ import {
   Columns3,
   ListChecks,
   Lock,
-  Plane,
+  CalendarOff,
   ShieldCheck,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -71,6 +71,16 @@ const sekFormatter = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 0 }
  */
 const MIN_HOURS_FOR_ESTIMATE = 2
 
+/**
+ * Where a consultant's month stops being unremarkable. Both ends matter: 130 %
+ * is a problem to solve, but 9 % is a problem too — either the person is
+ * under-booked or their customers aren't linked to them. Colouring only the top
+ * end made the second kind invisible, and averaging the two together made both
+ * disappear.
+ */
+const LOAD_OVER = 0.95
+const LOAD_LOW = 0.5
+
 export function BelaggningBoard() {
   const { t, language } = useTranslation()
   const supabase = React.useMemo(() => createClient(), [])
@@ -99,6 +109,7 @@ export function BelaggningBoard() {
   const [absenceOpen, setAbsenceOpen] = React.useState(false)
   const [reloadKey, setReloadKey] = React.useState(0)
   const [schemaStale, setSchemaStale] = React.useState(false)
+  const [boardError, setBoardError] = React.useState<string | null>(null)
 
   const monthStart = React.useMemo(() => isoDate(new Date(year, month - 1, 1)), [year, month])
   const monthEnd = React.useMemo(() => isoDate(new Date(year, month, 0)), [year, month])
@@ -145,9 +156,19 @@ export function BelaggningBoard() {
       if (cancelled) return
 
       if (boardRes.error) {
+        // On the page, not only in a toast. A toast is gone in four seconds and
+        // takes the one fact that matters with it — the board then looks empty
+        // rather than broken, and an empty board is a plausible answer, which
+        // is the worst kind of wrong.
+        setBoardError(
+          [boardRes.error.code, boardRes.error.message, boardRes.error.hint]
+            .filter(Boolean)
+            .join(" · "),
+        )
         toast.error(t("belaggning.toast.loadFailed", "Could not load the board"))
         setRows([])
       } else {
+        setBoardError(null)
         // Normalised on the way in. resource_board grows columns migration by
         // migration, and an absent field must read as "nothing to say" rather
         // than as undefined — undefined !== null put every card in "Behöver
@@ -250,6 +271,45 @@ export function BelaggningBoard() {
   )
 
   const totalPlanned = visibleRows.reduce((sum, r) => sum + Number(r.effective_hours ?? 0), 0)
+
+  /**
+   * Load per consultant. This is the whole reason an unfiltered view exists: a
+   * firm-wide average hides precisely what it is meant to surface — one person
+   * at 130 % and one at 20 % read as a calm 75 % together, and there is no way
+   * to move work with a mean. Attribution follows the same rule as the header:
+   * the assignee where work has been distributed, the kundansvarig before it.
+   */
+  const perPerson = React.useMemo(() => {
+    const planned = new Map<string, number>()
+    for (const row of visibleRows) {
+      const id = row.assignee_id ?? row.kundansvarig_id
+      if (!id) continue
+      planned.set(id, (planned.get(id) ?? 0) + Number(row.effective_hours ?? 0))
+    }
+
+    return capacity
+      .map((cap) => {
+        const plannedHours = planned.get(cap.profile_id) ?? 0
+        const available = Number(cap.available_hours ?? 0)
+        return {
+          id: cap.profile_id,
+          name: cap.profile_name ?? "—",
+          plannedHours,
+          available,
+          absenceDays: Number(cap.absence_days ?? 0),
+          ratio: available > 0 ? plannedHours / available : 0,
+        }
+      })
+      .filter((p) => p.available > 0 || p.plannedHours > 0)
+      .sort((a, b) => b.ratio - a.ratio)
+  }, [visibleRows, capacity])
+
+  const overloaded = React.useMemo(
+    () => perPerson.filter((p) => p.ratio > LOAD_OVER),
+    [perPerson],
+  )
+
+  const showEveryone = filterManager === ALL
 
   /**
    * How a capacity number was arrived at, in words. Available hours are three
@@ -566,7 +626,28 @@ export function BelaggningBoard() {
         {/* The sentence is the answer; the bar underneath is the evidence for
             it. A row of statistics made the reader do this arithmetic. */}
         <div className="min-w-[18rem] flex-1 space-y-1.5">
-          {verdict ? (
+          {/* Unfiltered, the honest sentence is not "the team has 2 593 h free"
+              — that number is an average nobody can act on, and the word "free"
+              reads as sellable capacity. Lead with the exceptions instead: the
+              same data, pointed at a decision. */}
+          {showEveryone && perPerson.length > 0 ? (
+            <p
+              className={cn(
+                "text-base font-medium",
+                overloaded.length > 0 ? "text-semantic-error" : "text-semantic-success",
+              )}
+            >
+              {overloaded.length > 0
+                ? t("belaggning.verdict.someOver", "{n} of {total} are over in {month}")
+                    .replace("{n}", String(overloaded.length))
+                    .replace("{total}", String(perPerson.length))
+                    .replace("{month}", monthLabel(year, month, language).replace(/\s\d{4}$/, ""))
+                : t("belaggning.verdict.noneOver", "Nobody is over in {month}").replace(
+                    "{month}",
+                    monthLabel(year, month, language).replace(/\s\d{4}$/, ""),
+                  )}
+            </p>
+          ) : verdict ? (
             <p
               className={cn(
                 "text-base font-medium",
@@ -598,7 +679,7 @@ export function BelaggningBoard() {
           )}
 
           <Button variant="outline" size="sm" className="gap-2" onClick={() => setAbsenceOpen(true)}>
-            <Plane className="size-4" />
+            <CalendarOff className="size-4" />
             {t("belaggning.absence.action", "Absence")}
             {visibleAbsences.length > 0 ? ` (${visibleAbsences.length})` : ""}
           </Button>
@@ -613,7 +694,7 @@ export function BelaggningBoard() {
               variant="outline"
               className="gap-1 font-normal"
             >
-              <Plane className="size-3 text-semantic-info" />
+              <CalendarOff className="size-3 text-semantic-info" />
               {absence.profile_name ?? "—"}
               <span className="text-muted-foreground tabular-nums">
                 {absence.start_date.slice(5)} – {absence.end_date.slice(5)}
@@ -654,9 +735,26 @@ export function BelaggningBoard() {
             </p>
           ) : null}
 
+          {boardError ? (
+            <div className="rounded-md border border-semantic-error/40 bg-semantic-error/10 px-3 py-2">
+              <p className="text-sm font-medium text-semantic-error">
+                {t("belaggning.error.title", "The board could not be loaded")}
+              </p>
+              <p className="mt-0.5 font-mono text-xs break-words text-semantic-error/90">
+                {boardError}
+              </p>
+            </div>
+          ) : null}
+
+          {showEveryone ? (
+            <ConsultantLoadList people={perPerson} onSelect={setFilterManager} />
+          ) : null}
+
           {/* A heading with nothing under it is a bug report, not a section. */}
+          {showEveryone ? null : (
+          <>
           <CardGroup
-            title={t("belaggning.group.needsAssessment", "Needs a decision")}
+            title={t("belaggning.group.needsAssessment", "Not enough history")}
             rows={groups.needsAssessment}
             locale={locale}
             onCapture={openConfirm}
@@ -673,11 +771,13 @@ export function BelaggningBoard() {
           />
 
           <CardGroup
-            title={t("belaggning.group.lopande", "Running work")}
+            title={t("belaggning.group.lopande", "Estimated")}
             rows={groups.lopande}
             locale={locale}
             onCapture={openConfirm}
           />
+          </>
+          )}
 
           {visibleRows.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
@@ -746,7 +846,7 @@ export function BelaggningBoard() {
                       />
                       {columnAbsence > 0 ? (
                         <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                          <Plane className="size-3 text-semantic-info" />
+                          <CalendarOff className="size-3 text-semantic-info" />
                           {t("belaggning.column.absenceDays", "{days} days away").replace(
                             "{days}",
                             String(columnAbsence),
@@ -822,6 +922,96 @@ export function BelaggningBoard() {
  * One titled group of cards, or nothing at all. The count belongs in the
  * heading — it is the first thing anyone reads to decide whether to look.
  */
+/**
+ * One row per consultant, worst first. A list rather than cards or columns
+ * because the job here is scanning: 33 rows fit on one screen, and colour does
+ * the reading. Clicking a row is how you get from "who" to "what".
+ */
+function ConsultantLoadList({
+  people,
+  onSelect,
+}: {
+  people: Array<{
+    id: string
+    name: string
+    plannedHours: number
+    available: number
+    absenceDays: number
+    ratio: number
+  }>
+  onSelect: (id: string) => void
+}) {
+  const { t } = useTranslation()
+  if (people.length === 0) return null
+
+  return (
+    <div className="space-y-1">
+      {people.map((person) => {
+        const over = person.ratio > LOAD_OVER
+        const low = person.ratio < LOAD_LOW
+        const diff = person.plannedHours - person.available
+
+        return (
+          <button
+            key={person.id}
+            type="button"
+            onClick={() => onSelect(person.id)}
+            className="flex w-full items-center gap-3 rounded-md border border-border bg-card px-3 py-2 text-left transition-colors hover:bg-muted/40"
+          >
+            <span className="w-44 shrink-0 truncate text-sm font-medium">{person.name}</span>
+
+            <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+              {/* The track runs to 125 % so an overloaded month has somewhere to
+                  go — a bar pinned at full cannot show how far past full it is. */}
+              <span
+                className={cn(
+                  "block h-full rounded-full",
+                  over
+                    ? "bg-semantic-error"
+                    : low
+                      ? "bg-semantic-warning"
+                      : "bg-semantic-success",
+                )}
+                style={{ width: `${Math.min(person.ratio / 1.25, 1) * 100}%` }}
+              />
+            </span>
+
+            <span
+              className={cn(
+                "w-12 shrink-0 text-right text-sm font-semibold tabular-nums",
+                over ? "text-semantic-error" : low ? "text-semantic-warning" : undefined,
+              )}
+            >
+              {Math.round(person.ratio * 100)} %
+            </span>
+
+            <span className="w-28 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+              {diff > 0
+                ? t("belaggning.load.over", "{h} h over").replace(
+                    "{h}",
+                    hourFormatter.format(diff),
+                  )
+                : t("belaggning.load.free", "{h} h free").replace(
+                    "{h}",
+                    hourFormatter.format(-diff),
+                  )}
+            </span>
+
+            <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+              {person.absenceDays > 0
+                ? t("belaggning.load.absence", "{d} d absence").replace(
+                    "{d}",
+                    String(person.absenceDays),
+                  )
+                : ""}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function CardGroup({
   title,
   rows,
