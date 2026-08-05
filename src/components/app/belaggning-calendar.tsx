@@ -295,7 +295,20 @@ export function BelaggningCalendar({
                         {hourFormatter.format(spread + anchored)} h
                       </span>
                     </>
-                  ) : null}
+                  ) : (
+                    // A week whose only days fall outside the month, or on a
+                    // weekend, has nothing to plan. Blank read as broken next to
+                    // its neighbours, so it says zero out loud.
+                    <span
+                      className="text-[10px] tabular-nums text-muted-foreground"
+                      title={t(
+                        "belaggning.calendar.noWorkdays",
+                        "No working days in this month",
+                      )}
+                    >
+                      0 h
+                    </span>
+                  )}
                 </div>
 
                 {week.map((cell) => {
@@ -375,11 +388,19 @@ export function BelaggningCalendar({
           })}
         </div>
 
+        {/* The caption describes what is on screen, not what the model could
+            do in principle: promising derived dates over an empty grid was
+            worse than the empty grid. */}
         <p className="mt-2 text-xs text-muted-foreground">
-          {t(
-            "belaggning.calendar.anchorNote",
-            "Dates are derived from each customer's own facts: VAT period, payroll day and fiscal year end. The weekly bar is anchored work plus a flat share of the running work — a load indication, not a schedule.",
-          )}
+          {anchorCount > 0
+            ? t(
+                "belaggning.calendar.anchorNote",
+                "Dates are derived from each customer's own facts: VAT period, payroll day and fiscal year end. The weekly bar is anchored work plus a flat share of the running work — a load indication, not a schedule.",
+              )
+            : t(
+                "belaggning.calendar.spreadOnlyNote",
+                "No dated work is derivable this month, so the weekly bar is the month's running hours spread evenly across working days — a load indication, not a schedule.",
+              )}
         </p>
       </div>
     </div>

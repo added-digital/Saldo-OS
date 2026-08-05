@@ -23,18 +23,22 @@ const TONE_CLASS: Record<ReturnType<typeof loadTone>, string> = {
  * The bar is the same component in the page header and in every board column so
  * that one load never reads as two different states depending on where it sits.
  *
- * Over 100% the fill is clamped but the tone is not: a 140% column is red and
- * says so in the text, rather than quietly looking exactly like a 101% one.
+ * The track extends past full capacity and marks 100% with a tick, so an
+ * overloaded column reads as fill past the mark instead of a bar that happens
+ * to be full — 101% and 140% used to look identical.
  */
 export function CapacityBar({
   plannedHours,
   availableHours,
+  detail,
   className,
   compact = false,
 }: {
   plannedHours: number
   /** 0 when nobody's capacity is known — the bar then shows hours only. */
   availableHours: number
+  /** How the available number was arrived at, shown on hover. */
+  detail?: string
   className?: string
   compact?: boolean
 }) {
@@ -52,11 +56,16 @@ export function CapacityBar({
   const tone = loadTone(load)
   const percent = Math.round(load * 100)
 
+  // The track runs past 100% so that full capacity is a mark on it rather than
+  // the end of it. Clamping the fill at the end made 101% and 140% look
+  // identical, which is the one comparison the bar exists to make.
+  const scale = Math.max(1.25, load)
+
   return (
     <div className={cn("space-y-1", className)}>
       <div
         className={cn(
-          "w-full overflow-hidden rounded-full bg-muted",
+          "relative w-full overflow-hidden rounded-full bg-muted",
           compact ? "h-1.5" : "h-2",
         )}
         role="progressbar"
@@ -64,13 +73,20 @@ export function CapacityBar({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={t("belaggning.capacity.aria", "Planned share of available hours")}
+        title={detail}
       >
         <div
           className={cn("h-full rounded-full transition-all", TONE_CLASS[tone])}
-          style={{ width: `${Math.min(Math.max(load, 0) * 100, 100)}%` }}
+          style={{ width: `${(Math.max(load, 0) / scale) * 100}%` }}
+        />
+        <span
+          aria-hidden
+          className="absolute inset-y-0 w-px bg-border-strong"
+          style={{ left: `${(1 / scale) * 100}%` }}
         />
       </div>
       <p
+        title={detail}
         className={cn(
           "tabular-nums",
           compact ? "text-[11px]" : "text-xs",

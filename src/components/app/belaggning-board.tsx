@@ -147,7 +147,18 @@ export function BelaggningBoard() {
         toast.error(t("belaggning.toast.loadFailed", "Could not load the board"))
         setRows([])
       } else {
-        setRows((boardRes.data ?? []) as ResourceBoardRow[])
+        // Normalised on the way in. resource_board grows columns migration by
+        // migration, and an absent field must read as "nothing to say" rather
+        // than as undefined — undefined !== null put every card in "Behöver
+        // bedömning" the first time this shipped ahead of its migration.
+        setRows(
+          ((boardRes.data ?? []) as ResourceBoardRow[]).map((row) => ({
+            ...row,
+            assessment_reason: row.assessment_reason ?? null,
+            top_activities: row.top_activities ?? [],
+            history_months: row.history_months ?? 0,
+          })),
+        )
       }
 
       setStatuses((statusRes.data ?? []) as ResourceStatus[])
@@ -228,6 +239,57 @@ export function BelaggningBoard() {
   )
 
   const totalPlanned = visibleRows.reduce((sum, r) => sum + Number(r.effective_hours ?? 0), 0)
+
+  /**
+   * How a capacity number was arrived at, in words. Available hours are three
+   * multiplications and a subtraction; showing only the product asks the user
+   * to trust it, and the first thing anyone does with a number they cannot
+   * derive is stop believing it.
+   */
+  const describeCapacity = React.useCallback(
+    (people: ResourceCapacityRow[]) => {
+      if (people.length === 0) return undefined
+      const absenceDays = people.reduce((sum, p) => sum + Number(p.absence_days ?? 0), 0)
+      const absence =
+        absenceDays > 0
+          ? t("belaggning.capacity.detailAbsence", " − {days} days of absence").replace(
+              "{days}",
+              String(absenceDays),
+            )
+          : ""
+
+      if (people.length === 1) {
+        const person = people[0]
+        return (
+          t(
+            "belaggning.capacity.detailOne",
+            "{workdays} workdays × {hours} h × {target} % billable",
+          )
+            .replace("{workdays}", String(person.workdays))
+            .replace("{hours}", hourFormatter.format(Number(person.weekly_hours) / 5))
+            .replace("{target}", String(Math.round(Number(person.billable_target) * 100))) +
+          absence
+        )
+      }
+
+      return (
+        t("belaggning.capacity.detailMany", "{people} people × {workdays} workdays")
+          .replace("{people}", String(people.length))
+          .replace("{workdays}", String(people[0].workdays)) + absence
+      )
+    },
+    [t],
+  )
+
+  const headerCapacityDetail = React.useMemo(
+    () =>
+      describeCapacity(
+        peopleInView
+          .map((id) => capacityById.get(id))
+          .filter((row): row is ResourceCapacityRow => row !== undefined),
+      ),
+    [describeCapacity, peopleInView, capacityById],
+  )
 
   const visibleCustomerIds = React.useMemo(
     () => new Set(visibleRows.map((row) => row.customer_id)),
@@ -456,7 +518,11 @@ export function BelaggningBoard() {
 
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-[16rem] flex-1 space-y-1">
-          <CapacityBar plannedHours={totalPlanned} availableHours={availableHours} />
+          <CapacityBar
+            plannedHours={totalPlanned}
+            availableHours={availableHours}
+            detail={headerCapacityDetail}
+          />
           <p className="text-xs text-muted-foreground">
             {t("belaggning.summary.customers", "Customers")}: {visibleRows.length}
           </p>
@@ -541,28 +607,32 @@ export function BelaggningBoard() {
             </div>
           ) : null}
 
-          <div>
-            <h2 className="mb-2 text-sm font-medium">
-              {t("belaggning.calendar.customers", "Customers this month")}
-            </h2>
-            {/* A dense grid rather than one tall column: 19 customers in a
-                single strip was a list, not a plan. */}
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {estimated.map((row) => (
-                <CompactRow
-                  key={row.customer_id}
-                  row={row}
-                  locale={locale}
-                  onCapture={() => openConfirm(row.customer_id)}
-                />
-              ))}
+          {/* A heading with nothing under it is a bug report, not a section. */}
+          {estimated.length > 0 ? (
+            <div>
+              <h2 className="mb-2 text-sm font-medium">
+                {t("belaggning.calendar.customers", "Customers this month")}
+              </h2>
+              {/* A dense grid rather than one tall column: 19 customers in a
+                  single strip was a list, not a plan. */}
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {estimated.map((row) => (
+                  <CompactRow
+                    key={row.customer_id}
+                    row={row}
+                    locale={locale}
+                    onCapture={() => openConfirm(row.customer_id)}
+                  />
+                ))}
+              </div>
             </div>
-            {visibleRows.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                {t("belaggning.calendar.noCustomers", "No customers in this view")}
-              </p>
-            ) : null}
-          </div>
+          ) : null}
+
+          {visibleRows.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              {t("belaggning.calendar.noCustomers", "No customers in this view")}
+            </p>
+          ) : null}
         </div>
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-4">
@@ -616,6 +686,11 @@ export function BelaggningBoard() {
                       <CapacityBar
                         plannedHours={planned}
                         availableHours={columnCapacity}
+                        detail={describeCapacity(
+                          [capacityById.get(column.id)].filter(
+                            (row): row is ResourceCapacityRow => row !== undefined,
+                          ),
+                        )}
                         compact
                       />
                       {columnAbsence > 0 ? (
@@ -658,7 +733,13 @@ export function BelaggningBoard() {
         queue={confirmTarget}
         startIndex={confirmStart}
         open={confirmOpen}
-        onOpenChange={setConfirmOpen}
+        onOpenChange={(open) => {
+          setConfirmOpen(open)
+          // Confirming can set momsperiod and lönedag, and those are what the
+          // calendar draws its anchors from — so the board reloads rather than
+          // showing an empty grid the capture just fixed.
+          if (!open) setReloadKey((key) => key + 1)
+        }}
         onConfirmed={(customerId, count) => {
           setRows((current) =>
             current.map((r) =>
@@ -753,9 +834,7 @@ function CompactRow({
 }) {
   const hours = Number(row.effective_hours ?? 0)
   const reasonLabel = useAssessmentLabel(row.assessment_reason)
-  // Tolerated as possibly absent: the board function grows a column ahead of
-  // the migration being applied, and a card should degrade rather than throw.
-  const activities = row.top_activities ?? []
+  const activities = row.top_activities
 
   return (
     <button
@@ -797,7 +876,7 @@ function BoardCard({
   const hours = Number(row.effective_hours ?? 0)
   const showHours = hours >= MIN_HOURS_FOR_ESTIMATE
   const reasonLabel = useAssessmentLabel(row.assessment_reason)
-  const activities = row.top_activities ?? []
+  const activities = row.top_activities
 
   // Planerat vs avtalat is the comparison this board is really for — a customer
   // drifting past the agreed scope, caught before the month starts rather than

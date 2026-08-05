@@ -378,20 +378,47 @@ AS $$
       AND make_date(k.period_year, k.period_month, 1) <= p.history_end
     GROUP BY k.customer_id
   ),
-  -- What this customer needs done, in the manager's own words once confirmed
-  -- and in Fortnox's words until then.
+  -- What this customer needs done. Captured work wins where it exists, because
+  -- a human wrote it; everywhere else the customer's own logged activities
+  -- stand in, so the card answers "vilka uppgifter" from day one rather than
+  -- waiting for the whole portfolio to be confirmed.
+  activity_source AS (
+    SELECT
+      w.customer_id,
+      w.label,
+      0 AS tier,
+      COALESCE(w.typical_hours, 0) AS weight
+    FROM customer_recurring_work w
+    WHERE w.is_active
+    UNION ALL
+    SELECT
+      tr.customer_id,
+      btrim(regexp_replace(tr.activity, '^[^-]{1,30}\s+-\s+', '')) AS label,
+      1 AS tier,
+      SUM(tr.hours) AS weight
+    FROM time_reports tr, period p
+    WHERE tr.customer_id IS NOT NULL
+      AND tr.entry_type = 'time'
+      AND tr.activity IS NOT NULL
+      AND btrim(tr.activity) <> ''
+      AND tr.report_date >= p.long_start
+      AND NOT EXISTS (
+        SELECT 1 FROM customer_recurring_work w
+        WHERE w.customer_id = tr.customer_id AND w.is_active
+      )
+    GROUP BY tr.customer_id, 2
+  ),
   activities AS (
-    SELECT ranked.customer_id, array_agg(ranked.label ORDER BY ranked.ord, ranked.label) AS labels
+    SELECT ranked.customer_id, array_agg(ranked.label ORDER BY ranked.ord) AS labels
     FROM (
       SELECT
-        w.customer_id,
-        w.label,
+        a.customer_id,
+        a.label,
         ROW_NUMBER() OVER (
-          PARTITION BY w.customer_id
-          ORDER BY (w.confirmed_at IS NULL), COALESCE(w.typical_hours, 0) DESC, w.label
+          PARTITION BY a.customer_id
+          ORDER BY a.tier, a.weight DESC, a.label
         ) AS ord
-      FROM customer_recurring_work w
-      WHERE w.is_active
+      FROM activity_source a
     ) ranked
     WHERE ranked.ord <= 3
     GROUP BY ranked.customer_id
@@ -445,14 +472,27 @@ AS $$
     ev.due_date,
     ev.hardness,
     ev.kind,
-    -- Why this card has no usable number. NULL means it does.
+    -- Why no estimate can be trusted for this customer. NULL means one can, and
+    -- NULL is the only thing that keeps a card out of "Behöver bedömning".
+    --
+    -- This is deliberately a statement about the data, not about the workflow:
+    -- whether anybody has confirmed the recurring work is a different question,
+    -- it lives in the Bekräfta counter, and it must never group cards. Every
+    -- customer is unconfirmed on day one, so grouping on it groups everyone.
     CASE
-      WHEN h.customer_id IS NULL THEN 'ingen_historik'
-      WHEN h.first_date >= (SELECT history_start FROM period)
-        OR (c.start_date IS NOT NULL AND c.start_date >= (SELECT scope_start FROM period))
+      WHEN h.customer_id IS NULL OR COALESCE(h.months_12, 0) = 0 THEN 'ingen_historik'
+      -- New, and thin because of it. The history test matters: customers were
+      -- bulk-imported from Fortnox, so created_at alone would call a whole
+      -- import batch "ny kund".
+      WHEN COALESCE(h.months_12, 0) < 3
+        AND COALESCE(c.start_date, c.created_at::date) >= (SELECT history_start FROM period)
         THEN 'ny_kund'
-      WHEN COALESCE(tot.est_hours, 0) = 0 THEN 'vilande'
-      WHEN COALESCE(plan.planned_hours, tot.est_hours, 0) < 2 THEN 'for_lite_historik'
+      WHEN h.last_date < (SELECT scope_start FROM period) THEN 'vilande'
+      -- 2 h is the same threshold the card uses to fall back to a dash, kept in
+      -- step on purpose: a card shows a number, or it shows why it cannot.
+      WHEN COALESCE(plan.planned_hours, tot.est_hours, 0) < 2
+        OR COALESCE(h.months_12, 0) < 3
+        THEN 'for_lite_historik'
       ELSE NULL
     END,
     h.last_date,

@@ -8,7 +8,13 @@ import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/hooks/use-translation"
 import { useUser } from "@/hooks/use-user"
-import type { CustomerRecurringWork, ResourceCadence } from "@/types/resource"
+import type {
+  BookkeepingFrequency,
+  CustomerRecurringWork,
+  CustomerStructure,
+  MomsPeriod,
+  ResourceCadence,
+} from "@/types/resource"
 import {
   Sheet,
   SheetContent,
@@ -22,6 +28,15 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 
 const CADENCE_ORDER: ResourceCadence[] = ["manad", "kvartal", "ar", "vid_behov"]
+const MOMS_ORDER: MomsPeriod[] = ["manad", "kvartal", "helar"]
+const BOOKKEEPING_ORDER: BookkeepingFrequency[] = ["manad", "kvartal"]
+
+const EMPTY_STRUCTURE: CustomerStructure = {
+  moms_period: null,
+  has_payroll: null,
+  payroll_run_day: 25,
+  bookkeeping_frequency: null,
+}
 
 export type ConfirmQueueItem = { customer_id: string; customer_name: string }
 
@@ -65,6 +80,7 @@ export function RecurringWorkSheet({
   const [loading, setLoading] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [items, setItems] = React.useState<CustomerRecurringWork[]>([])
+  const [structure, setStructure] = React.useState<CustomerStructure>(EMPTY_STRUCTURE)
 
   const current = queue[index] ?? null
 
@@ -81,6 +97,23 @@ export function RecurringWorkSheet({
       kvartal: t("belaggning.cadence.kvartal", "Quarterly"),
       ar: t("belaggning.cadence.ar", "Yearly"),
       vid_behov: t("belaggning.cadence.vid_behov", "As needed"),
+    }),
+    [t],
+  )
+
+  const momsLabels: Record<MomsPeriod, string> = React.useMemo(
+    () => ({
+      manad: t("belaggning.moms.manad", "Monthly"),
+      kvartal: t("belaggning.moms.kvartal", "Quarterly"),
+      helar: t("belaggning.moms.helar", "Yearly"),
+    }),
+    [t],
+  )
+
+  const bookkeepingLabels: Record<BookkeepingFrequency, string> = React.useMemo(
+    () => ({
+      manad: t("belaggning.moms.manad", "Monthly"),
+      kvartal: t("belaggning.moms.kvartal", "Quarterly"),
     }),
     [t],
   )
@@ -107,13 +140,20 @@ export function RecurringWorkSheet({
         console.warn("propose_recurring_work failed", proposeError.message)
       }
 
-      const { data, error } = await supabase
-        .from("customer_recurring_work")
-        .select("*")
-        .eq("customer_id", id)
-        .eq("is_active", true)
-        .order("cadence")
-        .order("label")
+      const [{ data, error }, structureRes] = await Promise.all([
+        supabase
+          .from("customer_recurring_work")
+          .select("*")
+          .eq("customer_id", id)
+          .eq("is_active", true)
+          .order("cadence")
+          .order("label"),
+        supabase
+          .from("customers")
+          .select("moms_period, has_payroll, payroll_run_day, bookkeeping_frequency")
+          .eq("id", id)
+          .single(),
+      ])
 
       if (cancelled) return
 
@@ -123,6 +163,13 @@ export function RecurringWorkSheet({
       } else {
         setItems((data ?? []) as CustomerRecurringWork[])
       }
+
+      const loaded = structureRes.data as CustomerStructure | null
+      setStructure(
+        loaded
+          ? { ...loaded, payroll_run_day: loaded.payroll_run_day ?? 25 }
+          : EMPTY_STRUCTURE,
+      )
       setLoading(false)
     }
 
@@ -161,12 +208,39 @@ export function RecurringWorkSheet({
     }
   }
 
+  /**
+   * The structural facts are what turn the calendar from a spread into a
+   * schedule — momsperiod puts a date on the 12th, payroll_run_day on the 25th.
+   * They are saved with the confirmation rather than in a separate settings
+   * screen because this is the one moment somebody is already looking at the
+   * customer and can answer in two clicks.
+   */
+  async function saveStructure(customerId: string) {
+    const { error } = await supabase
+      .from("customers")
+      .update({
+        moms_period: structure.moms_period,
+        has_payroll: structure.has_payroll,
+        payroll_run_day: structure.payroll_run_day ?? 25,
+        bookkeeping_frequency: structure.bookkeeping_frequency,
+      } as never)
+      .eq("id", customerId)
+
+    if (error) {
+      toast.error(t("belaggning.structure.saveFailed", "Could not save the customer facts"))
+    }
+  }
+
   async function confirmCurrent() {
     if (!current || saving) return
 
     // Confirming an empty list is a real answer — "this customer needs nothing
-    // recurring" — but there is no row to stamp, so it just moves on.
+    // recurring" — but there is no row to stamp, so the structure is still
+    // worth keeping before moving on.
     if (items.length === 0) {
+      setSaving(true)
+      await saveStructure(current.customer_id)
+      setSaving(false)
       setDone((count) => count + 1)
       advance()
       return
@@ -195,12 +269,14 @@ export function RecurringWorkSheet({
       .from("customer_recurring_work")
       .upsert(payload as never, { onConflict: "id" })
 
-    setSaving(false)
-
     if (error) {
+      setSaving(false)
       toast.error(t("belaggning.recurring.saveFailed", "Could not save"))
       return
     }
+
+    await saveStructure(current.customer_id)
+    setSaving(false)
 
     onConfirmed(current.customer_id, items.length)
     setDone((count) => count + 1)
@@ -270,6 +346,105 @@ export function RecurringWorkSheet({
         ) : null}
 
         <div className="flex-1 space-y-2 overflow-y-auto px-4">
+          {/* Four facts, two clicks. Each one puts a real date on the calendar
+              that no amount of averaging history could produce. */}
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <p className="text-xs font-medium">
+              {t("belaggning.structure.title", "Customer facts")}
+            </p>
+
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0 text-xs text-muted-foreground">
+                {t("belaggning.structure.moms", "VAT period")}
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {MOMS_ORDER.map((period) => (
+                  <Button
+                    key={period}
+                    variant={structure.moms_period === period ? "secondary" : "ghost"}
+                    size="xs"
+                    className="h-6 px-2 text-xs"
+                    onClick={() =>
+                      setStructure((value) => ({
+                        ...value,
+                        moms_period: value.moms_period === period ? null : period,
+                      }))
+                    }
+                  >
+                    {momsLabels[period]}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0 text-xs text-muted-foreground">
+                {t("belaggning.structure.payroll", "Payroll")}
+              </span>
+              <Button
+                variant={structure.has_payroll ? "secondary" : "ghost"}
+                size="xs"
+                className="h-6 px-2 text-xs"
+                onClick={() =>
+                  setStructure((value) => ({ ...value, has_payroll: !value.has_payroll }))
+                }
+              >
+                {structure.has_payroll
+                  ? t("belaggning.structure.payrollYes", "We run payroll")
+                  : t("belaggning.structure.payrollNo", "No payroll")}
+              </Button>
+              {structure.has_payroll ? (
+                <div className="flex items-center gap-1">
+                  <Input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={structure.payroll_run_day ?? 25}
+                    onChange={(event) =>
+                      setStructure((value) => ({
+                        ...value,
+                        payroll_run_day:
+                          event.target.value === "" ? 25 : Number(event.target.value),
+                      }))
+                    }
+                    className="h-6 w-14 text-xs"
+                    aria-label={t("belaggning.structure.payrollDay", "Payday")}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {t("belaggning.structure.payrollDay", "Payday")}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0 text-xs text-muted-foreground">
+                {t("belaggning.structure.bookkeeping", "Bookkeeping")}
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {BOOKKEEPING_ORDER.map((frequency) => (
+                  <Button
+                    key={frequency}
+                    variant={
+                      structure.bookkeeping_frequency === frequency ? "secondary" : "ghost"
+                    }
+                    size="xs"
+                    className="h-6 px-2 text-xs"
+                    onClick={() =>
+                      setStructure((value) => ({
+                        ...value,
+                        bookkeeping_frequency:
+                          value.bookkeeping_frequency === frequency ? null : frequency,
+                      }))
+                    }
+                  >
+                    {bookkeepingLabels[frequency]}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {loading ? (
             Array.from({ length: 4 }).map((_, i) => (
               <Skeleton key={i} className="h-16 w-full" />

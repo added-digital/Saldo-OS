@@ -23,6 +23,22 @@ export type ResourceEventKind = "bokslut" | "ink2" | "loner" | "moms" | "agi"
 
 export type AbsenceType = "semester" | "sjuk" | "foraldraledig" | "ovrigt"
 
+export type MomsPeriod = "manad" | "kvartal" | "helar"
+export type BookkeepingFrequency = "manad" | "kvartal"
+
+/**
+ * The structural facts behind löpande work. Each one turns into a dated anchor:
+ * momsperiod into the 12th (26th for large filers), payroll into the 25th and
+ * the AGI date. All nullable — an unknown fact draws no anchor rather than a
+ * guessed one.
+ */
+export interface CustomerStructure {
+  moms_period: MomsPeriod | null
+  has_payroll: boolean | null
+  payroll_run_day: number | null
+  bookkeeping_frequency: BookkeepingFrequency | null
+}
+
 export interface ResourceStatus {
   id: string
   key: string
@@ -150,13 +166,6 @@ export interface SwedishHoliday {
   date: string
   name: string
   is_public_holiday: boolean
-}
-
-/** One row of `resource_unconfirmed_customers(manager_id)`. */
-export interface UnconfirmedCustomer {
-  customer_id: string
-  customer_name: string
-  proposed: number
 }
 
 /**
