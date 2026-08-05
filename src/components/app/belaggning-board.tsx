@@ -98,6 +98,7 @@ export function BelaggningBoard() {
   const [confirmTarget, setConfirmTarget] = React.useState<ConfirmQueueItem[]>([])
   const [absenceOpen, setAbsenceOpen] = React.useState(false)
   const [reloadKey, setReloadKey] = React.useState(0)
+  const [schemaStale, setSchemaStale] = React.useState(false)
 
   const monthStart = React.useMemo(() => isoDate(new Date(year, month - 1, 1)), [year, month])
   const monthEnd = React.useMemo(() => isoDate(new Date(year, month, 0)), [year, month])
@@ -151,8 +152,18 @@ export function BelaggningBoard() {
         // migration, and an absent field must read as "nothing to say" rather
         // than as undefined — undefined !== null put every card in "Behöver
         // bedömning" the first time this shipped ahead of its migration.
+        const raw = (boardRes.data ?? []) as ResourceBoardRow[]
+
+        // The `?? null` below makes an absent column read as "nothing to say",
+        // which is right per row but hides a real failure mode: if the deployed
+        // resource_board predates 00114 the column is missing from *every* row,
+        // every card silently lands in Löpande, and the ones that should have
+        // been pulled out for a decision look like ordinary work. Detect the
+        // schema drift itself rather than inferring it from the symptom.
+        setSchemaStale(raw.length > 0 && !("assessment_reason" in raw[0]))
+
         setRows(
-          ((boardRes.data ?? []) as ResourceBoardRow[]).map((row) => ({
+          raw.map((row) => ({
             ...row,
             assessment_reason: row.assessment_reason ?? null,
             top_activities: row.top_activities ?? [],
@@ -634,6 +645,15 @@ export function BelaggningBoard() {
             />
           ) : null}
 
+          {schemaStale ? (
+            <p className="rounded-md border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-2 text-xs text-semantic-warning">
+              {t(
+                "belaggning.staleSchema",
+                "The board is running against an older resource_board — cards needing a decision cannot be separated out. Apply migration 00114.",
+              )}
+            </p>
+          ) : null}
+
           {/* A heading with nothing under it is a bug report, not a section. */}
           <CardGroup
             title={t("belaggning.group.needsAssessment", "Needs a decision")}
@@ -815,10 +835,22 @@ function CardGroup({
 }) {
   if (rows.length === 0) return null
 
+  const groupHours = rows.reduce((sum, r) => sum + Number(r.effective_hours ?? 0), 0)
+
   return (
     <div>
-      <h2 className="mb-2 text-sm font-medium">
-        {title} <span className="text-muted-foreground">({rows.length})</span>
+      <h2 className="mb-2 flex items-baseline justify-between gap-2 text-sm font-medium">
+        <span>
+          {title} <span className="text-muted-foreground">({rows.length})</span>
+        </span>
+        {/* The group subtotal is what makes the page add up. Cards under
+            MIN_HOURS_FOR_ESTIMATE show a dash but still count toward Planerat,
+            so without a per-group sum the header cannot be reconciled with
+            anything on screen — it read 80,4 h over cards summing to 72,2 h,
+            and the missing 8,2 h was invisible by construction. */}
+        <span className="text-xs font-normal tabular-nums text-muted-foreground">
+          {hourFormatter.format(groupHours)} h
+        </span>
       </h2>
       {/* A dense grid rather than one tall column: 19 customers in a single
           strip was a list, not a plan. */}

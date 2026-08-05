@@ -874,6 +874,8 @@ const dictionaries = {
     "belaggning.capacity.detailAbsence": " − {days} days of absence",
     "belaggning.confirm.action": "Confirm recurring work",
     "belaggning.confirm.allDone": "All recurring work confirmed",
+    "belaggning.staleSchema":
+      "The board is running against an older resource_board — cards needing a decision cannot be separated out. Apply migration 00114.",
     "belaggning.group.needsAssessment": "Needs a decision",
     "belaggning.group.deadline": "Has a deadline in {month}",
     "belaggning.group.lopande": "Running work",
@@ -2397,6 +2399,8 @@ const dictionaries = {
     "belaggning.capacity.detailAbsence": " − {days} dagar frånvaro",
     "belaggning.confirm.action": "Bekräfta återkommande uppgifter",
     "belaggning.confirm.allDone": "Alla återkommande uppgifter bekräftade",
+    "belaggning.staleSchema":
+      "Vyn kör mot en äldre version av resource_board — kort som behöver bedömning kan inte skiljas ut. Kör migration 00114.",
     "belaggning.group.needsAssessment": "Behöver bedömning",
     "belaggning.group.deadline": "Har deadline i {month}",
     "belaggning.group.lopande": "Löpande",

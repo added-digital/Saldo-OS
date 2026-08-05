@@ -199,7 +199,7 @@ AS $$
       AND x.due_date >= p.month_start
       AND x.due_date <= p.month_end
   ),
-  payroll_events AS (
+  payroll_events (customer_id, kind, label, due_date, hardness, rank) AS (
     SELECT
       c.id,
       'loner'::TEXT,
@@ -210,7 +210,7 @@ AS $$
     FROM customers c, period p
     WHERE c.has_payroll IS TRUE
   ),
-  agi_events AS (
+  agi_events (customer_id, kind, label, due_date, hardness, rank) AS (
     SELECT
       c.id,
       'agi'::TEXT,
@@ -221,7 +221,7 @@ AS $$
     FROM customers c, period p
     WHERE c.has_payroll IS TRUE
   ),
-  moms_events AS (
+  moms_events (customer_id, kind, label, due_date, hardness, rank) AS (
     SELECT
       c.id,
       'moms'::TEXT,
@@ -247,7 +247,9 @@ AS $$
   SELECT * FROM agi_events
   UNION ALL
   -- Qualified: `due_date` is also an output parameter name, and an unqualified
-  -- reference would be ambiguous between the two.
+  -- reference would be ambiguous between the two. The CTEs above name their
+  -- columns explicitly so this resolves — an unaliased CASE expression is
+  -- called "case", not "due_date".
   SELECT * FROM moms_events WHERE moms_events.due_date IS NOT NULL;
 $$;
 
